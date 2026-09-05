@@ -28,12 +28,12 @@ import { exportReportWord, getFixedReportMetadata, getFixedReportWeekLabel } fro
 import './App.css'
 
 const navigationItems = [
-  { label: 'Overview', hash: 'overview', icon: '○' },
-  { label: 'Weekly Plan', hash: 'weekly-plan', icon: '□' },
-  { label: 'Daily Activity', hash: 'daily-activity', icon: '✦' },
-  { label: 'Follow-ups', hash: 'follow-ups', icon: '↗' },
-  { label: 'Report', hash: 'report', icon: '▤' },
-  { label: 'Report History', hash: 'report-history', icon: '◷' },
+  { label: 'Overview', path: '/', icon: '○' },
+  { label: 'Weekly Plan', path: '/weekly-plan', icon: '□' },
+  { label: 'Daily Activity', path: '/daily-activity', icon: '✦' },
+  { label: 'Follow-ups', path: '/follow-ups', icon: '↗' },
+  { label: 'Report', path: '/report', icon: '▤' },
+  { label: 'Report History', path: '/report-history', icon: '◷' },
 ]
 
 const categoryLabels: Record<PlanCategory, string> = {
@@ -46,13 +46,52 @@ const categoryLabels: Record<PlanCategory, string> = {
   successMeasures: 'Success Measures',
 }
 
-function getScreenFromHash() {
-  if (window.location.hash === '#weekly-plan') return 'weekly-plan'
-  if (window.location.hash === '#daily-activity') return 'daily-activity'
-  if (window.location.hash === '#follow-ups') return 'follow-ups'
-  if (window.location.hash === '#report') return 'report'
-  if (window.location.hash === '#report-history') return 'report-history'
+function getScreenFromPath(): string {
+  const pathname = window.location.pathname
+  if (pathname === '/weekly-plan') return 'weekly-plan'
+  if (pathname === '/daily-activity') return 'daily-activity'
+  if (pathname === '/follow-ups') return 'follow-ups'
+  if (pathname === '/report') return 'report'
+  if (pathname === '/report-history') return 'report-history'
   return 'overview'
+}
+
+function getInitialScreen(): string {
+  // Handle old hash-based URLs for initial state
+  const hash = window.location.hash
+  if (hash === '#weekly-plan') return 'weekly-plan'
+  if (hash === '#daily-activity') return 'daily-activity'
+  if (hash === '#follow-ups') return 'follow-ups'
+  if (hash === '#report') return 'report'
+  if (hash === '#report-history') return 'report-history'
+  if (hash === '#overview' || hash === '') return 'overview'
+  // Fall back to pathname-based routing
+  return getScreenFromPath()
+}
+
+function navigateTo(path: string): void {
+  window.history.pushState(null, '', path)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+function handleOldHashRoutes(): void {
+  if (!window.location.hash) return
+  const hash = window.location.hash
+  const hashMap: Record<string, string> = {
+    '#weekly-plan': '/weekly-plan',
+    '#daily-activity': '/daily-activity',
+    '#follow-ups': '/follow-ups',
+    '#report': '/report',
+    '#report-history': '/report-history',
+    '#overview': '/',
+  }
+  const newPath = hashMap[hash] || null
+  if (newPath) {
+    // Use replaceState to seamlessly redirect without adding to history
+    window.history.replaceState(null, '', newPath)
+    // Trigger a popstate event to update the screen
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  }
 }
 
 function formatHeaderWeek(weekStart: string) {
@@ -70,7 +109,7 @@ function Header({ selectedWeek }: { selectedWeek: string }) {
 
   return (
     <header className="app-header">
-      <a className="brand" href="#overview" aria-label="WeekFlow overview">
+      <a className="brand" href="/" aria-label="WeekFlow overview">
         <img className="brand-logo" src={logoImage} alt="WeekFlow" />
       </a>
       <div className="header-context">
@@ -91,17 +130,20 @@ function AppNavigation({ activeScreen }: { activeScreen: string }) {
     <nav className="app-navigation" aria-label="Main navigation">
       <span className="navigation-label">Workspace</span>
       <div className="navigation-links">
-        {navigationItems.map((item) => (
-          <a
-            className={`navigation-link${activeScreen === item.hash ? ' is-active' : ''}`}
-            href={`#${item.hash}`}
-            key={item.hash}
-            aria-current={activeScreen === item.hash ? 'page' : undefined}
-          >
-            <span className="navigation-icon" aria-hidden="true">{item.icon}</span>
-            {item.label}
-          </a>
-        ))}
+        {navigationItems.map((item) => {
+          const isItemActive = item.path === '/' ? activeScreen === 'overview' : activeScreen === item.path.slice(1)
+          return (
+            <a
+              className={`navigation-link${isItemActive ? ' is-active' : ''}`}
+              href={item.path}
+              key={item.path}
+              aria-current={isItemActive ? 'page' : undefined}
+            >
+              <span className="navigation-icon" aria-hidden="true">{item.icon}</span>
+              {item.label}
+            </a>
+          )
+        })}
       </div>
     </nav>
   )
@@ -380,7 +422,7 @@ function ReportHistory({ selectedWeek, onSelectWeek }: { selectedWeek: string; o
       {filteredReports.length > 0 ? <div className="report-history-list" role="list">{filteredReports.map((report) => <article className="report-history-item" key={report.weekStart} role="listitem">
         <div><strong>Week {getWeekNumber(report.weekStart)}</strong><span>{formatWeekRange(report.weekStart)}</span><small>{report.weekStart === selectedWeek ? 'Selected week' : report.weekStart === getCurrentWeekStart() ? 'Current week' : 'Historical week'}</small></div>
         <div className="report-history-status"><span className={report.hasPlan ? 'is-present' : ''}>Weekly Plan: {report.hasPlan ? 'Available' : 'Not saved'}</span><span className={report.hasActivities ? 'is-present' : ''}>Daily Activity: {report.hasActivities ? `${report.activities.length} records` : 'Not saved'}</span><span className={report.hasFollowUps ? 'is-present' : ''}>Follow-ups: {report.hasFollowUps ? `${report.followUps.length} records` : 'Not saved'}</span><span className="is-present">Report: Available</span></div>
-        <div className="report-history-actions"><button type="button" onClick={() => { onSelectWeek(report.weekStart); window.location.hash = 'report' }}>View Report</button><button type="button" onClick={() => exportHistoricalReport(report.weekStart)} disabled={exportingWeek !== null}>{exportingWeek === report.weekStart ? 'Exporting...' : 'Export Word'}</button></div>
+        <div className="report-history-actions"><button type="button" onClick={() => { onSelectWeek(report.weekStart); navigateTo('/report') }}>View Report</button><button type="button" onClick={() => exportHistoricalReport(report.weekStart)} disabled={exportingWeek !== null}>{exportingWeek === report.weekStart ? 'Exporting...' : 'Export Word'}</button></div>
       </article>)}</div> : <p className="report-history-empty">No reports found for {selectedYear}.</p>}
       {exportMessage && <p className="export-message" role="status">{exportMessage}</p>}
     </section>
@@ -392,19 +434,31 @@ function ReportHistoryScreen({ selectedWeek, onSelectWeek }: { selectedWeek: str
 }
 
 function App() {
-  const [activeScreen, setActiveScreen] = useState(getScreenFromHash)
+  const [activeScreen, setActiveScreen] = useState(getInitialScreen)
   const [selectedWeek, setSelectedWeek] = useState(getSelectedWeekStart)
 
   useEffect(() => {
-    const handleHashChange = () => setActiveScreen(getScreenFromHash())
+    // Initial hash-to-path redirect on app load
+    handleOldHashRoutes()
+  }, [])
+
+  useEffect(() => {
+    // Monitor hash changes for backward compatibility (e.g., old bookmarks, external links)
+    const handleHashChange = () => {
+      handleOldHashRoutes()
+    }
+
+    const handleLocationChange = () => setActiveScreen(getScreenFromPath())
     const handleWeekChange = (event: Event) => {
       const weekStart = (event as CustomEvent<string>).detail
       if (typeof weekStart === 'string') setSelectedWeek(weekStart)
     }
     window.addEventListener('hashchange', handleHashChange)
+    window.addEventListener('popstate', handleLocationChange)
     window.addEventListener('weekflow-week-change', handleWeekChange)
     return () => {
       window.removeEventListener('hashchange', handleHashChange)
+      window.removeEventListener('popstate', handleLocationChange)
       window.removeEventListener('weekflow-week-change', handleWeekChange)
     }
   }, [])
@@ -419,7 +473,7 @@ function App() {
       <WeekNavigation weekStart={selectedWeek} onChange={changeWeek} />
       <div className="app-body">
         <AppNavigation activeScreen={activeScreen} />
-        {activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={selectedWeek} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={selectedWeek} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={selectedWeek} /> : activeScreen === 'report' ? <GenerateReportScreen key={selectedWeek} /> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} /> : <OverviewScreen selectedWeek={selectedWeek} onNavigate={(screen) => { window.location.hash = screen }} />}
+        {activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={selectedWeek} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={selectedWeek} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={selectedWeek} /> : activeScreen === 'report' ? <GenerateReportScreen key={selectedWeek} /> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} /> : <OverviewScreen selectedWeek={selectedWeek} onNavigate={(screen) => { navigateTo(`/${screen === 'overview' ? '' : screen}`) }} />}
       </div>
     </div>
   )

@@ -321,7 +321,8 @@ export default function DailyActivityScreen() {
       ...(activity.hcpNames.length === 1 ? { hcpName: activity.hcpNames[0] } : {}),
       sourceActivityId: activity.id,
     })
-    window.location.assign(`${window.location.pathname}${window.location.search}#follow-ups`)
+    window.history.pushState(null, '', '/follow-ups')
+    window.dispatchEvent(new PopStateEvent('popstate'))
   }
 
   const suggestedActivity = followUpSuggestion ? activities.find((activity) => activity.id === followUpSuggestion.sourceActivityId) : null
