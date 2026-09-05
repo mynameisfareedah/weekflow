@@ -7,8 +7,10 @@ import {
   Paragraph,
   Table,
   TableCell,
+  TableLayoutType,
   TableRow,
   TextRun,
+  VerticalAlign,
   WidthType,
 } from 'docx'
 import type { DailyActivity } from '../types/dailyActivity'
@@ -32,6 +34,14 @@ export const REPORT_METADATA = {
 const PAGE_WIDTH_TWIPS = 11906
 const PAGE_HEIGHT_TWIPS = 16838
 const MARGIN_TWIPS = 720
+const CONTENT_WIDTH_TWIPS = PAGE_WIDTH_TWIPS - (MARGIN_TWIPS * 2)
+const DAILY_TABLE_COLUMN_WIDTHS = [
+  Math.round(CONTENT_WIDTH_TWIPS * 0.11),
+  Math.round(CONTENT_WIDTH_TWIPS * 0.18),
+  Math.round(CONTENT_WIDTH_TWIPS * 0.18),
+  Math.round(CONTENT_WIDTH_TWIPS * 0.21),
+  CONTENT_WIDTH_TWIPS - Math.round(CONTENT_WIDTH_TWIPS * 0.11) - Math.round(CONTENT_WIDTH_TWIPS * 0.18) - Math.round(CONTENT_WIDTH_TWIPS * 0.18) - Math.round(CONTENT_WIDTH_TWIPS * 0.21),
+]
 
 function unique(values: string[]) {
   return [...new Set(values.filter(Boolean))]
@@ -71,6 +81,7 @@ function summaryLines(snapshot: ReportSnapshot) {
 }
 
 type HeadingLevelValue = (typeof HeadingLevel)[keyof typeof HeadingLevel]
+type AlignmentTypeValue = (typeof AlignmentType)[keyof typeof AlignmentType]
 
 function buildSectionHeading(text: string, headingLevel: HeadingLevelValue = HeadingLevel.HEADING_2): Paragraph {
   return new Paragraph({
@@ -101,32 +112,31 @@ function buildBulletParagraph(text: string, indentLevel = 0) {
   })
 }
 
-function tableCell(text: string, options: { bold?: boolean; shading?: string; width?: string } = {}) {
-  const width = options.width ? { size: Number(options.width.replace('%', '')), type: WidthType.PERCENTAGE } : undefined
+function tableCell(text: string, options: { bold?: boolean; shading?: string; width: number; alignment?: AlignmentTypeValue; verticalAlign?: 'top' | 'center' }) {
   return new TableCell({
     children: [new Paragraph({
-      children: [new TextRun({ text: text || 'Not recorded', bold: options.bold ?? false })],
-      alignment: AlignmentType.LEFT,
+      children: [new TextRun({ text: text || 'Not recorded', bold: options.bold ?? false, size: 18 })],
+      alignment: options.alignment ?? AlignmentType.LEFT,
+      spacing: { before: 0, after: 0, line: 240 },
     })],
     shading: options.shading ? { fill: options.shading } : undefined,
-    width,
+    width: { size: options.width, type: WidthType.DXA },
+    verticalAlign: options.verticalAlign ?? VerticalAlign.TOP,
     margins: { top: 60, bottom: 60, left: 80, right: 80 },
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 1, color: 'C9D1C8' },
-      bottom: { style: BorderStyle.SINGLE, size: 1, color: 'C9D1C8' },
-      left: { style: BorderStyle.SINGLE, size: 1, color: 'C9D1C8' },
-      right: { style: BorderStyle.SINGLE, size: 1, color: 'C9D1C8' },
+      top: { style: BorderStyle.SINGLE, size: 4, color: 'C9D1C8' },
+      bottom: { style: BorderStyle.SINGLE, size: 4, color: 'C9D1C8' },
+      left: { style: BorderStyle.SINGLE, size: 4, color: 'C9D1C8' },
+      right: { style: BorderStyle.SINGLE, size: 4, color: 'C9D1C8' },
     },
   })
 }
 
-function textCell(text: string) {
-  return new TableCell({
-    children: [new Paragraph({
-      children: [new TextRun({ text: text || 'Not recorded' })],
-      alignment: AlignmentType.LEFT,
-    })],
-    margins: { top: 60, bottom: 60, left: 80, right: 80 },
+function textCell(text: string, width: number, isDay = false) {
+  return tableCell(text, {
+    width,
+    alignment: isDay ? AlignmentType.CENTER : AlignmentType.LEFT,
+    verticalAlign: isDay ? VerticalAlign.CENTER : VerticalAlign.TOP,
   })
 }
 
@@ -134,11 +144,11 @@ function buildDailyTable(snapshot: ReportSnapshot) {
   const rows = [
     new TableRow({
       children: [
-        tableCell('Day', { bold: true, shading: 'F3F5F0', width: '10%' }),
-        tableCell('Facilities Visited', { bold: true, shading: 'F3F5F0', width: '18%' }),
-        tableCell('Doctors Engaged', { bold: true, shading: 'F3F5F0', width: '18%' }),
-        tableCell('Outcome of Visit', { bold: true, shading: 'F3F5F0', width: '20%' }),
-        tableCell('Key Intelligence / Next Action', { bold: true, shading: 'F3F5F0', width: '34%' }),
+        tableCell('Day', { bold: true, shading: 'F3F5F0', width: DAILY_TABLE_COLUMN_WIDTHS[0], alignment: AlignmentType.CENTER, verticalAlign: VerticalAlign.CENTER }),
+        tableCell('Facilities Visited', { bold: true, shading: 'F3F5F0', width: DAILY_TABLE_COLUMN_WIDTHS[1], alignment: AlignmentType.CENTER, verticalAlign: VerticalAlign.CENTER }),
+        tableCell('Doctors Engaged', { bold: true, shading: 'F3F5F0', width: DAILY_TABLE_COLUMN_WIDTHS[2], alignment: AlignmentType.CENTER, verticalAlign: VerticalAlign.CENTER }),
+        tableCell('Outcome of Visit', { bold: true, shading: 'F3F5F0', width: DAILY_TABLE_COLUMN_WIDTHS[3], alignment: AlignmentType.CENTER, verticalAlign: VerticalAlign.CENTER }),
+        tableCell('Key Intelligence / Next Action', { bold: true, shading: 'F3F5F0', width: DAILY_TABLE_COLUMN_WIDTHS[4], alignment: AlignmentType.CENTER, verticalAlign: VerticalAlign.CENTER }),
       ],
       cantSplit: true,
     }),
@@ -163,23 +173,22 @@ function buildDailyTable(snapshot: ReportSnapshot) {
       ]
 
     rows.push(new TableRow({
-      children: cells.map((cell) => textCell(cell)),
-      cantSplit: true,
+      children: cells.map((cell, index) => textCell(cell, DAILY_TABLE_COLUMN_WIDTHS[index], index === 0)),
     }))
   })
 
   return new Table({
     rows,
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: CONTENT_WIDTH_TWIPS, type: WidthType.DXA },
     borders: {
-      top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-      bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-      left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-      right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: 'D8DED7' },
-      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: 'D8DED7' },
+      top: { style: BorderStyle.SINGLE, size: 6, color: 'AEB8AC' },
+      bottom: { style: BorderStyle.SINGLE, size: 6, color: 'AEB8AC' },
+      left: { style: BorderStyle.SINGLE, size: 6, color: 'AEB8AC' },
+      right: { style: BorderStyle.SINGLE, size: 6, color: 'AEB8AC' },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: 'D8DED7' },
+      insideVertical: { style: BorderStyle.SINGLE, size: 4, color: 'D8DED7' },
     },
-    layout: 'autofit',
+    layout: TableLayoutType.FIXED,
   })
 }
 
