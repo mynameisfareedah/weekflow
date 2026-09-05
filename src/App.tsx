@@ -64,7 +64,7 @@ function getInitialScreen(): string {
   if (hash === '#follow-ups') return 'follow-ups'
   if (hash === '#report') return 'report'
   if (hash === '#report-history') return 'report-history'
-  if (hash === '#overview' || hash === '') return 'overview'
+  if (hash === '#overview') return 'overview'
   // Fall back to pathname-based routing
   return getScreenFromPath()
 }
