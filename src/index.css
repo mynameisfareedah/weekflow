@@ -25,7 +25,11 @@
 
 * { box-sizing: border-box; }
 
-body { margin: 0; min-width: 320px; }
+body {
+  margin: 0;
+  min-width: 320px;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
 
 button, a { font: inherit; }
 
