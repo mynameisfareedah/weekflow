@@ -1,0 +1,428 @@
+import { useEffect, useMemo, useState } from 'react'
+import logoImage from './assets/weekflow-logo.png'
+import DailyActivityScreen from './components/DailyActivityScreen'
+import FollowUpsScreen from './components/FollowUpsScreen'
+import GenerateReportScreen from './components/GenerateReportScreen'
+import OverviewScreen from './components/OverviewScreen'
+import { loadDailyActivities } from './storage/dailyActivityStorage'
+import { loadFollowUps } from './storage/followUpsStorage'
+import { deriveWeeklyIntelligence } from './intelligence/intelligenceEngine'
+import {
+  getCurrentWeekStart,
+  getSelectedWeekStart,
+  getStoredWeekStarts,
+  getWeekStartFromInput,
+  loadWeeklyPlan,
+  saveWeeklyPlan,
+  setSelectedWeekStart,
+  toWeekInput,
+} from './storage/weeklyPlanStorage'
+import {
+  PLAN_CATEGORIES,
+  type DayPlan,
+  type PlanCategory,
+  type PlanItem,
+  type WeeklyPlan,
+} from './types/weeklyPlan'
+import { exportReportWord, getFixedReportMetadata, getFixedReportWeekLabel } from './utils/reportDocx'
+import './App.css'
+
+const navigationItems = [
+  { label: 'Overview', hash: 'overview', icon: '○' },
+  { label: 'Weekly Plan', hash: 'weekly-plan', icon: '□' },
+  { label: 'Daily Activity', hash: 'daily-activity', icon: '✦' },
+  { label: 'Follow-ups', hash: 'follow-ups', icon: '↗' },
+  { label: 'Report', hash: 'report', icon: '▤' },
+  { label: 'Report History', hash: 'report-history', icon: '◷' },
+]
+
+const categoryLabels: Record<PlanCategory, string> = {
+  facilities: 'Facilities / Accounts',
+  hcps: 'HCPs / Stakeholders',
+  primaryObjectives: 'Primary Objectives',
+  virtualEngagements: 'Virtual Engagements',
+  accountObjectives: 'Account-Specific Objectives',
+  commercialPriorities: 'Commercial Priorities',
+  successMeasures: 'Success Measures',
+}
+
+function getScreenFromHash() {
+  if (window.location.hash === '#weekly-plan') return 'weekly-plan'
+  if (window.location.hash === '#daily-activity') return 'daily-activity'
+  if (window.location.hash === '#follow-ups') return 'follow-ups'
+  if (window.location.hash === '#report') return 'report'
+  if (window.location.hash === '#report-history') return 'report-history'
+  return 'overview'
+}
+
+function formatHeaderWeek(weekStart: string) {
+  const start = new Date(`${weekStart}T12:00:00`)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 4)
+  const startLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(start)
+  const endLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(end)
+  return `${startLabel} - ${endLabel}`
+}
+
+function Header({ selectedWeek }: { selectedWeek: string }) {
+  const reportOwner = getFixedReportMetadata()
+  const isHistorical = selectedWeek !== getCurrentWeekStart()
+
+  return (
+    <header className="app-header">
+      <a className="brand" href="#overview" aria-label="WeekFlow overview">
+        <img className="brand-logo" src={logoImage} alt="WeekFlow" />
+      </a>
+      <div className="header-context">
+        <span className="context-label">Current workspace</span>
+        <span className="context-value">Week of {formatHeaderWeek(selectedWeek)}</span>
+        {isHistorical && <span className="context-history">Historical report</span>}
+        <span className="context-owner">{reportOwner.preparedBy}</span>
+      </div>
+      <button className="profile-button" type="button" aria-label="Open profile menu">
+        <span aria-hidden="true">WY</span>
+      </button>
+    </header>
+  )
+}
+
+function AppNavigation({ activeScreen }: { activeScreen: string }) {
+  return (
+    <nav className="app-navigation" aria-label="Main navigation">
+      <span className="navigation-label">Workspace</span>
+      <div className="navigation-links">
+        {navigationItems.map((item) => (
+          <a
+            className={`navigation-link${activeScreen === item.hash ? ' is-active' : ''}`}
+            href={`#${item.hash}`}
+            key={item.hash}
+            aria-current={activeScreen === item.hash ? 'page' : undefined}
+          >
+            <span className="navigation-icon" aria-hidden="true">{item.icon}</span>
+            {item.label}
+          </a>
+        ))}
+      </div>
+    </nav>
+  )
+}
+
+function formatDateLabel(date: string) {
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(new Date(`${date}T12:00:00`))
+}
+
+function formatWeekRange(weekStart: string) {
+  const start = new Date(`${weekStart}T12:00:00`)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 4)
+  const startLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(start)
+  const endLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(end)
+  return `${startLabel} - ${endLabel}`
+}
+
+function shiftWeek(weekStart: string, amount: number) {
+  const date = new Date(`${weekStart}T12:00:00`)
+  date.setDate(date.getDate() + amount * 7)
+  return date.toISOString().slice(0, 10)
+}
+
+function WeekNavigation({ weekStart, onChange }: { weekStart: string; onChange: (weekStart: string) => void }) {
+  const currentWeek = getCurrentWeekStart()
+  return (
+    <div className="week-navigation" aria-label="Reporting week navigation">
+      <button type="button" onClick={() => onChange(shiftWeek(weekStart, -1))}>← Previous Week</button>
+      <button type="button" onClick={() => onChange(currentWeek)} disabled={weekStart === currentWeek}>Current Week</button>
+      <button type="button" onClick={() => onChange(shiftWeek(weekStart, 1))}>Next Week →</button>
+    </div>
+  )
+}
+
+function PlanCategory({
+  dayId,
+  category,
+  items,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  dayId: string
+  category: PlanCategory
+  items: PlanItem[]
+  onAdd: (text: string) => void
+  onEdit: (itemId: string, text: string) => void
+  onDelete: (itemId: string) => void
+}) {
+  const [draft, setDraft] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingText, setEditingText] = useState('')
+
+  function addItem(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!draft.trim()) return
+    onAdd(draft.trim())
+    setDraft('')
+  }
+
+  function startEditing(item: PlanItem) {
+    setEditingId(item.id)
+    setEditingText(item.text)
+  }
+
+  function saveEdit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!editingId || !editingText.trim()) return
+    onEdit(editingId, editingText.trim())
+    setEditingId(null)
+    setEditingText('')
+  }
+
+  return (
+    <section className="plan-category" aria-labelledby={`${dayId}-${category}-label`}>
+      <div className="category-heading">
+        <h3 id={`${dayId}-${category}-label`}>{categoryLabels[category]}</h3>
+        <button className="add-item-button" type="button" onClick={() => document.getElementById(`${dayId}-${category}-input`)?.focus()}>
+          + Add
+        </button>
+      </div>
+      {items.length > 0 && (
+        <ul className="plan-items">
+          {items.map((item) => (
+            <li className="plan-item" key={item.id}>
+              {editingId === item.id ? (
+                <form className="item-edit-form" onSubmit={saveEdit}>
+                  <input aria-label={`Edit ${categoryLabels[category]}`} autoFocus value={editingText} onChange={(event) => setEditingText(event.target.value)} />
+                  <button type="submit" aria-label="Save item">Save</button>
+                  <button type="button" aria-label="Cancel editing" onClick={() => setEditingId(null)}>Cancel</button>
+                </form>
+              ) : (
+                <>
+                  <span>{item.text}</span>
+                  <span className="item-actions">
+                    <button type="button" aria-label={`Edit ${item.text}`} onClick={() => startEditing(item)}>Edit</button>
+                    <button type="button" aria-label={`Delete ${item.text}`} onClick={() => onDelete(item.id)}>Delete</button>
+                  </span>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <form className="add-item-form" onSubmit={addItem}>
+        <input id={`${dayId}-${category}-input`} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Add an item..." aria-label={`Add to ${categoryLabels[category]}`} />
+        <button type="submit" aria-label={`Add to ${categoryLabels[category]}`}>+</button>
+      </form>
+    </section>
+  )
+}
+
+function DayPlanSection({ day, onChange }: { day: DayPlan; onChange: (day: DayPlan) => void }) {
+  function updateCategory(category: PlanCategory, items: PlanItem[]) {
+    onChange({ ...day, categories: { ...day.categories, [category]: items } })
+  }
+
+  return (
+    <section className="day-plan" aria-labelledby={`${day.id}-heading`}>
+      <div className="day-heading">
+        <span className="day-index">{String(['monday', 'tuesday', 'wednesday', 'thursday', 'friday'].indexOf(day.id) + 1).padStart(2, '0')}</span>
+        <div>
+          <h2 id={`${day.id}-heading`}>{day.label}</h2>
+          <p>{formatDateLabel(day.date)}</p>
+        </div>
+      </div>
+      <div className="day-categories">
+        {PLAN_CATEGORIES.map((category) => (
+          <PlanCategory
+            dayId={day.id}
+            category={category}
+            items={day.categories[category]}
+            key={category}
+            onAdd={(text) => updateCategory(category, [...day.categories[category], { id: crypto.randomUUID(), text }])}
+            onEdit={(itemId, text) => updateCategory(category, day.categories[category].map((item) => item.id === itemId ? { ...item, text } : item))}
+            onDelete={(itemId) => updateCategory(category, day.categories[category].filter((item) => item.id !== itemId))}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function WeeklyPlanScreen() {
+  const [weekStart, setWeekStart] = useState(getSelectedWeekStart)
+  const [plan, setPlan] = useState<WeeklyPlan>(() => loadWeeklyPlan(getSelectedWeekStart()))
+  const planIntelligence = useMemo(() => deriveWeeklyIntelligence({
+    selectedWeek: weekStart,
+    plan,
+    activities: loadDailyActivities(weekStart),
+    followUps: loadFollowUps(weekStart),
+  }), [plan, weekStart])
+
+  useEffect(() => {
+    saveWeeklyPlan(plan)
+  }, [plan])
+
+  function changeWeek(value: string) {
+    const nextWeekStart = getWeekStartFromInput(value)
+    setSelectedWeekStart(nextWeekStart)
+    setWeekStart(nextWeekStart)
+    setPlan(loadWeeklyPlan(nextWeekStart))
+  }
+
+  function updateDay(updatedDay: DayPlan) {
+    setPlan((currentPlan) => ({
+      ...currentPlan,
+      days: currentPlan.days.map((day) => day.id === updatedDay.id ? updatedDay : day),
+    }))
+  }
+
+  return (
+    <main className="weekly-plan-screen" id="weekly-plan">
+      <div className="plan-page-heading">
+        <div>
+          <p className="eyebrow">Plan before the week begins</p>
+          <h1>Weekly Plan</h1>
+          <p className="plan-intro">Plan your activities and priorities for the week.</p>
+        </div>
+        <div className="week-selector">
+          <label htmlFor="reporting-week">Reporting week</label>
+          <input id="reporting-week" type="week" value={toWeekInput(weekStart)} onChange={(event) => changeWeek(event.target.value)} />
+          <span>{formatWeekRange(weekStart)}</span>
+        </div>
+      </div>
+      <section className="plan-coverage" aria-labelledby="plan-coverage-heading">
+        <div className="plan-coverage-heading"><div><p className="eyebrow">WeekFlow Intelligence</p><h2 id="plan-coverage-heading">Plan Coverage</h2></div><span>Derived from Daily Activity</span></div>
+        <div className="plan-coverage-days">{plan.days.map((day) => {
+          const dayGaps = planIntelligence.planGaps.filter((gap) => gap.dayLabel === day.label)
+          const plannedCount = day.categories.facilities.length + day.categories.virtualEngagements.length + day.categories.primaryObjectives.length + day.categories.accountObjectives.length + day.categories.commercialPriorities.length + day.categories.successMeasures.length
+          const status = plannedCount === 0 ? 'No items' : dayGaps.length === 0 ? 'Covered' : dayGaps.length < plannedCount ? 'Partially covered' : dayGaps.some((gap) => gap.status === 'needs review') ? 'Needs review' : 'Not evidenced'
+          return <div className="plan-coverage-day" key={day.id}><div><strong>{day.label}</strong><span>{plannedCount === 0 ? 'No matchable plan items' : `${plannedCount} planned item${plannedCount === 1 ? '' : 's'}`}</span></div><em className={`coverage-status ${status.toLowerCase().replace(' ', '-')}`}>{status}</em></div>
+        })}</div>
+        {planIntelligence.planGaps.length > 0 && <ul className="plan-coverage-gaps">{planIntelligence.planGaps.filter((gap) => gap.status !== 'covered').slice(0, 5).map((gap) => <li key={`${gap.itemId}-${gap.dayLabel}`}><strong>{gap.item}</strong><span>{gap.status}</span><small>{gap.reason}</small></li>)}</ul>}
+      </section>
+      <div className="days-list">
+        {plan.days.map((day) => <DayPlanSection day={day} key={day.id} onChange={updateDay} />)}
+      </div>
+    </main>
+  )
+}
+
+function hasPlanData(plan: WeeklyPlan) {
+  return plan.days.some((day) => PLAN_CATEGORIES.some((category) => day.categories[category].length > 0))
+}
+
+function getWeekYear(weekStart: string) {
+  return Number(toWeekInput(weekStart).slice(0, 4))
+}
+
+function getWeekNumber(weekStart: string) {
+  return toWeekInput(weekStart).split('-W')[1]
+}
+
+function ReportHistory({ selectedWeek, onSelectWeek }: { selectedWeek: string; onSelectWeek: (weekStart: string) => void }) {
+  const [exportingWeek, setExportingWeek] = useState<string | null>(null)
+  const [exportMessage, setExportMessage] = useState('')
+  const reports = getStoredWeekStarts().map((weekStart) => {
+    const plan = loadWeeklyPlan(weekStart)
+    const activities = loadDailyActivities(weekStart)
+    const followUps = loadFollowUps(weekStart)
+    return {
+      weekStart,
+      plan,
+      activities,
+      followUps,
+      hasPlan: hasPlanData(plan),
+      hasActivities: activities.length > 0,
+      hasFollowUps: followUps.length > 0,
+    }
+  }).filter((report) => report.hasPlan || report.hasActivities || report.hasFollowUps)
+  const currentYear = new Date().getFullYear()
+  const years = [...new Set([
+    ...reports.map((report) => getWeekYear(report.weekStart)),
+    ...Array.from({ length: 11 }, (_, index) => currentYear - 5 + index),
+  ])].sort((left, right) => right - left)
+  const [selectedYear, setSelectedYear] = useState(getWeekYear(selectedWeek))
+  const filteredReports = reports.filter((report) => getWeekYear(report.weekStart) === selectedYear)
+
+  async function exportHistoricalReport(weekStart: string) {
+    setExportingWeek(weekStart)
+    setExportMessage('')
+    try {
+      const report = reports.find((item) => item.weekStart === weekStart)
+      if (!report) return
+      const result = await exportReportWord({
+        weekKey: weekStart,
+        weekLabel: getFixedReportWeekLabel(weekStart),
+        plan: report.plan,
+        activities: report.activities,
+        followUps: report.followUps,
+      })
+      setExportMessage(`Downloaded ${result.filename}`)
+    } catch {
+      setExportMessage('Word export could not be completed. Please try again.')
+    } finally {
+      setExportingWeek(null)
+    }
+  }
+
+  return (
+    <section className="report-history" aria-labelledby="report-history-heading">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Saved reporting weeks</p>
+          <h2 id="report-history-heading">Report History</h2>
+        </div>
+        <p>Reopen a saved week or export its report again.</p>
+      </div>
+      <label className="history-year-selector" htmlFor="history-year">Year
+        <select id="history-year" value={selectedYear} onChange={(event) => setSelectedYear(Number(event.target.value))}>
+          {years.map((year) => <option value={year} key={year}>{year}</option>)}
+        </select>
+      </label>
+      {filteredReports.length > 0 ? <div className="report-history-list" role="list">{filteredReports.map((report) => <article className="report-history-item" key={report.weekStart} role="listitem">
+        <div><strong>Week {getWeekNumber(report.weekStart)}</strong><span>{formatWeekRange(report.weekStart)}</span><small>{report.weekStart === selectedWeek ? 'Selected week' : report.weekStart === getCurrentWeekStart() ? 'Current week' : 'Historical week'}</small></div>
+        <div className="report-history-status"><span className={report.hasPlan ? 'is-present' : ''}>Weekly Plan: {report.hasPlan ? 'Available' : 'Not saved'}</span><span className={report.hasActivities ? 'is-present' : ''}>Daily Activity: {report.hasActivities ? `${report.activities.length} records` : 'Not saved'}</span><span className={report.hasFollowUps ? 'is-present' : ''}>Follow-ups: {report.hasFollowUps ? `${report.followUps.length} records` : 'Not saved'}</span><span className="is-present">Report: Available</span></div>
+        <div className="report-history-actions"><button type="button" onClick={() => { onSelectWeek(report.weekStart); window.location.hash = 'report' }}>View Report</button><button type="button" onClick={() => exportHistoricalReport(report.weekStart)} disabled={exportingWeek !== null}>{exportingWeek === report.weekStart ? 'Exporting...' : 'Export Word'}</button></div>
+      </article>)}</div> : <p className="report-history-empty">No reports found for {selectedYear}.</p>}
+      {exportMessage && <p className="export-message" role="status">{exportMessage}</p>}
+    </section>
+  )
+}
+
+function ReportHistoryScreen({ selectedWeek, onSelectWeek }: { selectedWeek: string; onSelectWeek: (weekStart: string) => void }) {
+  return <main className="report-history-screen"><ReportHistory selectedWeek={selectedWeek} onSelectWeek={onSelectWeek} /></main>
+}
+
+function App() {
+  const [activeScreen, setActiveScreen] = useState(getScreenFromHash)
+  const [selectedWeek, setSelectedWeek] = useState(getSelectedWeekStart)
+
+  useEffect(() => {
+    const handleHashChange = () => setActiveScreen(getScreenFromHash())
+    const handleWeekChange = (event: Event) => {
+      const weekStart = (event as CustomEvent<string>).detail
+      if (typeof weekStart === 'string') setSelectedWeek(weekStart)
+    }
+    window.addEventListener('hashchange', handleHashChange)
+    window.addEventListener('weekflow-week-change', handleWeekChange)
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange)
+      window.removeEventListener('weekflow-week-change', handleWeekChange)
+    }
+  }, [])
+
+  function changeWeek(weekStart: string) {
+    setSelectedWeekStart(weekStart)
+  }
+
+  return (
+    <div className="app-shell">
+      <Header selectedWeek={selectedWeek} />
+      <WeekNavigation weekStart={selectedWeek} onChange={changeWeek} />
+      <div className="app-body">
+        <AppNavigation activeScreen={activeScreen} />
+        {activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={selectedWeek} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={selectedWeek} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={selectedWeek} /> : activeScreen === 'report' ? <GenerateReportScreen key={selectedWeek} /> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} /> : <OverviewScreen selectedWeek={selectedWeek} onNavigate={(screen) => { window.location.hash = screen }} />}
+      </div>
+    </div>
+  )
+}
+
+export default App
