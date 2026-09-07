@@ -19,12 +19,17 @@ import {
 } from './storage/weeklyPlanStorage'
 import {
   PLAN_CATEGORIES,
+  type AccountObjective,
+  type CommercialPriority,
   type DayPlan,
   type PlanCategory,
   type PlanItem,
+  type SuccessMeasure,
+  type VirtualEngagementPlanItem,
   type WeeklyPlan,
 } from './types/weeklyPlan'
 import { exportReportWord, getFixedReportMetadata, getFixedReportWeekLabel } from './utils/reportDocx'
+import { exportWeeklyPlanWord } from './utils/weeklyPlanDocx'
 import './App.css'
 
 const navigationItems = [
@@ -288,9 +293,460 @@ function DayPlanSection({ day, onChange }: { day: DayPlan; onChange: (day: DayPl
   )
 }
 
+function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
+  title,
+  summary,
+  items,
+  emptyText,
+  placeholder,
+  onChange,
+}: {
+  title: string
+  summary: string
+  items: T[]
+  emptyText: string
+  placeholder: string
+  onChange: (items: T[]) => void
+}) {
+  const [draft, setDraft] = useState('')
+
+  function addItem(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const value = draft.trim()
+    if (!value) return
+    onChange([...items, { id: crypto.randomUUID(), text: value } as T])
+    setDraft('')
+  }
+
+  function updateItem(itemId: string, text: string) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, text } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section" aria-labelledby={`${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-heading`}>
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly focus</p>
+          <h3 id={`${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-heading`}>{title}</h3>
+        </div>
+        <span>{summary}</span>
+      </div>
+      {items.length > 0 ? (
+        <ul className="weekly-plan-summary-list">
+          {items.map((item) => (
+            <li className="weekly-plan-summary-item" key={item.id}>
+              <input
+                aria-label={title}
+                value={item.text}
+                onChange={(event) => updateItem(item.id, event.target.value)}
+              />
+              <button type="button" aria-label={`Delete ${title}`} onClick={() => deleteItem(item.id)}>Remove</button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="weekly-plan-summary-empty">{emptyText}</p>
+      )}
+      <form className="weekly-plan-summary-form" onSubmit={addItem}>
+        <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={placeholder} aria-label={placeholder} />
+        <button type="submit" aria-label={`Add ${title}`}>+ Add</button>
+      </form>
+    </section>
+  )
+}
+
+function WeeklyPlanVirtualEngagementSection({
+  items,
+  onChange,
+}: {
+  items: VirtualEngagementPlanItem[]
+  onChange: (items: VirtualEngagementPlanItem[]) => void
+}) {
+  const [contactDrafts, setContactDrafts] = useState<Record<string, string>>({})
+
+  function updateItem(itemId: string, changes: Partial<VirtualEngagementPlanItem>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...changes } : item))
+  }
+
+  function addItem() {
+    onChange([...items, {
+      id: crypto.randomUUID(),
+      coverage: '',
+      priorityContacts: [],
+      objective: '',
+    }])
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  function addPriorityContact(itemId: string) {
+    const value = (contactDrafts[itemId] ?? '').trim()
+    if (!value) return
+    const existing = items.find((item) => item.id === itemId)
+    if (!existing) return
+    updateItem(itemId, {
+      priorityContacts: [...existing.priorityContacts, { id: crypto.randomUUID(), text: value }],
+    })
+    setContactDrafts((current) => ({ ...current, [itemId]: '' }))
+  }
+
+  function updatePriorityContact(itemId: string, contactId: string, text: string) {
+    const existing = items.find((item) => item.id === itemId)
+    if (!existing) return
+    updateItem(itemId, {
+      priorityContacts: existing.priorityContacts.map((contact) => contact.id === contactId ? { ...contact, text } : contact),
+    })
+  }
+
+  function deletePriorityContact(itemId: string, contactId: string) {
+    const existing = items.find((item) => item.id === itemId)
+    if (!existing) return
+    updateItem(itemId, {
+      priorityContacts: existing.priorityContacts.filter((contact) => contact.id !== contactId),
+    })
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly work plan</p>
+          <h3>Virtual Engagement Plan</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Map where you need to engage virtually, the key stakeholders and the purpose of the outreach.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className="weekly-plan-card" key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input
+                  aria-label="Coverage"
+                  value={item.coverage}
+                  placeholder="Coverage"
+                  onChange={(event) => updateItem(item.id, { coverage: event.target.value })}
+                />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-list-editor">
+                {item.priorityContacts.length > 0 ? (
+                  <ul className="weekly-plan-inline-list">
+                    {item.priorityContacts.map((contact) => (
+                      <li key={contact.id}>
+                        <input
+                          aria-label="Priority contact"
+                          value={contact.text}
+                          onChange={(event) => updatePriorityContact(item.id, contact.id, event.target.value)}
+                        />
+                        <button type="button" onClick={() => deletePriorityContact(item.id, contact.id)}>Remove</button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="weekly-plan-list-empty">No priority contacts added yet.</p>}
+                <div className="weekly-plan-inline-input-row">
+                  <input
+                    aria-label="Add priority contact"
+                    value={contactDrafts[item.id] ?? ''}
+                    placeholder="Add priority contact"
+                    onChange={(event) => setContactDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
+                  />
+                  <button type="button" onClick={() => addPriorityContact(item.id)}>Add</button>
+                </div>
+              </div>
+              <label className="weekly-plan-field-label">
+                Objective
+                <textarea
+                  value={item.objective}
+                  placeholder="Describe the objective of this engagement"
+                  onChange={(event) => updateItem(item.id, { objective: event.target.value })}
+                />
+              </label>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No virtual engagements planned yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add engagement</button>
+      </div>
+    </section>
+  )
+}
+
+function WeeklyPlanAccountObjectiveSection({
+  items,
+  onChange,
+}: {
+  items: AccountObjective[]
+  onChange: (items: AccountObjective[]) => void
+}) {
+  const [objectiveDrafts, setObjectiveDrafts] = useState<Record<string, string>>({})
+
+  function addAccount() {
+    onChange([...items, { id: crypto.randomUUID(), account: '', objectives: [] }])
+  }
+
+  function updateAccount(itemId: string, account: string) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, account } : item))
+  }
+
+  function updateObjective(itemId: string, objectiveId: string, text: string) {
+    onChange(items.map((item) => item.id === itemId ? {
+      ...item,
+      objectives: item.objectives.map((objective) => objective.id === objectiveId ? { ...objective, text } : objective),
+    } : item))
+  }
+
+  function addObjective(itemId: string) {
+    const value = (objectiveDrafts[itemId] ?? '').trim()
+    if (!value) return
+    const account = items.find((item) => item.id === itemId)
+    if (!account) return
+    onChange(items.map((item) => item.id === itemId ? { ...item, objectives: [...item.objectives, { id: crypto.randomUUID(), text: value }] } : item))
+    setObjectiveDrafts((current) => ({ ...current, [itemId]: '' }))
+  }
+
+  function deleteObjective(itemId: string, objectiveId: string) {
+    const account = items.find((item) => item.id === itemId)
+    if (!account) return
+    onChange(items.map((item) => item.id === itemId ? { ...item, objectives: item.objectives.filter((objective) => objective.id !== objectiveId) } : item))
+  }
+
+  function deleteAccount(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly work plan</p>
+          <h3>Key Account-Specific Objectives</h3>
+        </div>
+        <span>{items.length} account{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Capture the specific account goals and the actions required for each key account.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className="weekly-plan-card" key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input
+                  aria-label="Account name"
+                  value={item.account}
+                  placeholder="Account"
+                  onChange={(event) => updateAccount(item.id, event.target.value)}
+                />
+                <button type="button" className="destructive-button" onClick={() => deleteAccount(item.id)}>Delete</button>
+              </div>
+              {item.objectives.length > 0 ? (
+                <ul className="weekly-plan-inline-list">
+                  {item.objectives.map((objective) => (
+                    <li key={objective.id}>
+                      <input
+                        aria-label="Objective"
+                        value={objective.text}
+                        onChange={(event) => updateObjective(item.id, objective.id, event.target.value)}
+                      />
+                      <button type="button" onClick={() => deleteObjective(item.id, objective.id)}>Remove</button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="weekly-plan-list-empty">No account objectives added yet.</p>}
+              <div className="weekly-plan-inline-input-row">
+                <input
+                  aria-label="Add objective"
+                  value={objectiveDrafts[item.id] ?? ''}
+                  placeholder="Add objective"
+                  onChange={(event) => setObjectiveDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
+                />
+                <button type="button" onClick={() => addObjective(item.id)}>Add</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No account-specific objectives captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addAccount}>+ Add account</button>
+      </div>
+    </section>
+  )
+}
+
+function WeeklyPlanCommercialPrioritySection({
+  items,
+  onChange,
+}: {
+  items: CommercialPriority[]
+  onChange: (items: CommercialPriority[]) => void
+}) {
+  function updateItem(itemId: string, updates: Partial<CommercialPriority>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function addItem() {
+    onChange([...items, { id: crypto.randomUUID(), text: '', opportunity: '', account: '', product: '' }])
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly work plan</p>
+          <h3>Commercial Priorities</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Capture the priority commercial actions, with optional account and product context.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className="weekly-plan-card" key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input
+                  aria-label="Commercial priority opportunity"
+                  value={item.opportunity ?? ''}
+                  placeholder="Opportunity"
+                  onChange={(event) => updateItem(item.id, { opportunity: event.target.value || undefined })}
+                />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input
+                  aria-label="Commercial priority action"
+                  value={item.text}
+                  placeholder="Action"
+                  onChange={(event) => updateItem(item.id, { text: event.target.value })}
+                />
+                <input
+                  aria-label="Commercial priority account"
+                  value={item.account ?? ''}
+                  placeholder="Account (optional)"
+                  onChange={(event) => updateItem(item.id, { account: event.target.value || undefined })}
+                />
+                <input
+                  aria-label="Commercial priority product"
+                  value={item.product ?? ''}
+                  placeholder="Product (optional)"
+                  onChange={(event) => updateItem(item.id, { product: event.target.value || undefined })}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No commercial priorities captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add priority</button>
+      </div>
+    </section>
+  )
+}
+
+function WeeklyPlanSuccessMeasureSection({
+  items,
+  onChange,
+}: {
+  items: SuccessMeasure[]
+  onChange: (items: SuccessMeasure[]) => void
+}) {
+  function updateItem(itemId: string, updates: Partial<SuccessMeasure>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function addItem() {
+    onChange([...items, { id: crypto.randomUUID(), text: '', target: '', unit: '', category: 'coverage' }])
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly work plan</p>
+          <h3>Success Measures</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Track the measurable indicators of success for the week, with optional target and category context.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className="weekly-plan-card" key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input
+                  aria-label="Success measure"
+                  value={item.text}
+                  placeholder="Measure / description"
+                  onChange={(event) => updateItem(item.id, { text: event.target.value })}
+                />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input
+                  aria-label="Target"
+                  value={item.target ?? ''}
+                  placeholder="Target (optional)"
+                  onChange={(event) => updateItem(item.id, { target: event.target.value || undefined })}
+                />
+                <input
+                  aria-label="Unit"
+                  value={item.unit ?? ''}
+                  placeholder="Unit (optional)"
+                  onChange={(event) => updateItem(item.id, { unit: event.target.value || undefined })}
+                />
+              </div>
+              <label className="weekly-plan-field-label">
+                Category
+                <select
+                  aria-label="Success measure category"
+                  value={item.category ?? 'coverage'}
+                  onChange={(event) => updateItem(item.id, { category: event.target.value as SuccessMeasure['category'] })}
+                >
+                  <option value="coverage">Coverage</option>
+                  <option value="engagement">Engagement</option>
+                  <option value="commercial">Commercial</option>
+                  <option value="account">Account</option>
+                  <option value="scientific">Scientific</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No success measures captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add measure</button>
+      </div>
+    </section>
+  )
+}
+
 function WeeklyPlanScreen() {
   const [weekStart, setWeekStart] = useState(getSelectedWeekStart)
   const [plan, setPlan] = useState<WeeklyPlan>(() => loadWeeklyPlan(getSelectedWeekStart()))
+  const [isExportingPlan, setIsExportingPlan] = useState(false)
+  const [planExportMessage, setPlanExportMessage] = useState('')
   const planIntelligence = useMemo(() => deriveWeeklyIntelligence({
     selectedWeek: weekStart,
     plan,
@@ -316,18 +772,33 @@ function WeeklyPlanScreen() {
     }))
   }
 
+  async function handleExportWeeklyPlan() {
+    setIsExportingPlan(true)
+    setPlanExportMessage('')
+    try {
+      const result = await exportWeeklyPlanWord(plan)
+      setPlanExportMessage(`Downloaded ${result.filename}`)
+    } catch {
+      setPlanExportMessage('Weekly Plan export could not be completed. Please try again.')
+    } finally {
+      setIsExportingPlan(false)
+    }
+  }
+
   return (
     <main className="weekly-plan-screen" id="weekly-plan">
       <div className="plan-page-heading">
         <div>
           <p className="eyebrow">Plan before the week begins</p>
-          <h1>Weekly Plan</h1>
-          <p className="plan-intro">Plan your activities and priorities for the week.</p>
+          <h1>Weekly Work Plan</h1>
+          <p className="plan-intro">Align weekly strategic priorities, field coverage and account-specific activities for the selected week.</p>
         </div>
         <div className="week-selector">
+          <button className="button button-secondary" type="button" onClick={handleExportWeeklyPlan} disabled={isExportingPlan}>{isExportingPlan ? 'Generating Weekly Plan...' : 'Export Weekly Plan'} {!isExportingPlan && <span aria-hidden="true">→</span>}</button>
           <label htmlFor="reporting-week">Reporting week</label>
           <input id="reporting-week" type="week" value={toWeekInput(weekStart)} onChange={(event) => changeWeek(event.target.value)} />
           <span>{formatWeekRange(weekStart)}</span>
+          {planExportMessage && <span role="status">{planExportMessage}</span>}
         </div>
       </div>
       <section className="plan-coverage" aria-labelledby="plan-coverage-heading">
@@ -340,9 +811,45 @@ function WeeklyPlanScreen() {
         })}</div>
         {planIntelligence.planGaps.length > 0 && <ul className="plan-coverage-gaps">{planIntelligence.planGaps.filter((gap) => gap.status !== 'covered').slice(0, 5).map((gap) => <li key={`${gap.itemId}-${gap.dayLabel}`}><strong>{gap.item}</strong><span>{gap.status}</span><small>{gap.reason}</small></li>)}</ul>}
       </section>
-      <div className="days-list">
-        {plan.days.map((day) => <DayPlanSection day={day} key={day.id} onChange={updateDay} />)}
+      <div className="weekly-plan-top-level">
+        <WeeklyPlanTextListSection
+          title="Weekly Strategic Objectives"
+          summary={`${plan.weeklyStrategicObjectives.length} item${plan.weeklyStrategicObjectives.length === 1 ? '' : 's'}`}
+          items={plan.weeklyStrategicObjectives}
+          emptyText="No strategic objectives captured for this week yet."
+          placeholder="Add a strategic objective"
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, weeklyStrategicObjectives: items }))}
+        />
+        <WeeklyPlanVirtualEngagementSection
+          items={plan.virtualEngagementPlan}
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
+        />
+        <WeeklyPlanAccountObjectiveSection
+          items={plan.keyAccountObjectives}
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
+        />
+        <WeeklyPlanCommercialPrioritySection
+          items={plan.commercialPriorities}
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, commercialPriorities: items }))}
+        />
+        <WeeklyPlanSuccessMeasureSection
+          items={plan.successMeasures}
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, successMeasures: items }))}
+        />
       </div>
+      <section className="daily-field-plan-section" aria-labelledby="daily-field-plan-heading">
+        <div className="weekly-plan-summary-header daily-plan-header">
+          <div>
+            <p className="eyebrow">Week plan</p>
+            <h2 id="daily-field-plan-heading">Daily Field Plan</h2>
+          </div>
+          <span>Monday–Friday</span>
+        </div>
+        <p className="weekly-plan-helper">Plan your physical account coverage, HCP engagements and primary objectives for each working day.</p>
+        <div className="days-list">
+          {plan.days.map((day) => <DayPlanSection day={day} key={day.id} onChange={updateDay} />)}
+        </div>
+      </section>
     </main>
   )
 }

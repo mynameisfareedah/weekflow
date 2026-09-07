@@ -1,7 +1,13 @@
 import {
   PLAN_CATEGORIES,
+  type AccountObjective,
+  type CommercialPriority,
   type DayCategories,
   type DayId,
+  type PlanItem,
+  type SuccessMeasure,
+  type SuccessMeasureCategory,
+  type VirtualEngagementPlanItem,
   type WeeklyPlan,
 } from '../types/weeklyPlan'
 
@@ -22,6 +28,70 @@ function createEmptyCategories(): DayCategories {
   const categories = {} as DayCategories
   for (const category of PLAN_CATEGORIES) categories[category] = []
   return categories
+}
+
+function normalizePlanItems(value: unknown): PlanItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(
+    (item): item is PlanItem =>
+      Boolean(item) && typeof item === 'object' && typeof (item as PlanItem).id === 'string' && typeof (item as PlanItem).text === 'string',
+  )
+}
+
+function normalizeVirtualEngagementPlan(value: unknown): VirtualEngagementPlanItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is VirtualEngagementPlanItem => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as VirtualEngagementPlanItem
+    return typeof candidate.id === 'string'
+      && typeof candidate.coverage === 'string'
+      && Array.isArray(candidate.priorityContacts)
+      && typeof candidate.objective === 'string'
+  }).map((item) => ({
+    ...item,
+    priorityContacts: normalizePlanItems(item.priorityContacts),
+  }))
+}
+
+function normalizeAccountObjectives(value: unknown): AccountObjective[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is AccountObjective => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as AccountObjective
+    return typeof candidate.id === 'string'
+      && typeof candidate.account === 'string'
+      && Array.isArray(candidate.objectives)
+  }).map((item) => ({
+    ...item,
+    objectives: normalizePlanItems(item.objectives),
+  }))
+}
+
+function normalizeCommercialPriorities(value: unknown): CommercialPriority[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is CommercialPriority => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as CommercialPriority
+    return typeof candidate.id === 'string'
+      && typeof candidate.text === 'string'
+      && (candidate.opportunity === undefined || typeof candidate.opportunity === 'string')
+      && (candidate.account === undefined || typeof candidate.account === 'string')
+      && (candidate.product === undefined || typeof candidate.product === 'string')
+  })
+}
+
+function normalizeSuccessMeasures(value: unknown): SuccessMeasure[] {
+  const categories: SuccessMeasureCategory[] = ['coverage', 'engagement', 'commercial', 'account', 'scientific', 'other']
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is SuccessMeasure => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as SuccessMeasure
+    return typeof candidate.id === 'string'
+      && typeof candidate.text === 'string'
+      && (candidate.target === undefined || typeof candidate.target === 'string')
+      && (candidate.unit === undefined || typeof candidate.unit === 'string')
+      && (candidate.category === undefined || categories.includes(candidate.category))
+  })
 }
 
 export function getCurrentWeekStart() {
@@ -97,6 +167,7 @@ export function createEmptyWeeklyPlan(weekStart: string): WeeklyPlan {
 
   return {
     weekStart,
+    weeklyStrategicObjectives: [],
     days: DAY_IDS.map((id, index) => {
       const date = new Date(start)
       date.setDate(start.getDate() + index)
@@ -107,6 +178,10 @@ export function createEmptyWeeklyPlan(weekStart: string): WeeklyPlan {
         categories: createEmptyCategories(),
       }
     }),
+    virtualEngagementPlan: [],
+    keyAccountObjectives: [],
+    commercialPriorities: [],
+    successMeasures: [],
   }
 }
 
@@ -116,6 +191,7 @@ function normalizePlan(plan: unknown, weekStart: string): WeeklyPlan {
 
   return {
     ...emptyPlan,
+    weeklyStrategicObjectives: normalizePlanItems((plan as WeeklyPlan).weeklyStrategicObjectives),
     days: emptyPlan.days.map((day, index) => {
       const savedDay = (plan as WeeklyPlan).days[index]
       if (!savedDay || typeof savedDay !== 'object') return day
@@ -132,6 +208,10 @@ function normalizePlan(plan: unknown, weekStart: string): WeeklyPlan {
       }
       return { ...day, categories }
     }),
+    virtualEngagementPlan: normalizeVirtualEngagementPlan((plan as WeeklyPlan).virtualEngagementPlan),
+    keyAccountObjectives: normalizeAccountObjectives((plan as WeeklyPlan).keyAccountObjectives),
+    commercialPriorities: normalizeCommercialPriorities((plan as WeeklyPlan).commercialPriorities),
+    successMeasures: normalizeSuccessMeasures((plan as WeeklyPlan).successMeasures),
   }
 }
 
