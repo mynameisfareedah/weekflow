@@ -25,9 +25,9 @@ const TWO_COLUMN_WIDTHS = [2600, CONTENT_WIDTH_TWIPS - 2600]
 const BORDER_COLOR = 'C9D1C8'
 const HEADER_COLOR = 'F3F5F0'
 const WEEKLY_PLAN_METADATA = {
-  preparedBy: 'Franklin Ewelike',
-  role: 'Medical Representative WWCV (Johnson & Johnson)',
-  portfolio: 'ZYTIGA® | INVEGA SUSTENNA® | TREVICTA®',
+  preparedBy: 'WAHEED YUSUF',
+  role: 'Field Sales Manager - Key Account WWCV (Johnson & Johnson)',
+  portfolio: 'ZYTIGA® | INVEGA SUSTENNA® | TRIVECTA®',
 } as const
 
 function clean(value: string | undefined) {
