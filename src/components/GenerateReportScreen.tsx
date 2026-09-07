@@ -5,6 +5,7 @@ import { getSelectedWeekStart, loadWeeklyPlan } from '../storage/weeklyPlanStora
 import { deriveWeeklyIntelligence } from '../intelligence/intelligenceEngine'
 import type { WeeklyIntelligence } from '../intelligence/intelligenceTypes'
 import { exportReportWord, getFixedReportMetadata, getFixedReportWeekLabel } from '../utils/reportDocx'
+import { exportWeeklyPlanWord } from '../utils/weeklyPlanDocx'
 import type { DailyActivity } from '../types/dailyActivity'
 import type { FollowUp } from '../types/followUp'
 import type { DayPlan, WeeklyPlan } from '../types/weeklyPlan'
@@ -136,6 +137,8 @@ export default function GenerateReportScreen() {
   const [weekKey] = useState(getSelectedWeekStart)
   const [isExporting, setIsExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState('')
+  const [isExportingPlan, setIsExportingPlan] = useState(false)
+  const [planExportMessage, setPlanExportMessage] = useState('')
   const [selectedCarryForward, setSelectedCarryForward] = useState<string[]>([])
   const plan = useMemo(() => loadWeeklyPlan(weekKey), [weekKey])
   const activities = useMemo(() => loadDailyActivities(weekKey), [weekKey])
@@ -162,6 +165,19 @@ export default function GenerateReportScreen() {
     }
   }
 
+  async function handleExportWeeklyPlan() {
+    setIsExportingPlan(true)
+    setPlanExportMessage('')
+    try {
+      const result = await exportWeeklyPlanWord(plan)
+      setPlanExportMessage(`Downloaded ${result.filename}`)
+    } catch {
+      setPlanExportMessage('Weekly Plan export could not be completed. Please try again.')
+    } finally {
+      setIsExportingPlan(false)
+    }
+  }
+
   function carryForwardKey(title: string, account?: string) {
     return `${title}-${account ?? ''}`
   }
@@ -175,8 +191,38 @@ export default function GenerateReportScreen() {
       </section>
       {intelligence.dataQualityWarnings.length > 0 && <section className="report-review-items" aria-labelledby="report-review-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Before export</p><h2 id="report-review-heading">Review Before Export</h2></div><span>{intelligence.dataQualityWarnings.length}</span></div><ul>{intelligence.dataQualityWarnings.slice(0, 5).map((warning) => <li key={`${warning.title}-${warning.sourceActivityId ?? ''}`}><div><strong>{warning.title}</strong><p>{warning.reason}</p></div><a href={`${warning.sourceActivityId ? '/daily-activity' : '/follow-ups'}`}>Review <span aria-hidden="true">→</span></a></li>)}</ul></section>}
       {intelligence.carryForwardCandidates.length > 0 && <section className="report-carry-forward" aria-labelledby="carry-forward-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Next week planning</p><h2 id="carry-forward-heading">Suggested Carry-Forward</h2><p>These unfinished items may be relevant to next week. Selecting one does not copy it automatically.</p></div><span>{intelligence.carryForwardCandidates.length}</span></div><ul>{intelligence.carryForwardCandidates.slice(0, 6).map((candidate) => { const key = carryForwardKey(candidate.title, candidate.account); return <li key={key}><label><input type="checkbox" checked={selectedCarryForward.includes(key)} onChange={(event) => setSelectedCarryForward((current) => event.target.checked ? [...current, key] : current.filter((item) => item !== key))} /><span><strong>{candidate.title}</strong><small>{candidate.reason}</small></span></label></li> })}</ul><button className="button button-secondary" type="button" disabled={selectedCarryForward.length === 0} onClick={() => { window.history.pushState(null, '', '/weekly-plan'); window.dispatchEvent(new PopStateEvent('popstate')) }}>Review Selected in Weekly Plan</button></section>}
-      <div className="report-actions"><a className="button button-secondary" href="/weekly-plan">Back to Edit</a><div className="report-source-links"><a href="/weekly-plan">Weekly Plan</a><a href="/daily-activity">Daily Activity</a><a href="/follow-ups">Follow-ups</a></div><button className="button button-secondary" type="button" onClick={() => window.print()}>Print Report</button><button className="button button-primary" type="button" onClick={handleExportWord} disabled={isExporting} aria-busy={isExporting}>{isExporting ? 'Generating Word document...' : 'Export Word Document'} {!isExporting && <span aria-hidden="true">→</span>}</button></div>
-      {exportMessage && <p className="export-message" role="status">{exportMessage}</p>}
+      <section className="weekly-report-outputs" aria-labelledby="weekly-reports-heading">
+        <div className="weekly-report-outputs-heading">
+          <div>
+            <p className="report-eyebrow">Report outputs</p>
+            <h2 id="weekly-reports-heading">Weekly Reports</h2>
+          </div>
+          <span>Selected week: {formatWeekRange(weekKey)}</span>
+        </div>
+        <div className="weekly-report-output-grid">
+          <article className="weekly-report-output-card">
+            <p className="report-eyebrow">What was planned</p>
+            <h3>Weekly Work Plan</h3>
+            <p>Planned activities, objectives and field coverage for the selected week.</p>
+            <div className="weekly-report-output-actions">
+              <a className="button button-secondary" href="/weekly-plan">Review Weekly Plan</a>
+              <button className="button button-primary" type="button" onClick={handleExportWeeklyPlan} disabled={isExportingPlan} aria-busy={isExportingPlan}>{isExportingPlan ? 'Generating...' : 'Export Weekly Plan'} {!isExportingPlan && <span aria-hidden="true">→</span>}</button>
+            </div>
+            {planExportMessage && <p className="export-message" role="status">{planExportMessage}</p>}
+          </article>
+          <article className="weekly-report-output-card">
+            <p className="report-eyebrow">What was actually done</p>
+            <h3>Weekly Field Activity Report</h3>
+            <p>Actual Daily Activity records, outcomes, intelligence and follow-ups captured for the selected week.</p>
+            <div className="weekly-report-output-actions">
+              <a className="button button-secondary" href="#report-preview-heading">Review Report</a>
+              <button className="button button-primary" type="button" onClick={handleExportWord} disabled={isExporting} aria-busy={isExporting}>{isExporting ? 'Generating...' : 'Export Weekly Report'} {!isExporting && <span aria-hidden="true">→</span>}</button>
+            </div>
+            {exportMessage && <p className="export-message" role="status">{exportMessage}</p>}
+          </article>
+        </div>
+      </section>
+      <div className="report-actions"><a className="button button-secondary" href="/weekly-plan">Back to Edit</a><div className="report-source-links"><a href="/weekly-plan">Weekly Plan</a><a href="/daily-activity">Daily Activity</a><a href="/follow-ups">Follow-ups</a></div><button className="button button-secondary" type="button" onClick={() => window.print()}>Print Report</button></div>
       <article className="report-preview" aria-labelledby="report-preview-heading">
         <div className="report-preview-label" id="report-preview-heading">Report Preview</div>
         <ReportHeader weekKey={weekKey} />

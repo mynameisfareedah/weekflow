@@ -29,7 +29,6 @@ import {
   type WeeklyPlan,
 } from './types/weeklyPlan'
 import { exportReportWord, getFixedReportMetadata, getFixedReportWeekLabel } from './utils/reportDocx'
-import { exportWeeklyPlanWord } from './utils/weeklyPlanDocx'
 import './App.css'
 
 const navigationItems = [
@@ -745,8 +744,6 @@ function WeeklyPlanSuccessMeasureSection({
 function WeeklyPlanScreen() {
   const [weekStart, setWeekStart] = useState(getSelectedWeekStart)
   const [plan, setPlan] = useState<WeeklyPlan>(() => loadWeeklyPlan(getSelectedWeekStart()))
-  const [isExportingPlan, setIsExportingPlan] = useState(false)
-  const [planExportMessage, setPlanExportMessage] = useState('')
   const planIntelligence = useMemo(() => deriveWeeklyIntelligence({
     selectedWeek: weekStart,
     plan,
@@ -772,19 +769,6 @@ function WeeklyPlanScreen() {
     }))
   }
 
-  async function handleExportWeeklyPlan() {
-    setIsExportingPlan(true)
-    setPlanExportMessage('')
-    try {
-      const result = await exportWeeklyPlanWord(plan)
-      setPlanExportMessage(`Downloaded ${result.filename}`)
-    } catch {
-      setPlanExportMessage('Weekly Plan export could not be completed. Please try again.')
-    } finally {
-      setIsExportingPlan(false)
-    }
-  }
-
   return (
     <main className="weekly-plan-screen" id="weekly-plan">
       <div className="plan-page-heading">
@@ -794,11 +778,9 @@ function WeeklyPlanScreen() {
           <p className="plan-intro">Align weekly strategic priorities, field coverage and account-specific activities for the selected week.</p>
         </div>
         <div className="week-selector">
-          <button className="button button-secondary" type="button" onClick={handleExportWeeklyPlan} disabled={isExportingPlan}>{isExportingPlan ? 'Generating Weekly Plan...' : 'Export Weekly Plan'} {!isExportingPlan && <span aria-hidden="true">→</span>}</button>
           <label htmlFor="reporting-week">Reporting week</label>
           <input id="reporting-week" type="week" value={toWeekInput(weekStart)} onChange={(event) => changeWeek(event.target.value)} />
           <span>{formatWeekRange(weekStart)}</span>
-          {planExportMessage && <span role="status">{planExportMessage}</span>}
         </div>
       </div>
       <section className="plan-coverage" aria-labelledby="plan-coverage-heading">
