@@ -16,10 +16,53 @@ function getCarryForward(input: IntelligenceInput, gaps: ReturnType<typeof detec
   return candidates.filter((candidate, index, all) => all.findIndex((item) => item.title === candidate.title && item.account === candidate.account) === index)
 }
 
-export function getReportReadiness(activityCount: number, openFollowUpCount: number, warningCount: number, highPriorityCount: number, gapCount: number) {
-  if (activityCount === 0) return { status: 'empty' as const, activityCount, openFollowUpCount, warningCount, highPriorityCount, summary: 'No field activity has been captured for this week.' }
-  if (warningCount > 0 || gapCount > 0 || highPriorityCount > 0) return { status: 'review' as const, activityCount, openFollowUpCount, warningCount, highPriorityCount, summary: `Activity has been captured, but ${gapCount} planned item${gapCount === 1 ? '' : 's'} and ${warningCount} data-quality warning${warningCount === 1 ? '' : 's'} require review.` }
-  return { status: 'ready' as const, activityCount, openFollowUpCount, warningCount, highPriorityCount, summary: `Weekly activity is available for reporting. ${openFollowUpCount} item${openFollowUpCount === 1 ? '' : 's'} require attention before final submission.` }
+export function getReportReadiness({
+  activityCount,
+  plannedItemCount,
+  capturedPlannedItemCount,
+  openFollowUpCount,
+  completedFollowUpCount,
+  warningCount,
+  highPriorityCount,
+  hasMeaningfulPlan,
+}: {
+  activityCount: number
+  plannedItemCount: number
+  capturedPlannedItemCount: number
+  openFollowUpCount: number
+  completedFollowUpCount: number
+  warningCount: number
+  highPriorityCount: number
+  hasMeaningfulPlan: boolean
+}) {
+  if (!hasMeaningfulPlan && activityCount === 0) {
+    return { status: 'empty' as const, hasMeaningfulPlan, activityCount, plannedItemCount, capturedPlannedItemCount, openFollowUpCount, completedFollowUpCount, warningCount, highPriorityCount, summary: "Your week hasn't started yet. Open Weekly Plan to set priorities or start Daily Activity." }
+  }
+  if (warningCount > 0 || plannedItemCount > capturedPlannedItemCount || (hasMeaningfulPlan && activityCount === 0)) {
+    const reasons = []
+    if (hasMeaningfulPlan && activityCount === 0) reasons.push('no Daily Activity has been captured yet')
+    if (plannedItemCount > capturedPlannedItemCount) reasons.push('some planned work has not yet been captured')
+    if (warningCount > 0) reasons.push(`${warningCount} data-quality issue${warningCount === 1 ? '' : 's'} need review`)
+    return { status: 'review' as const, hasMeaningfulPlan, activityCount, plannedItemCount, capturedPlannedItemCount, openFollowUpCount, completedFollowUpCount, warningCount, highPriorityCount, summary: `${reasons.join('; ')}.` }
+  }
+  const followUpNote = openFollowUpCount > 0 ? ` ${openFollowUpCount} open follow-up${openFollowUpCount === 1 ? '' : 's'} remain visible for follow-through.` : ''
+  return { status: 'ready' as const, hasMeaningfulPlan, activityCount, plannedItemCount, capturedPlannedItemCount, openFollowUpCount, completedFollowUpCount, warningCount, highPriorityCount, summary: `The selected week's activity is sufficiently captured for review and export.${followUpNote}` }
+}
+
+function getMeaningfulPlanItemCount(plan: IntelligenceInput['plan']) {
+  const dayItems = plan.days.flatMap((day) => Object.values(day.categories).flat())
+  const weeklyItems = [
+    ...(plan.weeklyStrategicObjectives ?? []),
+    ...(plan.virtualEngagementPlan ?? []).flatMap((item) => [...item.priorityContacts, { id: item.id, text: `${item.coverage} ${item.objective}` }]),
+    ...(plan.keyAccountObjectives ?? []).flatMap((item) => item.objectives),
+    ...(plan.commercialPriorities ?? []),
+    ...(plan.successMeasures ?? []),
+  ]
+  return [...dayItems, ...weeklyItems].filter((item) => item.text.trim()).length
+}
+
+function getMatchablePlanItemCount(plan: IntelligenceInput['plan']) {
+  return plan.days.flatMap((day) => Object.values(day.categories).flat()).filter((item) => item.text.trim()).length
 }
 
 export function deriveWeeklyIntelligence(input: IntelligenceInput): WeeklyIntelligence {
@@ -31,6 +74,11 @@ export function deriveWeeklyIntelligence(input: IntelligenceInput): WeeklyIntell
   const planGaps = detectPlanGaps(input.plan, activities)
   const dataQualityWarnings = detectDataQualityWarnings(activities, followUps, planGaps)
   const openFollowUps = followUps.filter((followUp) => followUp.status === 'open')
+  const completedFollowUps = followUps.filter((followUp) => followUp.status === 'completed')
+  const meaningfulPlanItemCount = getMeaningfulPlanItemCount(input.plan)
+  const plannedItemCount = getMatchablePlanItemCount(input.plan)
+  const capturedPlannedItemCount = plannedItemCount - planGaps.filter((gap) => gap.status === 'not evidenced' || gap.status === 'needs review').length
+  const readinessWarnings = dataQualityWarnings.filter((warning) => !warning.title.startsWith('High-priority follow-up remains open:') && !warning.title.endsWith('has no captured activity'))
   const recommendations: Recommendation[] = [
     ...openFollowUps.map((followUp) => ({ title: followUp.task, reason: 'This follow-up remains open.', priority: followUp.priority, category: 'strategic-accounts' as IntelligenceCategory, account: followUp.facility })),
     ...followUpSuggestions.map((suggestion) => ({ title: suggestion.title, reason: suggestion.reason, priority: suggestion.priority, category: 'strategic-accounts' as IntelligenceCategory, sourceActivityId: suggestion.sourceActivityId, account: suggestion.account })),
@@ -47,7 +95,16 @@ export function deriveWeeklyIntelligence(input: IntelligenceInput): WeeklyIntell
     recommendations,
     dataQualityWarnings,
     carryForwardCandidates: getCarryForward({ ...input, activities, followUps }, planGaps, dataQualityWarnings),
-    reportReadiness: getReportReadiness(activities.length, openFollowUps.length, dataQualityWarnings.length, openFollowUps.filter((followUp) => followUp.priority === 'high').length, planGaps.filter((gap) => gap.status !== 'covered').length),
+    reportReadiness: getReportReadiness({
+      activityCount: activities.length,
+      plannedItemCount,
+      capturedPlannedItemCount,
+      openFollowUpCount: openFollowUps.length,
+      completedFollowUpCount: completedFollowUps.length,
+      warningCount: readinessWarnings.length,
+      highPriorityCount: openFollowUps.filter((followUp) => followUp.priority === 'high').length,
+      hasMeaningfulPlan: meaningfulPlanItemCount > 0,
+    }),
   }
 }
 

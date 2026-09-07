@@ -94,8 +94,12 @@ export interface CarryForwardCandidate {
 
 export interface ReportReadiness {
   status: 'ready' | 'review' | 'empty'
+  hasMeaningfulPlan: boolean
   activityCount: number
+  plannedItemCount: number
+  capturedPlannedItemCount: number
   openFollowUpCount: number
+  completedFollowUpCount: number
   warningCount: number
   highPriorityCount: number
   summary: string

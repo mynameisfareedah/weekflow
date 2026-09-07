@@ -47,7 +47,31 @@ assert(intelligence.reportReadiness.status === 'review', 'August fixture should 
 
 const empty = deriveWeeklyIntelligence({ selectedWeek: week, plan: createEmptyWeeklyPlan(week), activities: [], followUps: [] })
 assert(empty.reportReadiness.status === 'empty', 'Empty week did not return empty readiness')
+assert(empty.reportReadiness.summary.includes("Your week hasn't started yet"), 'Empty week did not return the calm empty-state summary')
 assert(empty.opportunitySignals.length === 0 && empty.recommendations.length === 0, 'Empty week produced false intelligence')
+
+const plannedNoActivityPlan = createEmptyWeeklyPlan(week)
+plannedNoActivityPlan.days[0].categories.facilities = [{ id: 'planned-upth', text: 'UPTH' }, { id: 'planned-rsuth', text: 'RSUTH' }]
+const plannedNoActivity = deriveWeeklyIntelligence({ selectedWeek: week, plan: plannedNoActivityPlan, activities: [], followUps: [] })
+assert(plannedNoActivity.reportReadiness.status === 'review', 'Planned week with no activity should require attention')
+assert(plannedNoActivity.reportReadiness.summary.includes('no Daily Activity'), 'Planned week did not explain missing activity')
+
+const partialPlan = createEmptyWeeklyPlan(week)
+partialPlan.days[0].categories.facilities = [{ id: 'partial-upth', text: 'UPTH' }, { id: 'partial-rsuth', text: 'RSUTH' }, { id: 'partial-unth', text: 'UNTH' }]
+const partial = deriveWeeklyIntelligence({ selectedWeek: week, plan: partialPlan, activities: [activity('partial-1', 'UPTH', 'Visit captured.')], followUps: [] })
+assert(partial.reportReadiness.status === 'review', 'Partially completed week should require attention')
+assert(partial.reportReadiness.plannedItemCount === 3 && partial.reportReadiness.capturedPlannedItemCount === 1, 'Partial planned-versus-actual counts were incorrect')
+
+const readyPlan = createEmptyWeeklyPlan(week)
+readyPlan.days[0].categories.facilities = [{ id: 'ready-upth', text: 'UPTH' }]
+const ready = deriveWeeklyIntelligence({ selectedWeek: week, plan: readyPlan, activities: [activity('ready-1', 'UPTH', 'Visit captured.')], followUps: [] })
+assert(ready.reportReadiness.status === 'ready', 'Sufficiently captured week should be ready to review')
+
+const openFollowUp = deriveWeeklyIntelligence({ selectedWeek: week, plan: readyPlan, activities: [activity('follow-up-1', 'UPTH', 'Visit captured.')], followUps: [{ id: 'open-follow-up', weekKey: week, task: 'Review next step', facility: 'UPTH', priority: 'high', status: 'open', createdAt: week, updatedAt: week }] })
+assert(openFollowUp.reportReadiness.status === 'ready' && openFollowUp.reportReadiness.openFollowUpCount === 1, 'Open follow-ups should remain visible without invalidating readiness')
+
+const incompleteActivity = deriveWeeklyIntelligence({ selectedWeek: week, plan: createEmptyWeeklyPlan(week), activities: [activity('incomplete-1', 'UPTH', '')], followUps: [] })
+assert(incompleteActivity.reportReadiness.status === 'review' && incompleteActivity.reportReadiness.warningCount > 0, 'Missing activity detail should require review')
 
 const otherWeek = deriveWeeklyIntelligence({ selectedWeek: '2026-08-17', plan: createEmptyWeeklyPlan('2026-08-17'), activities: augustActivities, followUps: augustFollowUps })
 assert(otherWeek.reportReadiness.status === 'empty' && otherWeek.opportunitySignals.length === 0, 'Week isolation failed')
