@@ -46,6 +46,27 @@ const EMPTY_DRAFT: ActivityDraft = {
   structuredOutcomes: [],
 }
 
+function getInitialDraft(initialActivity: DailyActivity | null, plannedActivity: PlannedActivity | null): ActivityDraft {
+  if (initialActivity) {
+    return {
+      account: initialActivity.account,
+      activityType: initialActivity.activityType,
+      hcpNames: [...initialActivity.hcpNames],
+      outcome: initialActivity.outcome,
+      intelligence: initialActivity.intelligence,
+      nextAction: initialActivity.nextAction,
+      structuredOutcomes: initialActivity.structuredOutcomes.map((outcome) => ({ ...outcome })),
+    }
+  }
+  return {
+    ...EMPTY_DRAFT,
+    hcpNames: [],
+    structuredOutcomes: [],
+    account: plannedActivity?.account ?? '',
+    activityType: plannedActivity?.activityType ?? 'Physical Visit',
+  }
+}
+
 function createId() {
   return crypto.randomUUID()
 }
@@ -90,19 +111,7 @@ function ActivityCaptureForm({
   onSave: (draft: ActivityDraft, plannedActivityId: string | null, activityId?: string) => void
   onCancel: () => void
 }) {
-  const [draft, setDraft] = useState<ActivityDraft>(() => initialActivity ? {
-    account: initialActivity.account,
-    activityType: initialActivity.activityType,
-    hcpNames: initialActivity.hcpNames,
-    outcome: initialActivity.outcome,
-    intelligence: initialActivity.intelligence,
-    nextAction: initialActivity.nextAction,
-    structuredOutcomes: initialActivity.structuredOutcomes,
-  } : {
-    ...EMPTY_DRAFT,
-    account: plannedActivity?.account ?? '',
-    activityType: plannedActivity?.activityType ?? 'Physical Visit',
-  })
+  const [draft, setDraft] = useState<ActivityDraft>(() => getInitialDraft(initialActivity, plannedActivity))
   const [hcpInput, setHcpInput] = useState('')
   const [outcomeType, setOutcomeType] = useState<StructuredOutcomeType | ''>('')
   const availableHcps = getItemTexts(day.categories.hcps)
@@ -336,7 +345,7 @@ export default function DailyActivityScreen() {
       <div className="day-switcher" aria-label="Select activity day">{weekDays.map((day) => <button key={day.id} className={day.id === selectedDay.id ? 'is-selected' : ''} type="button" onClick={() => selectDay(day)}><span>{day.label.slice(0, 3)}</span><strong>{new Date(`${day.date}T12:00:00`).getDate()}</strong></button>)}</div>
       <div className="daily-content">
         <section className="planned-activities" aria-labelledby="planned-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">From your Weekly Plan</p><h2 id="planned-activities-heading">Today's planned activities</h2></div><button className="button button-secondary compact-button" type="button" onClick={startUnplannedActivity}>+ Add Activity</button></div>{plannedActivities.length > 0 ? <div className="planned-activity-list">{plannedActivities.map((activity) => <button className="planned-activity" type="button" key={activity.id} onClick={() => startPlannedActivity(activity)}><span>{activity.label}</span><small>{activity.activityType === 'Virtual Engagement' ? 'Virtual engagement' : 'Start capture'} <b>→</b></small></button>)}</div> : <div className="empty-planned"><p>No activities planned for {selectedDay.label}.</p><button className="text-button" type="button" onClick={startUnplannedActivity}>+ Add an unplanned activity</button></div>}</section>
-        {captureOpen && <ActivityCaptureForm day={selectedDay} plannedActivity={selectedPlannedActivity} initialActivity={editingActivity} onSave={saveActivity} onCancel={() => { setCaptureOpen(false); setEditingActivity(null); setSelectedPlannedActivity(null) }} />}
+        {captureOpen && <ActivityCaptureForm key={editingActivity?.id ?? selectedPlannedActivity?.id ?? 'new'} day={selectedDay} plannedActivity={selectedPlannedActivity} initialActivity={editingActivity} onSave={saveActivity} onCancel={() => { setCaptureOpen(false); setEditingActivity(null); setSelectedPlannedActivity(null) }} />}
         <section className="today-activities" aria-labelledby="today-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">Saved to this week</p><h2 id="today-activities-heading">Today's Activities</h2></div><span className="activity-count">{dayActivities.length}</span></div>{dayActivities.length > 0 ? <div className="activity-summary-list">{dayActivities.map((activity) => <ActivitySummary key={activity.id} activity={activity} onEdit={() => editActivity(activity)} onDelete={() => deleteActivity(activity.id)} onFollowUp={() => createFollowUpFromActivity(activity)} />)}</div> : <p className="empty-activities">Captured activities will appear here.</p>}</section>
         {followUpSuggestion && suggestedActivity && <aside className="smart-follow-up" aria-label="Possible follow-up"><div><p className="eyebrow">WeekFlow Intelligence</p><h2>Possible Follow-up</h2><strong>{followUpSuggestion.title}</strong><p>{followUpSuggestion.reason}</p><small>{suggestedActivity.account}{suggestedActivity.hcpNames.length === 1 ? ` · ${suggestedActivity.hcpNames[0]}` : ''}</small></div><div className="smart-follow-up-actions"><button className="button button-primary compact-button" type="button" onClick={() => createFollowUpFromActivity(suggestedActivity, followUpSuggestion.title)}>Create Follow-up</button><button className="text-button" type="button" onClick={() => setFollowUpSuggestion(null)}>Dismiss</button></div></aside>}
       </div>
