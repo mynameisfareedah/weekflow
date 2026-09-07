@@ -151,6 +151,12 @@ export function getNextWeekStart(weekStart: string) {
   return formatDate(date)
 }
 
+export function getPreviousWeekStart(weekStart: string) {
+  const date = new Date(`${weekStart}T12:00:00`)
+  date.setDate(date.getDate() - 7)
+  return formatDate(date)
+}
+
 export function toWeekInput(weekStart: string) {
   const date = new Date(`${weekStart}T12:00:00`)
   const thursday = new Date(date)

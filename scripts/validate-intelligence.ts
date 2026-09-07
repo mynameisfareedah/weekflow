@@ -1,6 +1,5 @@
 import { deriveWeeklyIntelligence } from '../src/intelligence/intelligenceEngine.ts'
-import { getCarryForwardCandidateKey, mergeCarryForwardCandidates } from '../src/intelligence/smartStart.ts'
-import type { CarryForwardCandidate } from '../src/intelligence/intelligenceTypes.ts'
+import { getSmartStartCandidates, mergeSmartStartSelections } from '../src/intelligence/smartStart.ts'
 import type { DailyActivity } from '../src/types/dailyActivity.ts'
 import type { FollowUp } from '../src/types/followUp.ts'
 import type { WeeklyPlan } from '../src/types/weeklyPlan.ts'
@@ -11,7 +10,7 @@ function createEmptyWeeklyPlan(weekStart: string): WeeklyPlan {
   const labels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
   const ids = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as const
   const categories = () => ({ facilities: [], hcps: [], primaryObjectives: [], virtualEngagements: [], accountObjectives: [], commercialPriorities: [], successMeasures: [] })
-  return { weekStart, days: ids.map((id, index) => ({ id, label: labels[index], date: weekStart, categories: categories() })) }
+  return { weekStart, weeklyStrategicObjectives: [], days: ids.map((id, index) => ({ id, label: labels[index], date: weekStart, categories: categories() })), virtualEngagementPlan: [], keyAccountObjectives: [], commercialPriorities: [], successMeasures: [] }
 }
 
 function assert(condition: boolean, message: string) {
@@ -76,22 +75,30 @@ assert(incompleteActivity.reportReadiness.status === 'review' && incompleteActiv
 const otherWeek = deriveWeeklyIntelligence({ selectedWeek: '2026-08-17', plan: createEmptyWeeklyPlan('2026-08-17'), activities: augustActivities, followUps: augustFollowUps })
 assert(otherWeek.reportReadiness.status === 'empty' && otherWeek.opportunitySignals.length === 0, 'Week isolation failed')
 
-const sourcePlan = createEmptyWeeklyPlan(week)
-sourcePlan.days[0].categories.facilities.push({ id: 'source-item', text: 'Existing current-week account' })
-const sourceSnapshot = JSON.stringify(sourcePlan)
-const nextPlan = createEmptyWeeklyPlan('2026-08-17')
-nextPlan.days[0].categories.accountObjectives.push({ id: 'existing-item', text: 'Validate UPTH patient numbers - UPTH' })
-const carryCandidates: CarryForwardCandidate[] = [
-  { title: 'Validate UPTH patient numbers', reason: 'Preliminary information requires confirmation.', category: 'patient', account: 'UPTH' },
-  { title: 'Follow up NHIS access', reason: 'Open follow-up remains unfinished.', category: 'access-market', account: 'RSUTH' },
+const previousPlan = createEmptyWeeklyPlan(week)
+previousPlan.weeklyStrategicObjectives = [{ id: 'objective-old', text: 'Prepare unresolved account review' }, { id: 'objective-skip', text: 'Another objective for later' }]
+previousPlan.keyAccountObjectives = [{ id: 'account-old', account: 'UPTH', objectives: [{ id: 'account-objective-old', text: 'Confirm account pathway' }] }]
+previousPlan.commercialPriorities = [{ id: 'priority-old', text: 'Resolve stock availability', opportunity: 'Stock recovery', account: 'UPTH', product: 'ZYTIGA' }]
+previousPlan.successMeasures = [{ id: 'measure-old', text: 'Do not copy automatically' }]
+const previousFollowUps: FollowUp[] = [
+  { id: 'follow-open-old', weekKey: week, task: 'Review NHIS access', facility: 'RSUTH', hcpName: 'Dr Example', priority: 'high', status: 'open', notes: 'Bring access update', sourceActivityId: 'activity-old', dueDate: '2026-08-14', createdAt: week, updatedAt: week },
+  { id: 'follow-completed-old', weekKey: week, task: 'Completed task', priority: 'normal', status: 'completed', createdAt: week, updatedAt: week },
 ]
-const merge = mergeCarryForwardCandidates(nextPlan, carryCandidates, [getCarryForwardCandidateKey(carryCandidates[0]), getCarryForwardCandidateKey(carryCandidates[1])], [
-  { candidateKey: getCarryForwardCandidateKey(carryCandidates[0]), dayId: 'tuesday', category: 'primaryObjectives' },
-  { candidateKey: getCarryForwardCandidateKey(carryCandidates[1]), dayId: 'thursday', category: 'accountObjectives' },
-])
-assert(merge.added === 1 && merge.existing === 1, 'Smart Start duplicate protection failed')
-assert(merge.plan.days[3].categories.accountObjectives.some((item) => item.text.includes('Follow up NHIS access')), 'Approved carry-forward item was not added to its target day')
-assert(merge.plan.days[0].categories.accountObjectives.length === 1, 'Duplicate carry-forward item was added')
-assert(JSON.stringify(sourcePlan) === sourceSnapshot, 'Smart Start changed the source week')
+const previousSnapshot = JSON.stringify({ plan: previousPlan, followUps: previousFollowUps })
+const smartCandidates = getSmartStartCandidates(previousPlan, previousFollowUps)
+assert(smartCandidates.length === 5, 'Smart Start candidate filtering returned the wrong items')
+assert(!smartCandidates.some((candidate) => candidate.type === 'open-follow-up' && candidate.title === 'Completed task'), 'Completed follow-up was offered for carry-forward')
+assert(!smartCandidates.some((candidate) => candidate.title === 'Do not copy automatically'), 'Success measure was offered for carry-forward')
+const selectedSmartCandidates = smartCandidates.filter((candidate) => candidate.title !== 'Another objective for later')
+const newWeek = '2026-08-17'
+const merge = mergeSmartStartSelections(createEmptyWeeklyPlan(newWeek), newWeek, [], smartCandidates, selectedSmartCandidates.map((candidate) => candidate.key))
+assert(merge.added === 4, 'Smart Start did not add each selected item exactly once')
+assert(merge.plan.weeklyStrategicObjectives.length === 1 && merge.plan.weeklyStrategicObjectives[0].id !== 'objective-old', 'Weekly objective was not copied with a fresh ID')
+assert(merge.plan.keyAccountObjectives[0].account === 'UPTH' && merge.plan.keyAccountObjectives[0].objectives[0].id !== 'account-objective-old', 'Account objective was not copied with a fresh ID')
+assert(merge.plan.commercialPriorities[0].opportunity === 'Stock recovery' && merge.plan.commercialPriorities[0].product === 'ZYTIGA', 'Commercial priority metadata was not preserved')
+assert(merge.followUps.length === 1 && merge.followUps[0].weekKey === newWeek && merge.followUps[0].id !== 'follow-open-old' && !merge.followUps[0].sourceActivityId && !merge.followUps[0].dueDate, 'Open follow-up was not safely scoped to the new week')
+assert(JSON.stringify({ plan: previousPlan, followUps: previousFollowUps }) === previousSnapshot, 'Smart Start changed previous-week data')
+const repeat = mergeSmartStartSelections(merge.plan, newWeek, merge.followUps, smartCandidates, selectedSmartCandidates.map((candidate) => candidate.key))
+assert(repeat.added === 0, 'Smart Start duplicate protection failed')
 
 console.log('Intelligence validation passed: August-pattern, empty-week, week-isolation, and Smart Start merge checks.')

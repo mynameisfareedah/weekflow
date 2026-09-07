@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react'
 import { loadDailyActivities } from '../storage/dailyActivityStorage'
-import { loadFollowUps } from '../storage/followUpsStorage'
-import { getCurrentWeekStart, getNextWeekStart, loadWeeklyPlan, saveWeeklyPlan, setSelectedWeekStart } from '../storage/weeklyPlanStorage'
+import { loadFollowUps, saveFollowUps } from '../storage/followUpsStorage'
+import { getCurrentWeekStart, getPreviousWeekStart, loadWeeklyPlan, saveWeeklyPlan } from '../storage/weeklyPlanStorage'
 import { deriveWeeklyIntelligence } from '../intelligence/intelligenceEngine'
 import type { WeeklyIntelligence } from '../intelligence/intelligenceTypes'
-import { getCarryForwardCandidateKey, mergeCarryForwardCandidates } from '../intelligence/smartStart'
+import { getSmartStartCandidates, mergeSmartStartSelections, type SmartStartCandidate } from '../intelligence/smartStart'
+import { loadSmartStartCompletion, saveSmartStartCompletion, type SmartStartCompletion } from '../storage/smartStartStorage'
 import type { DailyActivity, StructuredOutcome } from '../types/dailyActivity'
 import type { FollowUp } from '../types/followUp'
-import type { CarryForwardCandidate, IntelligenceCategory, WeeklyInsight } from '../intelligence/intelligenceTypes'
-import { PLAN_CATEGORIES, type DayId, type DayPlan, type PlanCategory, type WeeklyPlan } from '../types/weeklyPlan'
+import type { IntelligenceCategory, WeeklyInsight } from '../intelligence/intelligenceTypes'
+import { PLAN_CATEGORIES, type DayPlan, type WeeklyPlan } from '../types/weeklyPlan'
 import { exportReportWord, getFixedReportWeekLabel } from '../utils/reportDocx'
 import './OverviewScreen.css'
 
@@ -22,15 +23,6 @@ interface OverviewData {
   activities: DailyActivity[]
   followUps: FollowUp[]
   intelligence: WeeklyIntelligence
-}
-
-function formatWeekRange(weekStart: string) {
-  const start = new Date(`${weekStart}T12:00:00`)
-  const end = new Date(start)
-  end.setDate(start.getDate() + 4)
-  const startLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(start)
-  const endLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(end)
-  return `${startLabel} - ${endLabel}`
 }
 
 function formatCompactWeekHeading(weekStart: string) {
@@ -188,29 +180,20 @@ function getAttentionItems(intelligence: WeeklyIntelligence, followUps: FollowUp
   return [...followUpItems, ...warningItems, ...gapItems].filter((item, index, all) => all.findIndex((candidate) => candidate.title === item.title) === index).slice(0, 5)
 }
 
-const dayOptions: { id: DayId; label: string }[] = [
-  { id: 'monday', label: 'Monday' },
-  { id: 'tuesday', label: 'Tuesday' },
-  { id: 'wednesday', label: 'Wednesday' },
-  { id: 'thursday', label: 'Thursday' },
-  { id: 'friday', label: 'Friday' },
-]
-
-const carryForwardCategoryLabels: Record<PlanCategory, string> = {
-  facilities: 'Facilities / Accounts',
-  hcps: 'HCPs / Stakeholders',
-  primaryObjectives: 'Primary Objectives',
-  virtualEngagements: 'Virtual Engagements',
-  accountObjectives: 'Account-Specific Objectives',
-  commercialPriorities: 'Commercial Priorities',
-  successMeasures: 'Success Measures',
+const smartStartGroupLabels: Record<SmartStartCandidate['type'], string> = {
+  'weekly-objective': 'Weekly Objectives',
+  'open-follow-up': 'Open Follow-ups',
+  'account-objective': 'Account Objectives',
+  'commercial-priority': 'Commercial Priorities',
 }
 
-function defaultCandidateCategory(candidate: CarryForwardCandidate): PlanCategory {
-  if (candidate.category === 'commercial') return 'commercialPriorities'
-  if (candidate.category === 'scientific-engagement') return 'virtualEngagements'
-  if (candidate.category === 'patient') return 'primaryObjectives'
-  return 'accountObjectives'
+function hasMeaningfulPlanContent(plan: WeeklyPlan) {
+  return (plan.weeklyStrategicObjectives ?? []).some((item) => item.text.trim())
+    || plan.days.some((day) => PLAN_CATEGORIES.some((category) => day.categories[category].some((item) => item.text.trim())))
+    || (plan.keyAccountObjectives ?? []).some((item) => item.account.trim() && item.objectives.some((objective) => objective.text.trim()))
+    || (plan.commercialPriorities ?? []).some((item) => item.text.trim())
+    || (plan.virtualEngagementPlan ?? []).some((item) => item.coverage.trim() || item.objective.trim() || item.priorityContacts.length > 0)
+    || (plan.successMeasures ?? []).some((item) => item.text.trim())
 }
 
 export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScreenProps) {
@@ -235,31 +218,26 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
   const highPriorityFollowUps = openFollowUps.filter((followUp) => followUp.priority === 'high').length
   const reportReady = intelligence.reportReadiness.status !== 'empty'
   const isTrulyEmpty = plannedItems === 0 && activities.length === 0
-  const carryForwardCandidates = intelligence.carryForwardCandidates
-  const nextWeekStart = getNextWeekStart(selectedWeek)
-  const defaultTargetDays = Object.fromEntries(carryForwardCandidates.map((candidate) => [getCarryForwardCandidateKey(candidate), 'monday'])) as Record<string, DayId>
-  const defaultTargetCategories = Object.fromEntries(carryForwardCandidates.map((candidate) => [getCarryForwardCandidateKey(candidate), defaultCandidateCategory(candidate)])) as Record<string, PlanCategory>
-  const [smartStartState, setSmartStartState] = useState<{ week: string; selected: string[]; targetDays: Record<string, DayId>; targetCategories: Record<string, PlanCategory>; showConfirmation: boolean; result: { added: number; existing: number } | null }>(() => ({ week: selectedWeek, selected: [], targetDays: defaultTargetDays, targetCategories: defaultTargetCategories, showConfirmation: false, result: null }))
-  const smartStart = smartStartState.week === selectedWeek ? smartStartState : { week: selectedWeek, selected: [], targetDays: defaultTargetDays, targetCategories: defaultTargetCategories, showConfirmation: false, result: null }
-  const { selected: selectedCarryForward, targetDays, targetCategories, showConfirmation: showStartConfirmation, result: carryForwardResult } = smartStart
+  const previousWeek = getPreviousWeekStart(selectedWeek)
+  const previousPlan = useMemo(() => loadWeeklyPlan(previousWeek), [previousWeek])
+  const previousFollowUps = useMemo(() => loadFollowUps(previousWeek), [previousWeek])
+  const smartStartCandidates = useMemo(() => getSmartStartCandidates(previousPlan, previousFollowUps), [previousPlan, previousFollowUps])
+  const hasPreviousWeekData = hasMeaningfulPlanContent(previousPlan) || previousFollowUps.length > 0 || loadDailyActivities(previousWeek).length > 0
+  const [smartStartState, setSmartStartState] = useState<{ week: string; selected: string[]; showReview: boolean; completion: SmartStartCompletion | null; result: number | null }>({ week: selectedWeek, selected: smartStartCandidates.map((candidate) => candidate.key), showReview: false, completion: loadSmartStartCompletion(selectedWeek), result: null })
+  const smartStart = smartStartState.week === selectedWeek ? smartStartState : { week: selectedWeek, selected: smartStartCandidates.map((candidate) => candidate.key), showReview: false, completion: loadSmartStartCompletion(selectedWeek), result: null }
+  const selectedSmartStart = smartStart.selected
 
-  function updateSmartStart(changes: Partial<typeof smartStart>) {
-    setSmartStartState({ ...smartStart, ...changes })
+  function markSmartStart(completion: SmartStartCompletion) {
+    saveSmartStartCompletion(selectedWeek, completion)
+    setSmartStartState({ ...smartStart, completion, showReview: false, result: completion === 'started' ? 0 : null })
   }
 
-  function toggleCarryForward(candidate: CarryForwardCandidate, selected: boolean) {
-    const key = getCarryForwardCandidateKey(candidate)
-    updateSmartStart({ selected: selected ? [...selectedCarryForward, key] : selectedCarryForward.filter((item) => item !== key) })
-  }
-
-  function prepareNextWeek() {
-    const nextPlan = loadWeeklyPlan(nextWeekStart)
-    const result = mergeCarryForwardCandidates(nextPlan, carryForwardCandidates, selectedCarryForward, carryForwardCandidates.map((candidate) => {
-      const key = getCarryForwardCandidateKey(candidate)
-      return { candidateKey: key, dayId: targetDays[key] ?? 'monday', category: targetCategories[key] ?? defaultCandidateCategory(candidate) }
-    }))
+  function startFromPreviousWeek() {
+    const result = mergeSmartStartSelections(plan, selectedWeek, followUps, smartStartCandidates, selectedSmartStart)
     saveWeeklyPlan(result.plan)
-    updateSmartStart({ result: { added: result.added, existing: result.existing }, showConfirmation: false })
+    saveFollowUps(selectedWeek, result.followUps)
+    saveSmartStartCompletion(selectedWeek, 'started')
+    setSmartStartState({ ...smartStart, completion: 'started', showReview: false, result: result.added })
   }
 
   async function handleExport() {
@@ -328,14 +306,14 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
         </div>}
       </section>
 
-      {carryForwardCandidates.length > 0 && <section className="overview-panel smart-start-panel" aria-labelledby="smart-start-heading">
-        <div className="overview-section-header"><div><p className="eyebrow">Continue unfinished work</p><h2 id="smart-start-heading">Smart Start Next Week</h2><p className="smart-start-intro">Review unresolved work from this week and choose what belongs in the next week&apos;s plan. Nothing is added until you confirm.</p></div><span className="smart-start-count">{carryForwardCandidates.length} item{carryForwardCandidates.length === 1 ? '' : 's'}</span></div>
-        <div className="smart-start-toolbar"><button className="overview-text-action" type="button" onClick={() => updateSmartStart({ selected: carryForwardCandidates.map(getCarryForwardCandidateKey) })}>Select all</button><button className="overview-text-action" type="button" onClick={() => updateSmartStart({ selected: [] })}>Clear all</button><span>{selectedCarryForward.length} selected</span></div>
-        <div className="smart-start-list">{carryForwardCandidates.map((candidate) => { const key = getCarryForwardCandidateKey(candidate); const selected = selectedCarryForward.includes(key); return <article className={`smart-start-item${selected ? ' is-selected' : ''}`} key={key}><label><input type="checkbox" checked={selected} onChange={(event) => toggleCarryForward(candidate, event.target.checked)} /><span><strong>{candidate.title}</strong>{candidate.account && <small>{candidate.account}{candidate.hcpName ? ` · ${candidate.hcpName}` : ''}</small>}{candidate.priority && <small>{candidate.priority === 'high' ? 'High priority' : 'Normal priority'}{candidate.source ? ` · ${candidate.source.replace('-', ' ')}` : ''}</small>}<em>{candidate.reason}</em></span></label><div className="smart-start-targets"><label>Day<select aria-label={`Target day for ${candidate.title}`} value={targetDays[key] ?? 'monday'} onChange={(event) => updateSmartStart({ targetDays: { ...targetDays, [key]: event.target.value as DayId } })}>{dayOptions.map((day) => <option key={day.id} value={day.id}>{day.label}</option>)}</select></label><label>Plan area<select aria-label={`Plan area for ${candidate.title}`} value={targetCategories[key] ?? defaultCandidateCategory(candidate)} onChange={(event) => updateSmartStart({ targetCategories: { ...targetCategories, [key]: event.target.value as PlanCategory } })}>{PLAN_CATEGORIES.map((category) => <option key={category} value={category}>{carryForwardCategoryLabels[category]}</option>)}</select></label></div></article> })}</div>
-        {selectedCarryForward.length === 0 && <p className="smart-start-empty">Select at least one item to prepare next week. The current week will remain unchanged.</p>}
-        {showStartConfirmation && <div className="smart-start-confirmation"><p className="eyebrow">Confirm next-week plan</p><h3>Ready to prepare {formatWeekRange(nextWeekStart)}?</h3><p>{selectedCarryForward.length} item{selectedCarryForward.length === 1 ? '' : 's'} selected. Existing items in that week will be preserved.</p><div className="smart-start-breakdown">{dayOptions.map((day) => { const count = selectedCarryForward.filter((key) => (targetDays[key] ?? 'monday') === day.id).length; return count > 0 ? <span key={day.id}><strong>{day.label}</strong> {count}</span> : null })}</div><div className="smart-start-actions"><button className="button button-primary" type="button" onClick={prepareNextWeek}>Start Next Week</button><button className="button button-secondary" type="button" onClick={() => updateSmartStart({ showConfirmation: false })}>Cancel</button></div><small>The previous week will not be changed.</small></div>}
-        {!showStartConfirmation && !carryForwardResult && <button className="button button-primary smart-start-review-button" type="button" disabled={selectedCarryForward.length === 0} onClick={() => updateSmartStart({ showConfirmation: true })}>Review and Start Next Week</button>}
-        {carryForwardResult && <div className="smart-start-success"><strong>Next week is ready.</strong><span>{carryForwardResult.added} item{carryForwardResult.added === 1 ? '' : 's'} added to the Weekly Plan{carryForwardResult.existing > 0 ? ` · ${carryForwardResult.existing} already present` : ''}.</span><button className="button button-secondary" type="button" onClick={() => { setSelectedWeekStart(nextWeekStart); onNavigate('weekly-plan') }}>Open Next Week</button></div>}
+      {hasPreviousWeekData && smartStart.completion === null && <section className="overview-panel smart-start-panel" aria-labelledby="smart-start-heading">
+        <div className="overview-section-header"><div><p className="eyebrow">Start this week faster</p><h2 id="smart-start-heading">Start From Previous Week</h2><p className="smart-start-intro">Your previous week has unfinished work that may still be relevant. Review selected items before adding them to this week.</p></div>{smartStartCandidates.length > 0 && <span className="smart-start-count">{smartStartCandidates.length} item{smartStartCandidates.length === 1 ? '' : 's'}</span>}</div>
+        {smartStartCandidates.length === 0 ? <div className="smart-start-empty-state"><strong>Nothing to carry forward</strong><p>Your previous week has no unfinished items.</p><button className="button button-secondary" type="button" onClick={() => markSmartStart('fresh')}>Start Fresh</button></div> : !smartStart.showReview ? <button className="button button-primary smart-start-review-button" type="button" onClick={() => setSmartStartState({ ...smartStart, showReview: true })}>Start From Previous Week</button> : <>
+          <div className="smart-start-toolbar"><button className="overview-text-action" type="button" onClick={() => setSmartStartState({ ...smartStart, selected: smartStartCandidates.map((candidate) => candidate.key) })}>Select All</button><button className="overview-text-action" type="button" onClick={() => setSmartStartState({ ...smartStart, selected: [] })}>Clear All</button><span>{selectedSmartStart.length} selected</span></div>
+          <div className="smart-start-groups">{(['weekly-objective', 'open-follow-up', 'account-objective', 'commercial-priority'] as SmartStartCandidate['type'][]).map((type) => { const group = smartStartCandidates.filter((candidate) => candidate.type === type); if (group.length === 0) return null; return <section className="smart-start-group" key={type} aria-labelledby={`smart-start-${type}`}><h3 id={`smart-start-${type}`}>{smartStartGroupLabels[type]}</h3><div className="smart-start-list">{group.map((candidate) => { const selected = selectedSmartStart.includes(candidate.key); return <label className={`smart-start-item${selected ? ' is-selected' : ''}`} key={candidate.key}><input type="checkbox" checked={selected} onChange={(event) => setSmartStartState({ ...smartStart, selected: event.target.checked ? [...selectedSmartStart, candidate.key] : selectedSmartStart.filter((key) => key !== candidate.key) })} /><span><strong>{candidate.title}</strong>{candidate.detail && <small>{candidate.detail}</small>}</span></label> })}</div></section> })}</div>
+          <div className="smart-start-actions"><button className="button button-primary" type="button" disabled={selectedSmartStart.length === 0} onClick={() => { startFromPreviousWeek(); onNavigate('weekly-plan') }}>Start Week</button><button className="button button-secondary" type="button" onClick={() => markSmartStart('fresh')}>Start Fresh</button></div>
+          <small className="smart-start-safety-note">The previous week will not be changed. Daily Activity and completed follow-ups are not copied.</small>
+        </>}
       </section>}
 
       {activities.length > 0 && <section className="overview-outcomes-section" aria-labelledby="key-outcomes-heading">
