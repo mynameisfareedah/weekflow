@@ -16,6 +16,7 @@ import {
   type StructuredOutcomeType,
 } from '../types/dailyActivity'
 import type { DayPlan, PlanItem, WeeklyPlan } from '../types/weeklyPlan'
+import { FIELD_SALES_TEMPLATE } from '../config/templates'
 import './DailyActivity.css'
 
 interface PlannedActivity {
@@ -180,12 +181,12 @@ function ActivityCaptureForm({
       )}
       <div className="capture-form-grid">
         <label>
-          <span>Account / Facility</span>
+          <span>{FIELD_SALES_TEMPLATE.terminology.account}</span>
           <input autoFocus={!plannedActivity && !initialActivity} list="daily-account-options" value={draft.account} onChange={(event) => updateDraft('account', event.target.value)} placeholder="Select or add an account" required />
           <datalist id="daily-account-options">{accountOptions.map((account) => <option key={account} value={account} />)}</datalist>
         </label>
         <label>
-          <span>Activity Type</span>
+          <span>{FIELD_SALES_TEMPLATE.terminology.activity} Type</span>
           <select className="activity-type-select" aria-label="Activity type" value={draft.activityType} onChange={(event) => updateDraft('activityType', event.target.value as ActivityType)}>
             {ACTIVITY_TYPES.map((type) => <option key={type}>{type}</option>)}
           </select>
@@ -210,7 +211,7 @@ function ActivityCaptureForm({
         )}
       </fieldset>
       <div className="capture-text-grid">
-        <label><span>Outcome</span><textarea value={draft.outcome} onChange={(event) => updateDraft('outcome', event.target.value)} placeholder="What happened during the visit?" rows={2} /></label>
+        <label><span>{FIELD_SALES_TEMPLATE.terminology.outcome}</span><textarea value={draft.outcome} onChange={(event) => updateDraft('outcome', event.target.value)} placeholder="What happened during the visit?" rows={2} /></label>
         <label><span>Key Intelligence <em>(optional)</em></span><textarea value={draft.intelligence} onChange={(event) => updateDraft('intelligence', event.target.value)} placeholder="What did you learn?" rows={2} /></label>
         <label><span>Next Action <em>(optional)</em></span><textarea value={draft.nextAction} onChange={(event) => updateDraft('nextAction', event.target.value)} placeholder="What needs to happen next?" rows={2} /></label>
       </div>
@@ -339,14 +340,14 @@ export default function DailyActivityScreen() {
   return (
     <main className="daily-activity-screen" id="daily-activity">
       <div className="daily-page-heading">
-        <div><p className="eyebrow">Capture what happened</p><h1>Daily Activity</h1><p className="daily-intro">Record the work you actually did in a few quick notes.</p></div>
+        <div><p className="eyebrow">Capture what happened</p><h1>Daily {FIELD_SALES_TEMPLATE.terminology.activity}</h1><p className="daily-intro">Record the work you actually did in a few quick notes.</p></div>
         <div className="daily-status"><span>Current week</span><strong>{formatDate(selectedDay.date)}</strong><p>{dayActivities.length} activit{dayActivities.length === 1 ? 'y' : 'ies'} captured today</p></div>
       </div>
       <div className="day-switcher" aria-label="Select activity day">{weekDays.map((day) => <button key={day.id} className={day.id === selectedDay.id ? 'is-selected' : ''} type="button" onClick={() => selectDay(day)}><span>{day.label.slice(0, 3)}</span><strong>{new Date(`${day.date}T12:00:00`).getDate()}</strong></button>)}</div>
       <div className="daily-content">
-        <section className="planned-activities" aria-labelledby="planned-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">From your Weekly Plan</p><h2 id="planned-activities-heading">Today's planned activities</h2></div><button className="button button-secondary compact-button" type="button" onClick={startUnplannedActivity}>+ Add Activity</button></div>{plannedActivities.length > 0 ? <div className="planned-activity-list">{plannedActivities.map((activity) => <button className="planned-activity" type="button" key={activity.id} onClick={() => startPlannedActivity(activity)}><span>{activity.label}</span><small>{activity.activityType === 'Virtual Engagement' ? 'Virtual engagement' : 'Start capture'} <b>→</b></small></button>)}</div> : <div className="empty-planned"><p>No activities planned for {selectedDay.label}.</p><button className="text-button" type="button" onClick={startUnplannedActivity}>+ Add an unplanned activity</button></div>}</section>
+        <section className="planned-activities" aria-labelledby="planned-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">From your Weekly Plan</p><h2 id="planned-activities-heading">Today's planned {FIELD_SALES_TEMPLATE.terminology.activityPlural.toLowerCase()}</h2></div><button className="button button-secondary compact-button" type="button" onClick={startUnplannedActivity}>+ Add {FIELD_SALES_TEMPLATE.terminology.activity}</button></div>{plannedActivities.length > 0 ? <div className="planned-activity-list">{plannedActivities.map((activity) => <button className="planned-activity" type="button" key={activity.id} onClick={() => startPlannedActivity(activity)}><span>{activity.label}</span><small>{activity.activityType === 'Virtual Engagement' ? 'Virtual engagement' : 'Start capture'} <b>→</b></small></button>)}</div> : <div className="empty-planned"><p>No {FIELD_SALES_TEMPLATE.terminology.activityPlural.toLowerCase()} planned for {selectedDay.label}.</p><button className="text-button" type="button" onClick={startUnplannedActivity}>+ Add an unplanned {FIELD_SALES_TEMPLATE.terminology.activity.toLowerCase()}</button></div>}</section>
         {captureOpen && <ActivityCaptureForm key={editingActivity?.id ?? selectedPlannedActivity?.id ?? 'new'} day={selectedDay} plannedActivity={selectedPlannedActivity} initialActivity={editingActivity} onSave={saveActivity} onCancel={() => { setCaptureOpen(false); setEditingActivity(null); setSelectedPlannedActivity(null) }} />}
-        <section className="today-activities" aria-labelledby="today-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">Saved to this week</p><h2 id="today-activities-heading">Today's Activities</h2></div><span className="activity-count">{dayActivities.length}</span></div>{dayActivities.length > 0 ? <div className="activity-summary-list">{dayActivities.map((activity) => <ActivitySummary key={activity.id} activity={activity} onEdit={() => editActivity(activity)} onDelete={() => deleteActivity(activity.id)} onFollowUp={() => createFollowUpFromActivity(activity)} />)}</div> : <p className="empty-activities">Captured activities will appear here.</p>}</section>
+        <section className="today-activities" aria-labelledby="today-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">Saved to this week</p><h2 id="today-activities-heading">Today's {FIELD_SALES_TEMPLATE.terminology.activityPlural}</h2></div><span className="activity-count">{dayActivities.length}</span></div>{dayActivities.length > 0 ? <div className="activity-summary-list">{dayActivities.map((activity) => <ActivitySummary key={activity.id} activity={activity} onEdit={() => editActivity(activity)} onDelete={() => deleteActivity(activity.id)} onFollowUp={() => createFollowUpFromActivity(activity)} />)}</div> : <p className="empty-activities">Captured activities will appear here.</p>}</section>
         {followUpSuggestion && suggestedActivity && <aside className="smart-follow-up" aria-label="Possible follow-up"><div><p className="eyebrow">WeekFlow Intelligence</p><h2>Possible Follow-up</h2><strong>{followUpSuggestion.title}</strong><p>{followUpSuggestion.reason}</p><small>{suggestedActivity.account}{suggestedActivity.hcpNames.length === 1 ? ` · ${suggestedActivity.hcpNames[0]}` : ''}</small></div><div className="smart-follow-up-actions"><button className="button button-primary compact-button" type="button" onClick={() => createFollowUpFromActivity(suggestedActivity, followUpSuggestion.title)}>Create Follow-up</button><button className="text-button" type="button" onClick={() => setFollowUpSuggestion(null)}>Dismiss</button></div></aside>}
       </div>
     </main>

@@ -7,6 +7,7 @@ import {
   type FollowUpPriority,
 } from '../types/followUp'
 import type { WeeklyPlan } from '../types/weeklyPlan'
+import { FIELD_SALES_TEMPLATE } from '../config/templates'
 import './FollowUps.css'
 
 const EMPTY_DRAFT: FollowUpDraft = {
@@ -96,7 +97,7 @@ function FollowUpForm({
         <div><p className="eyebrow">{initialFollowUp ? 'Edit follow-up' : 'Quick capture'}</p><h2>{initialFollowUp ? 'Update follow-up' : 'Add a follow-up'}</h2></div>
         <button className="text-button" type="button" onClick={onCancel}>Cancel</button>
       </div>
-      <label><span>Follow-up / Next Action</span><input value={draft.task} onChange={(event) => updateDraft('task', event.target.value)} placeholder="Follow up on the next action..." required autoFocus /></label>
+      <label><span>{FIELD_SALES_TEMPLATE.terminology.followUp} / Next Action</span><input value={draft.task} onChange={(event) => updateDraft('task', event.target.value)} placeholder="Follow up on the next action..." required autoFocus /></label>
       <div className="follow-up-form-grid">
         <label><span>Facility / Account</span><input list="follow-up-facilities" value={draft.facility} onChange={(event) => updateDraft('facility', event.target.value)} placeholder="Optional facility or account" /><datalist id="follow-up-facilities">{suggestions.facilities.map((facility) => <option key={facility} value={facility} />)}</datalist></label>
         <label><span>HCP / Doctor</span><input list="follow-up-hcps" value={draft.hcpName} onChange={(event) => updateDraft('hcpName', event.target.value)} placeholder="Optional doctor or HCP" /><datalist id="follow-up-hcps">{suggestions.hcps.map((hcp) => <option key={hcp} value={hcp} />)}</datalist></label>
@@ -188,7 +189,7 @@ export default function FollowUpsScreen() {
 
   return (
     <main className="follow-ups-screen" id="follow-ups">
-      <div className="follow-ups-page-heading"><div><p className="eyebrow">Keep the week moving</p><h1>Follow-ups</h1><p className="follow-ups-intro">Track unresolved next actions so nothing important gets forgotten.</p></div><div className="follow-ups-week"><span>Current week</span><strong>{formatWeekRange(weekKey)}</strong></div></div>
+      <div className="follow-ups-page-heading"><div><p className="eyebrow">Keep the week moving</p><h1>{FIELD_SALES_TEMPLATE.terminology.followUp}s</h1><p className="follow-ups-intro">Track unresolved next actions so nothing important gets forgotten.</p></div><div className="follow-ups-week"><span>Current week</span><strong>{formatWeekRange(weekKey)}</strong></div></div>
       <div className="follow-ups-content">
         {!formOpen && <div className="follow-ups-toolbar"><p>{openFollowUps.length} open follow-up{openFollowUps.length === 1 ? '' : 's'} this week</p><button className="button button-primary compact-button" type="button" onClick={startAdd}>+ Add Follow-up</button></div>}
         {formOpen && <FollowUpForm initialFollowUp={editingFollowUp} prefill={prefill} plan={plan} onSave={saveFollowUp} onCancel={cancelForm} />}

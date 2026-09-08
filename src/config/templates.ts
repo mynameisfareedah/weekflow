@@ -3,6 +3,7 @@ export interface WeekFlowTemplate {
   name: string
   terminology: {
     activity: string
+    activityPlural: string
     account: string
     contact: string
     objective: string
@@ -22,6 +23,7 @@ export const FIELD_SALES_TEMPLATE: WeekFlowTemplate = {
   name: 'Field Sales',
   terminology: {
     activity: 'Activity',
+    activityPlural: 'Activities',
     account: 'Account / Facility',
     contact: 'HCP / Doctor / Stakeholder',
     objective: 'Objective',

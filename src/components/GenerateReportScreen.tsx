@@ -69,7 +69,7 @@ function ReportHeader({ weekKey }: { weekKey: string }) {
 function DailyBreakdown({ plan, activities }: { plan: WeeklyPlan; activities: DailyActivity[] }) {
   return (
     <section className="report-section" aria-labelledby="daily-breakdown-heading">
-      <div className="report-section-heading"><span>02</span><div><p className="report-eyebrow">What happened each day</p><h3 id="daily-breakdown-heading">Daily Activity Breakdown</h3></div></div>
+      <div className="report-section-heading"><span>02</span><div><p className="report-eyebrow">What happened each day</p><h3 id="daily-breakdown-heading">Daily {FIELD_SALES_TEMPLATE.terminology.activity} Breakdown</h3></div></div>
       <div className="daily-report-table" role="table" aria-label="Daily activity breakdown">
         <div className="daily-report-row daily-report-header" role="row"><span>Day</span><span>Facilities Visited</span><span>Doctors Engaged</span><span>Outcome of Visit</span><span>Key Intelligence / Next Action</span></div>
         {plan.days.map((day) => {

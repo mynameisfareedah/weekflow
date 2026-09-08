@@ -11,6 +11,7 @@ import type { FollowUp } from '../types/followUp'
 import type { IntelligenceCategory, WeeklyInsight } from '../intelligence/intelligenceTypes'
 import { PLAN_CATEGORIES, type DayPlan, type WeeklyPlan } from '../types/weeklyPlan'
 import { exportReportWord, getFixedReportWeekLabel } from '../utils/reportDocx'
+import { FIELD_SALES_TEMPLATE } from '../config/templates'
 import './OverviewScreen.css'
 
 interface OverviewScreenProps {
@@ -275,7 +276,7 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
       </header>
 
       <section className="overview-metrics" aria-label="Weekly metrics">
-        <MetricCard label="Activities" value={activities.length} />
+        <MetricCard label={FIELD_SALES_TEMPLATE.terminology.activityPlural} value={activities.length} />
         <MetricCard label="HCP engagements" value={uniqueHcps} />
         <MetricCard label="Open follow-ups" value={openFollowUps.length} />
         <MetricCard label="Report" value={reportReady ? 'Ready' : 'Not ready'} />
