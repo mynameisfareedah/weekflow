@@ -6,6 +6,7 @@ import { deriveWeeklyIntelligence } from '../intelligence/intelligenceEngine'
 import type { WeeklyIntelligence } from '../intelligence/intelligenceTypes'
 import { exportReportWord, getFixedReportMetadata, getFixedReportWeekLabel } from '../utils/reportDocx'
 import { exportWeeklyPlanWord } from '../utils/weeklyPlanDocx'
+import { FIELD_SALES_TEMPLATE } from '../config/templates'
 import type { DailyActivity } from '../types/dailyActivity'
 import type { FollowUp } from '../types/followUp'
 import type { DayPlan, WeeklyPlan } from '../types/weeklyPlan'
@@ -53,7 +54,7 @@ function ReportHeader({ weekKey }: { weekKey: string }) {
     <header className="report-document-header">
       <div>
         <p className="report-kicker">WeekFlow field reporting</p>
-        <h2>This Week's Field Activity Report</h2>
+        <h2>{FIELD_SALES_TEMPLATE.report.title}</h2>
       </div>
       <div className="report-meta-grid">
         <div><span>Week</span><strong>{formatWeekRange(weekKey)}</strong></div>

@@ -16,6 +16,7 @@ import {
 import type { DailyActivity } from '../types/dailyActivity'
 import type { FollowUp } from '../types/followUp'
 import type { DayPlan, WeeklyPlan } from '../types/weeklyPlan'
+import { FIELD_SALES_TEMPLATE } from '../config/templates'
 
 export interface ReportSnapshot {
   weekKey: string
@@ -25,11 +26,7 @@ export interface ReportSnapshot {
   followUps: FollowUp[]
 }
 
-export const REPORT_METADATA = {
-  preparedBy: 'WAHEED YUSUF',
-  role: 'Field Sales Manager - Key Account WWCV (Johnson & Johnson)',
-  portfolio: 'ZYTIGA® | INVEGA SUSTENNA® | TRIVECTA®',
-} as const
+export const REPORT_METADATA = FIELD_SALES_TEMPLATE.report
 
 const PAGE_WIDTH_TWIPS = 11906
 const PAGE_HEIGHT_TWIPS = 16838
@@ -235,7 +232,7 @@ function buildDocument(snapshot: ReportSnapshot) {
   documentSections.push(
     new Paragraph({
       children: [
-        new TextRun({ text: "THIS WEEK'S FIELD ACTIVITY REPORT", bold: true, size: 30, color: '2B2D2B' }),
+        new TextRun({ text: REPORT_METADATA.title.toUpperCase(), bold: true, size: 30, color: '2B2D2B' }),
       ],
       spacing: { after: 120 },
     }),

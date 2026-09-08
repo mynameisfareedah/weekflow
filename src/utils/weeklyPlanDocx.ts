@@ -14,6 +14,7 @@ import {
   WidthType,
 } from 'docx'
 import type { PlanItem, WeeklyPlan } from '../types/weeklyPlan'
+import { FIELD_SALES_TEMPLATE } from '../config/templates'
 
 const A4_WIDTH_TWIPS = 11906
 const A4_HEIGHT_TWIPS = 16838
@@ -24,11 +25,7 @@ const VIRTUAL_WIDTHS = [2800, 3600, CONTENT_WIDTH_TWIPS - 2800 - 3600]
 const TWO_COLUMN_WIDTHS = [2600, CONTENT_WIDTH_TWIPS - 2600]
 const BORDER_COLOR = 'C9D1C8'
 const HEADER_COLOR = 'F3F5F0'
-const WEEKLY_PLAN_METADATA = {
-  preparedBy: 'WAHEED YUSUF',
-  role: 'Field Sales Manager - Key Account WWCV (Johnson & Johnson)',
-  portfolio: 'ZYTIGA® | INVEGA SUSTENNA® | TRIVECTA®',
-} as const
+const WEEKLY_PLAN_METADATA = FIELD_SALES_TEMPLATE.report
 
 function clean(value: string | undefined) {
   return value?.trim() || 'Not recorded'
