@@ -17,15 +17,8 @@ import {
 } from '../types/dailyActivity'
 import type { DayPlan, PlanItem, WeeklyPlan } from '../types/weeklyPlan'
 import { FIELD_SALES_TEMPLATE } from '../config/templates'
+import { getExecutablePlannedActivities, type PlannedActivity } from '../planning/plannedActivityAdapter'
 import './DailyActivity.css'
-
-interface PlannedActivity {
-  id: string
-  label: string
-  account: string
-  focus: string
-  activityType: ActivityType
-}
 
 interface ActivityDraft {
   account: string
@@ -74,25 +67,6 @@ function createId() {
 
 function formatDate(date: string) {
   return new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date(`${date}T12:00:00`))
-}
-
-function getPlannedActivities(day: DayPlan): PlannedActivity[] {
-  const facilities = day.categories.facilities.map((item) => ({
-    id: `facility:${item.id}`,
-    label: item.text,
-    account: item.text,
-    focus: [...day.categories.primaryObjectives, ...day.categories.accountObjectives, ...day.categories.commercialPriorities].map((focus) => focus.text).join(' | '),
-    activityType: 'Physical Visit' as ActivityType,
-  }))
-  const virtualEngagements = day.categories.virtualEngagements.map((item) => ({
-    id: `virtual:${item.id}`,
-    label: item.text,
-    account: item.text,
-    focus: day.categories.primaryObjectives.map((focus) => focus.text).join(' | '),
-    activityType: 'Virtual Engagement' as ActivityType,
-  }))
-
-  return [...facilities, ...virtualEngagements]
 }
 
 function getItemTexts(items: PlanItem[]) {
@@ -267,7 +241,7 @@ export default function DailyActivityScreen() {
   const [selectedPlannedActivity, setSelectedPlannedActivity] = useState<PlannedActivity | null>(null)
   const [followUpSuggestion, setFollowUpSuggestion] = useState<FollowUpSuggestion | null>(null)
   const selectedDay = weekDays.find((day) => day.id === selectedDayId) ?? weekDays[0]
-  const plannedActivities = useMemo(() => getPlannedActivities(selectedDay), [selectedDay])
+  const plannedActivities = useMemo(() => getExecutablePlannedActivities(selectedDay), [selectedDay])
   const dayActivities = activities.filter((activity) => activity.date === selectedDay.date)
 
   useEffect(() => saveDailyActivities(weekStart, activities), [activities, weekStart])
