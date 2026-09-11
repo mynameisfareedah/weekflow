@@ -3,6 +3,7 @@ import { detectFollowUpSuggestions } from './followUpDetection.ts'
 import { detectPlanGaps } from './planGapDetection.ts'
 import { scoreOpportunities } from './opportunityScoring.ts'
 import { deriveOpportunitySignals, deriveWeeklyInsights } from './weeklyInsights.ts'
+import { FIELD_SALES_TEMPLATE } from '../config/templates.ts'
 import type { CarryForwardCandidate, IntelligenceInput, IntelligenceCategory, Recommendation, WeeklyIntelligence } from './intelligenceTypes'
 
 function recommendationFromGap(gap: ReturnType<typeof detectPlanGaps>[number]): Recommendation {
@@ -66,11 +67,12 @@ function getMatchablePlanItemCount(plan: IntelligenceInput['plan']) {
 }
 
 export function deriveWeeklyIntelligence(input: IntelligenceInput): WeeklyIntelligence {
+  const template = input.template ?? FIELD_SALES_TEMPLATE
   const activities = input.activities.filter((activity) => activity.weekStart === input.selectedWeek)
   const followUps = input.followUps.filter((followUp) => followUp.weekKey === input.selectedWeek)
   const followUpSuggestions = detectFollowUpSuggestions(activities, followUps)
-  const opportunitySignals = deriveOpportunitySignals(activities)
-  const opportunityScores = scoreOpportunities(opportunitySignals)
+  const opportunitySignals = deriveOpportunitySignals(activities, template)
+  const opportunityScores = scoreOpportunities(opportunitySignals, template)
   const planGaps = detectPlanGaps(input.plan, activities)
   const dataQualityWarnings = detectDataQualityWarnings(activities, followUps, planGaps)
   const openFollowUps = followUps.filter((followUp) => followUp.status === 'open')
@@ -91,7 +93,7 @@ export function deriveWeeklyIntelligence(input: IntelligenceInput): WeeklyIntell
     opportunitySignals,
     opportunityScores,
     planGaps,
-    insights: deriveWeeklyInsights(activities),
+    insights: deriveWeeklyInsights(activities, template),
     recommendations,
     dataQualityWarnings,
     carryForwardCandidates: getCarryForward({ ...input, activities, followUps }, planGaps, dataQualityWarnings),

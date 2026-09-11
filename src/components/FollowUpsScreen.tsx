@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { consumeFollowUpPrefill, loadFollowUps, saveFollowUps } from '../storage/followUpsStorage'
+import { consumeFollowUpPrefill, loadFollowUps, loadFollowUpsAsync, saveFollowUpsAsync } from '../storage/followUpsStorage'
 import { getSelectedWeekStart, loadWeeklyPlan } from '../storage/weeklyPlanStorage'
 import {
   type FollowUp,
@@ -7,7 +7,9 @@ import {
   type FollowUpPriority,
 } from '../types/followUp'
 import type { WeeklyPlan } from '../types/weeklyPlan'
-import { FIELD_SALES_TEMPLATE } from '../config/templates'
+import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from '../config/templates'
+import { getTemplateTerminology } from '../config/templateTerminology'
+import { getFollowUpField } from '../followUp/followUpFieldAdapter'
 import './FollowUps.css'
 
 const EMPTY_DRAFT: FollowUpDraft = {
@@ -53,12 +55,14 @@ function FollowUpForm({
   plan,
   onSave,
   onCancel,
+  template,
 }: {
   initialFollowUp: FollowUp | null
   prefill: Partial<FollowUp> | null
   plan: WeeklyPlan
   onSave: (draft: FollowUpDraft, id?: string) => void
   onCancel: () => void
+  template: WeekFlowTemplate
 }) {
   const initialDraft: FollowUpDraft = initialFollowUp ? {
     task: initialFollowUp.task,
@@ -80,6 +84,13 @@ function FollowUpForm({
   }
   const [draft, setDraft] = useState(initialDraft)
   const suggestions = getPlanSuggestions(plan)
+  const taskField = getFollowUpField(template, 'task')
+  const facilityField = getFollowUpField(template, 'facility')
+  const hcpField = getFollowUpField(template, 'hcpName')
+  const dueDateField = getFollowUpField(template, 'dueDate')
+  const priorityField = getFollowUpField(template, 'priority')
+  const notesField = getFollowUpField(template, 'notes')
+  const isFieldVisible = (field: typeof taskField) => Boolean(field?.visible)
 
   function updateDraft<K extends keyof FollowUpDraft>(key: K, value: FollowUpDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }))
@@ -97,22 +108,22 @@ function FollowUpForm({
         <div><p className="eyebrow">{initialFollowUp ? 'Edit follow-up' : 'Quick capture'}</p><h2>{initialFollowUp ? 'Update follow-up' : 'Add a follow-up'}</h2></div>
         <button className="text-button" type="button" onClick={onCancel}>Cancel</button>
       </div>
-      <label><span>{FIELD_SALES_TEMPLATE.terminology.followUp} / Next Action</span><input value={draft.task} onChange={(event) => updateDraft('task', event.target.value)} placeholder="Follow up on the next action..." required autoFocus /></label>
+      {isFieldVisible(taskField) && <label><span>{taskField?.label ?? `${template.terminology.followUp} / Next Action`}</span><input value={draft.task} onChange={(event) => updateDraft('task', event.target.value)} placeholder="Follow up on the next action..." required={taskField?.required ?? true} autoFocus /></label>}
       <div className="follow-up-form-grid">
-        <label><span>Facility / Account</span><input list="follow-up-facilities" value={draft.facility} onChange={(event) => updateDraft('facility', event.target.value)} placeholder="Optional facility or account" /><datalist id="follow-up-facilities">{suggestions.facilities.map((facility) => <option key={facility} value={facility} />)}</datalist></label>
-        <label><span>HCP / Doctor</span><input list="follow-up-hcps" value={draft.hcpName} onChange={(event) => updateDraft('hcpName', event.target.value)} placeholder="Optional doctor or HCP" /><datalist id="follow-up-hcps">{suggestions.hcps.map((hcp) => <option key={hcp} value={hcp} />)}</datalist></label>
-        <label><span>Due Date</span><input type="date" value={draft.dueDate} onChange={(event) => updateDraft('dueDate', event.target.value)} /></label>
-        <label><span>Priority</span><select value={draft.priority} onChange={(event) => updateDraft('priority', event.target.value as FollowUpPriority)}><option value="normal">Normal</option><option value="high">High</option></select></label>
+        {isFieldVisible(facilityField) && <label><span>{facilityField?.label ?? template.terminology.account}</span><input list="follow-up-facilities" value={draft.facility} onChange={(event) => updateDraft('facility', event.target.value)} placeholder={`Optional ${facilityField?.label.toLowerCase() ?? template.terminology.account.toLowerCase()}`} /><datalist id="follow-up-facilities">{suggestions.facilities.map((facility) => <option key={facility} value={facility} />)}</datalist></label>}
+        {isFieldVisible(hcpField) && <label><span>{hcpField?.label ?? template.terminology.contact}</span><input list="follow-up-hcps" value={draft.hcpName} onChange={(event) => updateDraft('hcpName', event.target.value)} placeholder={`Optional ${hcpField?.label.toLowerCase() ?? template.terminology.contact.toLowerCase()}`} /><datalist id="follow-up-hcps">{suggestions.hcps.map((hcp) => <option key={hcp} value={hcp} />)}</datalist></label>}
+        {isFieldVisible(dueDateField) && <label><span>{dueDateField?.label ?? 'Due Date'}</span><input type="date" value={draft.dueDate} onChange={(event) => updateDraft('dueDate', event.target.value)} required={dueDateField?.required ?? false} /></label>}
+        {isFieldVisible(priorityField) && <label><span>{priorityField?.label ?? 'Priority'}</span><select value={draft.priority} onChange={(event) => updateDraft('priority', event.target.value as FollowUpPriority)} required={priorityField?.required ?? false}><option value="normal">Normal</option><option value="high">High</option></select></label>}
       </div>
-      <label><span>Notes</span><textarea value={draft.notes} onChange={(event) => updateDraft('notes', event.target.value)} placeholder="Optional context..." rows={2} /></label>
+      {isFieldVisible(notesField) && <label><span>{notesField?.label ?? 'Notes'}</span><textarea value={draft.notes} onChange={(event) => updateDraft('notes', event.target.value)} placeholder="Optional context..." rows={2} required={notesField?.required ?? false} /></label>}
       <div className="follow-up-form-actions"><button className="button button-primary" type="submit">{initialFollowUp ? 'Save Changes' : 'Save Follow-up'} <span aria-hidden="true">→</span></button></div>
     </form>
   )
 }
 
-function FollowUpCard({ followUp, onToggleStatus, onEdit, onDelete }: { followUp: FollowUp; onToggleStatus: () => void; onEdit: () => void; onDelete: () => void }) {
+function FollowUpCard({ followUp, onToggleStatus, onEdit, onDelete, className = '' }: { followUp: FollowUp; onToggleStatus: () => void; onEdit: () => void; onDelete: () => void; className?: string }) {
   return (
-    <article className={`follow-up-card${followUp.status === 'completed' ? ' is-completed' : ''}${followUp.priority === 'high' ? ' is-high-priority' : ''}`}>
+    <article className={`follow-up-card${followUp.status === 'completed' ? ' is-completed' : ''}${followUp.priority === 'high' ? ' is-high-priority' : ''}${className ? ` ${className}` : ''}`}>
       <div className="follow-up-card-marker" aria-hidden="true">{followUp.status === 'completed' ? '✓' : '•'}</div>
       <div className="follow-up-card-main">
         <div className="follow-up-card-title"><h3>{followUp.task}</h3>{followUp.priority === 'high' && <span className="priority-label">High priority</span>}</div>
@@ -125,9 +136,11 @@ function FollowUpCard({ followUp, onToggleStatus, onEdit, onDelete }: { followUp
   )
 }
 
-export default function FollowUpsScreen() {
+export default function FollowUpsScreen({ template = FIELD_SALES_TEMPLATE }: { template?: WeekFlowTemplate }) {
+  const terminology = getTemplateTerminology(template)
   const [weekKey] = useState(getSelectedWeekStart)
   const [followUps, setFollowUps] = useState<FollowUp[]>(() => loadFollowUps(weekKey))
+  const [followUpsHydrated, setFollowUpsHydrated] = useState(false)
   const [plan] = useState<WeeklyPlan>(() => loadWeeklyPlan(weekKey))
   const [initialFormState] = useState(() => {
     const pendingPrefill = consumeFollowUpPrefill(weekKey)
@@ -136,10 +149,31 @@ export default function FollowUpsScreen() {
   const [formOpen, setFormOpen] = useState(initialFormState.formOpen)
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
   const [prefill, setPrefill] = useState<Partial<FollowUp> | null>(initialFormState.prefill)
+  const [newFollowUpId, setNewFollowUpId] = useState<string | null>(null)
   const openFollowUps = useMemo(() => followUps.filter((followUp) => followUp.status === 'open'), [followUps])
   const completedFollowUps = useMemo(() => followUps.filter((followUp) => followUp.status === 'completed'), [followUps])
 
-  useEffect(() => saveFollowUps(weekKey, followUps), [followUps, weekKey])
+  useEffect(() => {
+    let active = true
+    loadFollowUpsAsync(weekKey).then((loadedFollowUps) => {
+      if (active) {
+        setFollowUps(loadedFollowUps)
+        setFollowUpsHydrated(true)
+      }
+    })
+    return () => { active = false }
+  }, [weekKey])
+
+  useEffect(() => {
+    if (!followUpsHydrated) return
+    void saveFollowUpsAsync(weekKey, followUps)
+  }, [followUps, followUpsHydrated, weekKey])
+
+  useEffect(() => {
+    if (!newFollowUpId) return
+    const timer = window.setTimeout(() => setNewFollowUpId(null), 520)
+    return () => window.clearTimeout(timer)
+  }, [newFollowUpId])
   function startAdd() {
     setEditingFollowUp(null)
     setPrefill(null)
@@ -151,7 +185,7 @@ export default function FollowUpsScreen() {
     if (id) {
       setFollowUps((current) => current.map((followUp) => followUp.id === id ? { ...followUp, ...draft, updatedAt: now } : followUp))
     } else {
-      setFollowUps((current) => [...current, {
+      const newFollowUp = {
         id: createId(),
         weekKey,
         task: draft.task,
@@ -164,7 +198,9 @@ export default function FollowUpsScreen() {
         ...(draft.sourceActivityId ? { sourceActivityId: draft.sourceActivityId } : {}),
         createdAt: now,
         updatedAt: now,
-      }])
+      } as FollowUp
+      setFollowUps((current) => [...current, newFollowUp])
+      setNewFollowUpId(newFollowUp.id)
     }
     setFormOpen(false)
     setEditingFollowUp(null)
@@ -189,14 +225,14 @@ export default function FollowUpsScreen() {
 
   return (
     <main className="follow-ups-screen" id="follow-ups">
-      <div className="follow-ups-page-heading"><div><p className="eyebrow">Keep the week moving</p><h1>{FIELD_SALES_TEMPLATE.terminology.followUp}s</h1><p className="follow-ups-intro">Track unresolved next actions so nothing important gets forgotten.</p></div><div className="follow-ups-week"><span>Current week</span><strong>{formatWeekRange(weekKey)}</strong></div></div>
+      <div className="follow-ups-page-heading"><div><p className="eyebrow">Keep the week moving</p><h1>{terminology.followUps}</h1><p className="follow-ups-intro">Track unresolved next actions so nothing important gets forgotten.</p></div><div className="follow-ups-week"><span>Current week</span><strong>{formatWeekRange(weekKey)}</strong></div></div>
       <div className="follow-ups-content">
         {!formOpen && <div className="follow-ups-toolbar"><p>{openFollowUps.length} open follow-up{openFollowUps.length === 1 ? '' : 's'} this week</p><button className="button button-primary compact-button" type="button" onClick={startAdd}>+ Add Follow-up</button></div>}
-        {formOpen && <FollowUpForm initialFollowUp={editingFollowUp} prefill={prefill} plan={plan} onSave={saveFollowUp} onCancel={cancelForm} />}
-        {!formOpen && followUps.length === 0 && <section className="follow-ups-empty"><span className="empty-mark" aria-hidden="true">+</span><h2>No follow-ups yet</h2><p>Capture unresolved actions from your field activities here so nothing gets forgotten.</p><button className="button button-secondary" type="button" onClick={startAdd}>+ Add Follow-up</button></section>}
+        {formOpen && <FollowUpForm initialFollowUp={editingFollowUp} prefill={prefill} plan={plan} onSave={saveFollowUp} onCancel={cancelForm} template={template} />}
+        {!formOpen && followUps.length === 0 && <section className="follow-ups-empty"><span className="empty-mark" aria-hidden="true">+</span><h2>No {terminology.followUps.toLowerCase()} yet</h2><p>Capture unresolved next actions from your {terminology.activityPlural.toLowerCase()} here so nothing gets forgotten.</p><button className="button button-secondary" type="button" onClick={startAdd}>+ Add {terminology.followUp}</button></section>}
         {!formOpen && followUps.length > 0 && <>
-          <section className="follow-up-group" aria-labelledby="open-follow-ups-heading"><div className="follow-up-group-heading"><h2 id="open-follow-ups-heading">Open</h2><span>{openFollowUps.length}</span></div>{openFollowUps.length > 0 ? <div className="follow-up-list">{openFollowUps.map((followUp) => <FollowUpCard key={followUp.id} followUp={followUp} onToggleStatus={() => toggleStatus(followUp)} onEdit={() => editFollowUp(followUp)} onDelete={() => setFollowUps((current) => current.filter((item) => item.id !== followUp.id))} />)}</div> : <p className="follow-up-group-empty">All follow-ups are complete.</p>}</section>
-          <section className="follow-up-group completed-group" aria-labelledby="completed-follow-ups-heading"><div className="follow-up-group-heading"><h2 id="completed-follow-ups-heading">Completed</h2><span>{completedFollowUps.length}</span></div>{completedFollowUps.length > 0 ? <div className="follow-up-list">{completedFollowUps.map((followUp) => <FollowUpCard key={followUp.id} followUp={followUp} onToggleStatus={() => toggleStatus(followUp)} onEdit={() => editFollowUp(followUp)} onDelete={() => setFollowUps((current) => current.filter((item) => item.id !== followUp.id))} />)}</div> : <p className="follow-up-group-empty">Completed follow-ups will stay here for reference.</p>}</section>
+          <section className="follow-up-group" aria-labelledby="open-follow-ups-heading"><div className="follow-up-group-heading"><h2 id="open-follow-ups-heading">Open</h2><span>{openFollowUps.length}</span></div>{openFollowUps.length > 0 ? <div className="follow-up-list">{openFollowUps.map((followUp) => <FollowUpCard className={newFollowUpId === followUp.id ? 'is-new' : ''} key={followUp.id} followUp={followUp} onToggleStatus={() => toggleStatus(followUp)} onEdit={() => editFollowUp(followUp)} onDelete={() => setFollowUps((current) => current.filter((item) => item.id !== followUp.id))} />)}</div> : <p className="follow-up-group-empty">All follow-ups are complete.</p>}</section>
+          <section className="follow-up-group completed-group" aria-labelledby="completed-follow-ups-heading"><div className="follow-up-group-heading"><h2 id="completed-follow-ups-heading">Completed</h2><span>{completedFollowUps.length}</span></div>{completedFollowUps.length > 0 ? <div className="follow-up-list">{completedFollowUps.map((followUp) => <FollowUpCard className={newFollowUpId === followUp.id ? 'is-new' : ''} key={followUp.id} followUp={followUp} onToggleStatus={() => toggleStatus(followUp)} onEdit={() => editFollowUp(followUp)} onDelete={() => setFollowUps((current) => current.filter((item) => item.id !== followUp.id))} />)}</div> : <p className="follow-up-group-empty">Completed follow-ups will stay here for reference.</p>}</section>
         </>}
       </div>
     </main>

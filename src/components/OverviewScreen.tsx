@@ -1,21 +1,25 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadDailyActivities } from '../storage/dailyActivityStorage'
-import { loadFollowUps, saveFollowUps } from '../storage/followUpsStorage'
-import { getCurrentWeekStart, getPreviousWeekStart, loadWeeklyPlan, saveWeeklyPlan } from '../storage/weeklyPlanStorage'
+import { loadFollowUps } from '../storage/followUpsStorage'
+import { getCurrentWeekStart, getPreviousWeekStart, loadWeeklyPlan } from '../storage/weeklyPlanStorage'
 import { deriveWeeklyIntelligence } from '../intelligence/intelligenceEngine'
 import type { WeeklyIntelligence } from '../intelligence/intelligenceTypes'
 import { getSmartStartCandidates, mergeSmartStartSelections, type SmartStartCandidate } from '../intelligence/smartStart'
-import { loadSmartStartCompletion, saveSmartStartCompletion, type SmartStartCompletion } from '../storage/smartStartStorage'
+import { loadSmartStartCompletion, loadSmartStartCompletionAsync, saveSmartStartCompletionAsync, type SmartStartCompletion } from '../storage/smartStartStorage'
+import { saveWeeklyPlanAsync } from '../storage/weeklyPlanStorage'
+import { saveFollowUpsAsync } from '../storage/followUpsStorage'
 import type { DailyActivity, StructuredOutcome } from '../types/dailyActivity'
 import type { FollowUp } from '../types/followUp'
 import type { IntelligenceCategory, WeeklyInsight } from '../intelligence/intelligenceTypes'
 import { PLAN_CATEGORIES, type DayPlan, type WeeklyPlan } from '../types/weeklyPlan'
 import { exportReportWord, getFixedReportWeekLabel } from '../utils/reportDocx'
-import { FIELD_SALES_TEMPLATE } from '../config/templates'
+import type { WeekFlowTemplate } from '../config/templates'
+import { getTemplateTerminology } from '../config/templateTerminology'
 import './OverviewScreen.css'
 
 interface OverviewScreenProps {
   selectedWeek: string
+  template: WeekFlowTemplate
   onNavigate: (screen: string) => void
 }
 
@@ -58,11 +62,11 @@ function hasPlanContent(day: DayPlan) {
   return PLAN_CATEGORIES.some((category) => day.categories[category].length > 0)
 }
 
-function deriveOverviewData(selectedWeek: string): OverviewData {
+function deriveOverviewData(selectedWeek: string, template: WeekFlowTemplate): OverviewData {
   const plan = loadWeeklyPlan(selectedWeek)
   const activities = loadDailyActivities(selectedWeek)
   const followUps = loadFollowUps(selectedWeek)
-  return { plan, activities, followUps, intelligence: deriveWeeklyIntelligence({ selectedWeek, plan, activities, followUps }) }
+  return { plan, activities, followUps, intelligence: deriveWeeklyIntelligence({ selectedWeek, plan, activities, followUps, template }) }
 }
 
 function getStatus(day: DayPlan, activities: DailyActivity[]) {
@@ -108,8 +112,15 @@ function outcomeTitle(outcome: StructuredOutcome) {
   return outcome.type
 }
 
-function deriveKeyOutcomes(activities: DailyActivity[]): KeyOutcomes {
+function deriveKeyOutcomes(activities: DailyActivity[], template: WeekFlowTemplate): KeyOutcomes {
   const structuredOutcomes = activities.flatMap((activity) => activity.structuredOutcomes)
+  if (template.id === 'small-business') {
+    const commercialTypes = ['Sale / Order Won', 'Lead Qualified', 'Payment Received']
+    const customerTypes = ['Customer Retained', 'Follow-up Required']
+    const operationsTypes = ['Supplier Issue Identified', 'Operational Improvement']
+    const toCards = (types: string[]) => structuredOutcomes.filter((outcome) => types.includes(outcome.type)).map((outcome) => ({ title: outcomeTitle(outcome), detail: outcome.details }))
+    return { commercial: toCards(commercialTypes), patient: toCards(customerTypes), market: toCards(operationsTypes) }
+  }
   const commercial = structuredOutcomes
     .filter((outcome) => outcome.type === 'Prescription Generated')
     .map((outcome) => ({ title: outcomeTitle(outcome), detail: outcome.details }))
@@ -137,8 +148,52 @@ function deriveKeyOutcomes(activities: DailyActivity[]): KeyOutcomes {
   return { commercial: uniqueCards(commercial), patient: uniqueCards(patient), market: uniqueCards(market) }
 }
 
-function MetricCard({ label, value, detail }: { label: string; value: string | number; detail?: string }) {
-  return <article className="overview-metric"><span>{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</article>
+function AnimatedNumber({ value }: { value: number }) {
+  const numberRef = useRef<HTMLSpanElement | null>(null)
+  const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  useEffect(() => {
+    const node = numberRef.current
+    if (!node) return
+
+    if (prefersReducedMotion) {
+      node.textContent = String(value)
+      return
+    }
+
+    const startValue = Number(node.textContent ?? '0') || 0
+    const startTime = performance.now()
+    const duration = 480
+    let frameId: number | null = null
+
+    const tick = (now: number) => {
+      const progress = Math.min((now - startTime) / duration, 1)
+      const eased = 1 - (1 - progress) ** 3
+      const nextValue = Math.round(startValue + (value - startValue) * eased)
+      node.textContent = String(nextValue)
+
+      if (progress < 1) {
+        frameId = requestAnimationFrame(tick)
+        return
+      }
+
+      node.textContent = String(value)
+    }
+
+    frameId = requestAnimationFrame(tick)
+
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId)
+      }
+    }
+  }, [prefersReducedMotion, value])
+
+  return <span ref={numberRef}>{prefersReducedMotion ? value : 0}</span>
+}
+
+function MetricCard({ label, value, detail, delay = 0 }: { label: string; value: string | number; detail?: string; delay?: number }) {
+  return <article className="overview-metric overview-metric-card" style={{ animationDelay: `${delay}ms` }}><span>{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</article>
 }
 
 function SectionHeader({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action?: string; onAction?: () => void }) {
@@ -151,12 +206,17 @@ const intelligenceCategoryLabels: Record<IntelligenceCategory, string> = {
   'access-market': 'Access / Market',
   'strategic-accounts': 'Strategic Accounts',
   'scientific-engagement': 'Scientific Engagement',
+  progress: 'Progress',
+  risks: 'Risks / Blockers',
+  stakeholders: 'Stakeholders',
+  deliverables: 'Deliverables',
 }
 
 const intelligenceCategoryOrder: IntelligenceCategory[] = ['commercial', 'patient', 'access-market', 'strategic-accounts', 'scientific-engagement']
 
-function getTopInsights(insights: WeeklyIntelligence['insights']) {
-  return intelligenceCategoryOrder.flatMap((category) => insights[category].slice(0, 2).map((insight) => ({ ...insight, category }))).slice(0, 6)
+function getTopInsights(insights: WeeklyIntelligence['insights'], template: WeekFlowTemplate) {
+  const order = template.id === 'project-management' ? ['progress', 'risks', 'deliverables', 'stakeholders'] as IntelligenceCategory[] : intelligenceCategoryOrder
+  return order.flatMap((category) => insights[category].slice(0, 2).map((insight) => ({ ...insight, category }))).slice(0, 6)
 }
 
 function getAttentionItems(intelligence: WeeklyIntelligence, followUps: FollowUp[]) {
@@ -197,8 +257,9 @@ function hasMeaningfulPlanContent(plan: WeeklyPlan) {
     || (plan.successMeasures ?? []).some((item) => item.text.trim())
 }
 
-export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScreenProps) {
-  const { plan, activities, followUps, intelligence } = useMemo(() => deriveOverviewData(selectedWeek), [selectedWeek])
+export default function OverviewScreen({ selectedWeek, template, onNavigate }: OverviewScreenProps) {
+  const terminology = getTemplateTerminology(template)
+  const { plan, activities, followUps, intelligence } = useMemo(() => deriveOverviewData(selectedWeek, template), [selectedWeek, template])
   const [isExporting, setIsExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState('')
   const currentWeek = getCurrentWeekStart()
@@ -215,7 +276,7 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
   const selectedDayPlanned = selectedDay.categories.facilities.length + selectedDay.categories.virtualEngagements.length
   const selectedDayFollowUps = openFollowUps.filter((followUp) => followUp.dueDate === selectedDay.date).length
   const priorityFollowUps = getPriorityFollowUps(followUps)
-  const keyOutcomes = deriveKeyOutcomes(activities)
+  const keyOutcomes = deriveKeyOutcomes(activities, template)
   const highPriorityFollowUps = openFollowUps.filter((followUp) => followUp.priority === 'high').length
   const reportReady = intelligence.reportReadiness.status !== 'empty'
   const isTrulyEmpty = plannedItems === 0 && activities.length === 0
@@ -228,16 +289,24 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
   const smartStart = smartStartState.week === selectedWeek ? smartStartState : { week: selectedWeek, selected: smartStartCandidates.map((candidate) => candidate.key), showReview: false, completion: loadSmartStartCompletion(selectedWeek), result: null }
   const selectedSmartStart = smartStart.selected
 
+  useEffect(() => {
+    let active = true
+    loadSmartStartCompletionAsync(selectedWeek).then((completion) => {
+      if (active) setSmartStartState((current) => current.week === selectedWeek ? { ...current, completion } : current)
+    })
+    return () => { active = false }
+  }, [selectedWeek])
+
   function markSmartStart(completion: SmartStartCompletion) {
-    saveSmartStartCompletion(selectedWeek, completion)
+    void saveSmartStartCompletionAsync(selectedWeek, completion)
     setSmartStartState({ ...smartStart, completion, showReview: false, result: completion === 'started' ? 0 : null })
   }
 
   function startFromPreviousWeek() {
     const result = mergeSmartStartSelections(plan, selectedWeek, followUps, smartStartCandidates, selectedSmartStart)
-    saveWeeklyPlan(result.plan)
-    saveFollowUps(selectedWeek, result.followUps)
-    saveSmartStartCompletion(selectedWeek, 'started')
+    void saveWeeklyPlanAsync(result.plan)
+    void saveFollowUpsAsync(selectedWeek, result.followUps)
+    void saveSmartStartCompletionAsync(selectedWeek, 'started')
     setSmartStartState({ ...smartStart, completion: 'started', showReview: false, result: result.added })
   }
 
@@ -251,6 +320,7 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
         plan,
         activities,
         followUps,
+        template,
       })
       setExportMessage(`Downloaded ${result.filename}`)
     } catch {
@@ -261,33 +331,45 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
   }
 
   return (
-    <main className={`overview-dashboard${intelligence.reportReadiness.status === 'empty' ? ' is-empty' : ''}`} id="overview">
-      <header className="overview-week-header">
-        <div>
-          <p className="eyebrow">{isHistorical ? 'Historical week' : 'Current work week'}</p>
-          <h1>Week of {formatCompactWeekHeading(selectedWeek)}</h1>
-          <p>{isHistorical ? 'Historical week' : 'Current week'} · Monday - Friday</p>
+    <main key={selectedWeek} className={`overview-dashboard overview-hero-screen${intelligence.reportReadiness.status === 'empty' ? ' is-empty' : ''}`} id="overview">
+      <header className="overview-week-header overview-hero-enter">
+        <div className="overview-week-copy">
+          <p className="eyebrow overview-hero-context">{isHistorical ? 'Historical week' : 'Current work week'}</p>
+          <h1 className="overview-hero-heading">{template.name}</h1>
+          <p className="overview-week-date overview-hero-meta">{isHistorical ? 'Historical week' : 'Current week'} · {formatCompactWeekHeading(selectedWeek)}</p>
+          <p className="overview-week-description overview-hero-copy">Your week at a glance.</p>
           {isTrulyEmpty && <p className="overview-empty-week-note">Your week hasn&apos;t started yet.</p>}
         </div>
-        <div className="overview-week-actions">
+        <div className="overview-week-side">
+          <span className={`overview-readiness overview-readiness-${intelligence.reportReadiness.status} overview-hero-status`}><span aria-hidden="true" />{intelligence.reportReadiness.status === 'ready' ? 'Ready to review' : intelligence.reportReadiness.status === 'review' ? 'Needs attention' : 'Ready when you are'}</span>
+          <div className="overview-week-actions overview-hero-actions">
           <button className="button button-secondary" type="button" onClick={() => onNavigate('weekly-plan')}>{intelligence.reportReadiness.status === 'empty' ? 'Open Weekly Plan' : 'View Weekly Plan'}</button>
           <button className="button button-primary" type="button" onClick={() => onNavigate('daily-activity')}>{intelligence.reportReadiness.status === 'empty' ? 'Record Activity' : 'Continue Daily Activity'} <span aria-hidden="true">→</span></button>
+          </div>
         </div>
       </header>
 
-      <section className="overview-metrics" aria-label="Weekly metrics">
-        <MetricCard label={FIELD_SALES_TEMPLATE.terminology.activityPlural} value={activities.length} />
-        <MetricCard label="HCP engagements" value={uniqueHcps} />
-        <MetricCard label="Open follow-ups" value={openFollowUps.length} />
-        <MetricCard label="Report" value={reportReady ? 'Ready' : 'Not ready'} />
+      <section className="overview-metrics overview-metric-entrance" aria-label="Weekly metrics">
+        <div className="overview-metric overview-metric-primary overview-metric-card" style={{ animationDelay: '0ms' }}><span>This week</span><strong><AnimatedNumber value={activities.length} /></strong><small>{terminology.activityPlural}</small></div>
+        <MetricCard label={template.id === 'project-management' ? 'Projects / Workstreams' : template.id === 'small-business' ? 'Customer / Client contacts' : 'HCP engagements'} value={template.id === 'project-management' ? priorityAccounts : uniqueHcps} delay={70} />
+        <MetricCard label={template.id === 'project-management' ? 'Weekly Objectives' : 'Open follow-ups'} value={template.id === 'project-management' ? plan.days.reduce((count, day) => count + day.categories.primaryObjectives.length, 0) : openFollowUps.length} delay={140} />
+        <div className="overview-metric overview-metric-status overview-metric-card" style={{ animationDelay: '210ms' }}><span>Report</span><strong>{reportReady ? 'Ready' : 'Not ready'}</strong><small>{intelligence.reportReadiness.summary}</small></div>
       </section>
+
+      <nav className="overview-workflow-rail overview-workflow-rail-enter" aria-label="WeekFlow workflow">
+        <a className="overview-workflow-step is-complete" href="/weekly-plan" style={{ animationDelay: '0ms', ['--step-index' as any]: 0 }}><span>01</span><strong>Plan</strong><small>Weekly Plan</small></a>
+        <a className={`overview-workflow-step${activities.length > 0 ? ' is-complete' : ' is-current'}`} href="/daily-activity" style={{ animationDelay: '80ms', ['--step-index' as any]: 1 }}><span>02</span><strong>Act</strong><small>Daily Activity</small></a>
+        <a className={`overview-workflow-step${openFollowUps.length > 0 ? ' is-current' : ''}`} href="/follow-ups" style={{ animationDelay: '160ms', ['--step-index' as any]: 2 }}><span>03</span><strong>Follow up</strong><small>Follow-ups</small></a>
+        <a className={`overview-workflow-step${reportReady ? ' is-complete' : ' is-current'}`} href="/report" style={{ animationDelay: '240ms', ['--step-index' as any]: 3 }}><span>04</span><strong>Review</strong><small>Generate Report</small></a>
+        <a className="overview-workflow-step" href="/report-history" style={{ animationDelay: '320ms', ['--step-index' as any]: 4 }}><span>05</span><strong>Report</strong><small>Report History</small></a>
+      </nav>
 
       <div className={`overview-grid overview-main-grid${isTrulyEmpty ? ' is-empty' : ''}`}>
         {!isTrulyEmpty && <section className="overview-panel overview-progress-panel">
-          <SectionHeader eyebrow="Week at a glance" title="Field execution" />
-          <div className="overview-progress-label"><strong>{activities.length} of {plannedItems} planned account items captured</strong><span>{progress}%</span></div>
+          <SectionHeader eyebrow="Week at a glance" title={template.id === 'project-management' ? 'Project execution' : template.id === 'small-business' ? 'Business execution' : 'Field execution'} />
+          <div className="overview-progress-label"><strong>{activities.length} of {plannedItems} planned {template.id === 'project-management' ? 'work items' : template.id === 'small-business' ? 'business items' : 'account items'} captured</strong><span>{progress}%</span></div>
           <div className="overview-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-label="Weekly field activity progress"><span style={{ width: `${progress}%` }} /></div>
-          <div className="overview-supporting-stats"><span>{activeWorkdays} active workday{activeWorkdays === 1 ? '' : 's'}</span><span>{uniqueHcps} HCP engagements</span><span>{priorityAccounts} account record{priorityAccounts === 1 ? '' : 's'}</span></div>
+          <div className="overview-supporting-stats"><span>{activeWorkdays} active workday{activeWorkdays === 1 ? '' : 's'}</span><span>{template.id === 'project-management' ? `${priorityAccounts} projects / workstreams` : template.id === 'small-business' ? `${uniqueHcps} customer / client contacts` : `${uniqueHcps} HCP engagements`}</span><span>{template.id === 'project-management' ? `${plan.successMeasures.length} success measures` : `${priorityAccounts} ${template.id === 'small-business' ? 'business records' : 'account records'}`}</span></div>
         </section>}
 
         <section className="overview-panel overview-selected-day">
@@ -300,10 +382,10 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
 
       <section className={`overview-intelligence-panel${intelligence.reportReadiness.status === 'empty' ? ' is-empty' : ''}`} aria-labelledby="intelligence-heading">
         <div className="overview-intelligence-heading"><div><p className="eyebrow">WeekFlow Intelligence</p><h2 id="intelligence-heading">{intelligence.reportReadiness.status === 'empty' ? 'Start with the work already planned' : 'What needs attention'}</h2><p>{intelligence.reportReadiness.status === 'empty' ? 'Insights and recommendations will appear as activity is captured.' : intelligence.reportReadiness.summary}</p></div><span className={`intelligence-status ${intelligence.reportReadiness.status}`}>{intelligence.reportReadiness.status}</span></div>
-        {intelligence.reportReadiness.status === 'empty' ? <div className="intelligence-empty-actions"><button className="button button-secondary" type="button" onClick={() => onNavigate('weekly-plan')}>Review Weekly Plan</button><button className="button button-primary" type="button" onClick={() => onNavigate('daily-activity')}>Record Activity</button></div> : <div className="overview-intelligence-grid">
-          <section className="intelligence-column" aria-labelledby="happening-heading"><h3 id="happening-heading">What&apos;s happening</h3>{getTopInsights(intelligence.insights).length > 0 ? <ul className="intelligence-insight-list">{getTopInsights(intelligence.insights).map((insight: WeeklyInsight) => <li key={`${insight.category}-${insight.account}-${insight.title}-${insight.detail}`}><span className="intelligence-category">{intelligenceCategoryLabels[insight.category]}</span><strong>{insight.title}</strong><p>{insight.account}: {insight.detail}</p></li>)}</ul> : <p className="intelligence-muted">No derived insights yet.</p>}</section>
-          <section className="intelligence-column" aria-labelledby="attention-heading"><h3 id="attention-heading">What needs attention</h3>{getAttentionItems(intelligence, followUps).length > 0 ? <ul className="intelligence-attention-list">{getAttentionItems(intelligence, followUps).map((item) => <li key={`${item.title}-${item.action}`}><span className={`intelligence-level ${item.level.toLowerCase().replace(' ', '-')}`}>{item.level}</span><div><strong>{item.title}</strong><p>{item.reason}</p><button type="button" onClick={() => onNavigate(item.action)}>Review <span aria-hidden="true">→</span></button></div></li>)}</ul> : <p className="intelligence-muted">Nothing needs attention right now.</p>}</section>
-          <section className="intelligence-column" aria-labelledby="next-heading"><h3 id="next-heading">What should happen next</h3>{intelligence.recommendations.length > 0 ? <ol className="intelligence-recommendation-list">{intelligence.recommendations.slice(0, 5).map((recommendation, index) => <li key={`${recommendation.title}-${recommendation.account ?? ''}`}><span>{String(index + 1).padStart(2, '0')}</span><div><strong>{recommendation.title}</strong><p>{recommendation.reason}</p></div></li>)}</ol> : <p className="intelligence-muted">Recommendations will appear as activity is captured.</p>}</section>
+        {intelligence.reportReadiness.status === 'empty' ? <div className="intelligence-empty-actions overview-empty-cta"><button className="button button-secondary" type="button" onClick={() => onNavigate('weekly-plan')}>Review Weekly Plan</button><button className="button button-primary" type="button" onClick={() => onNavigate('daily-activity')}>Record Activity</button></div> : <div className="overview-intelligence-grid">
+          <section className="intelligence-column overview-intelligence-column" aria-labelledby="happening-heading"><h3 id="happening-heading">What&apos;s happening</h3>{getTopInsights(intelligence.insights, template).length > 0 ? <ul className="intelligence-insight-list">{getTopInsights(intelligence.insights, template).map((insight: WeeklyInsight, index: number) => <li key={`${insight.category}-${insight.account}-${insight.title}-${insight.detail}`} className="overview-intelligence-item" style={{ animationDelay: `${index * 70}ms` }}><span className="intelligence-category">{intelligenceCategoryLabels[insight.category]}</span><strong>{insight.title}</strong><p>{insight.account}: {insight.detail}</p></li>)}</ul> : <p className="intelligence-muted">No derived insights yet.</p>}</section>
+          <section className="intelligence-column overview-intelligence-column" aria-labelledby="attention-heading"><h3 id="attention-heading">What needs attention</h3>{getAttentionItems(intelligence, followUps).length > 0 ? <ul className="intelligence-attention-list">{getAttentionItems(intelligence, followUps).map((item, index: number) => <li key={`${item.title}-${item.action}`} className="overview-intelligence-item" style={{ animationDelay: `${index * 70}ms` }}><span className={`intelligence-level ${item.level.toLowerCase().replace(' ', '-')}`}>{item.level}</span><div><strong>{item.title}</strong><p>{item.reason}</p><button type="button" onClick={() => onNavigate(item.action)}>Review <span aria-hidden="true">→</span></button></div></li>)}</ul> : <p className="intelligence-muted">Nothing needs attention right now.</p>}</section>
+          <section className="intelligence-column overview-intelligence-column" aria-labelledby="next-heading"><h3 id="next-heading">What should happen next</h3>{intelligence.recommendations.length > 0 ? <ol className="intelligence-recommendation-list">{intelligence.recommendations.slice(0, 5).map((recommendation, index) => <li key={`${recommendation.title}-${recommendation.account ?? ''}`} className="overview-intelligence-item" style={{ animationDelay: `${index * 70}ms` }}><span>{String(index + 1).padStart(2, '0')}</span><div><strong>{recommendation.title}</strong><p>{recommendation.reason}</p></div></li>)}</ol> : <p className="intelligence-muted">Recommendations will appear as activity is captured.</p>}</section>
         </div>}
       </section>
 
@@ -320,7 +402,9 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
       {activities.length > 0 && <section className="overview-outcomes-section" aria-labelledby="key-outcomes-heading">
         <SectionHeader eyebrow="What happened" title="Key outcomes from this week" />
         <div className="overview-outcome-grid">
-          {[['Commercial', keyOutcomes.commercial], ['Patient Intelligence', keyOutcomes.patient], ['Access / Market', keyOutcomes.market]].map(([label, cards]) => <article className="overview-outcome-card" key={label as string}><h3>{label as string}</h3>{(cards as OutcomeCard[]).length > 0 ? <ul>{(cards as OutcomeCard[]).map((card, index) => <li key={`${card.title}-${index}`}><strong>{card.title}</strong>{card.detail && <small>{card.detail}</small>}</li>)}</ul> : <p>No outcomes recorded yet.</p>}</article>)}
+          {(template.id === 'small-business'
+            ? [['Business / Sales', keyOutcomes.commercial], ['Customer Outcomes', keyOutcomes.patient], ['Operations / Supplier', keyOutcomes.market]]
+            : [['Commercial', keyOutcomes.commercial], ['Patient Intelligence', keyOutcomes.patient], ['Access / Market', keyOutcomes.market]]).map(([label, cards]) => <article className="overview-outcome-card" key={label as string}><h3>{label as string}</h3>{(cards as OutcomeCard[]).length > 0 ? <ul>{(cards as OutcomeCard[]).map((card, index) => <li key={`${card.title}-${index}`}><strong>{card.title}</strong>{card.detail && <small>{card.detail}</small>}</li>)}</ul> : <p>No outcomes recorded yet.</p>}</article>)}
         </div>
       </section>}
 
@@ -338,11 +422,11 @@ export default function OverviewScreen({ selectedWeek, onNavigate }: OverviewScr
 
       <section className="overview-panel overview-plan-panel">
         <SectionHeader eyebrow="This week" title="This week&apos;s plan" action="View Weekly Plan" onAction={() => onNavigate('weekly-plan')} />
-        {unique(plan.days.flatMap((day) => day.categories.facilities.map((item) => item.text))).length > 0 ? <div className="overview-plan-list">{plan.days.map((day) => <div className="overview-plan-row" key={day.id}><strong>{day.label}</strong><span>{day.categories.facilities.length > 0 ? day.categories.facilities.slice(0, 4).map((item) => item.text).join(' · ') : '—'}</span></div>)}</div> : <p className="overview-empty-copy">No facilities or accounts planned yet.</p>}
+        {unique(plan.days.flatMap((day) => day.categories.facilities.map((item) => item.text))).length > 0 ? <div className="overview-plan-list">{plan.days.map((day) => <div className="overview-plan-row" key={day.id}><strong>{day.label}</strong><span>{day.categories.facilities.length > 0 ? day.categories.facilities.slice(0, 4).map((item) => item.text).join(' · ') : '—'}</span></div>)}</div> : <p className="overview-empty-copy">{template.id === 'project-management' ? 'No projects or workstreams planned yet.' : 'No facilities or accounts planned yet.'}</p>}
       </section>
 
       <section className="overview-report-card">
-        <div><p className="eyebrow">Weekly report</p><h2>{reportReady ? 'Your weekly field activity is ready to review.' : 'Capture activity to prepare your weekly report.'}</h2><p>Activities captured: {activities.length} · Follow-ups: {followUps.length} · Readiness: {intelligence.reportReadiness.status}</p></div>
+        <div><p className="eyebrow">Weekly report</p><h2>{reportReady ? `Your weekly ${template.id === 'project-management' ? 'project report' : 'field activity report'} is ready to review.` : 'Capture activity to prepare your weekly report.'}</h2><p>Activities captured: {activities.length} · Follow-ups: {followUps.length} · Readiness: {intelligence.reportReadiness.status}</p></div>
         <div className="overview-report-actions"><button className="button button-secondary" type="button" onClick={() => onNavigate('report')}>Review Report</button><button className="button button-primary" type="button" onClick={handleExport} disabled={!reportReady || isExporting}>{isExporting ? 'Generating...' : 'Export Word Document'} <span aria-hidden="true">→</span></button></div>
         {exportMessage && <p className="export-message" role="status">{exportMessage}</p>}
       </section>

@@ -1,321 +1,97 @@
 import { jsPDF } from 'jspdf'
-import type { DailyActivity } from '../types/dailyActivity'
-import type { FollowUp } from '../types/followUp'
-import type { DayPlan, WeeklyPlan } from '../types/weeklyPlan'
+import type { ReportSnapshot } from './reportDocx.ts'
+import { FIELD_SALES_TEMPLATE } from '../config/templates.ts'
+import { getReportSectionDescriptors } from '../report/reportTemplateAdapter.ts'
+import { mapReportSections, type MappedReportSection } from '../report/reportDataMapper.ts'
 
-export interface ReportSnapshot {
-  weekKey: string
-  weekLabel: string
-  plan: WeeklyPlan
-  activities: DailyActivity[]
-  followUps: FollowUp[]
-  preparedBy: string
-  role: string
-  company: string
-  portfolio: string
-}
-
-const PAGE_WIDTH = 210
-const PAGE_HEIGHT = 297
+const WIDTH = 210
+const HEIGHT = 297
 const MARGIN = 17
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2
-const FOOTER_Y = PAGE_HEIGHT - 10
-const BODY_COLOR: [number, number, number] = [42, 49, 41]
-const MUTED_COLOR: [number, number, number] = [105, 114, 104]
-const ACCENT_COLOR: [number, number, number] = [169, 95, 57]
-const LINE_COLOR: [number, number, number] = [214, 219, 211]
-const TINT_COLOR: [number, number, number] = [238, 240, 233]
-
+const CONTENT = WIDTH - MARGIN * 2
+const BODY: [number, number, number] = [42, 49, 41]
+const MUTED: [number, number, number] = [105, 114, 104]
+const ACCENT: [number, number, number] = [169, 95, 57]
+const LINE: [number, number, number] = [214, 219, 211]
 type PdfDocument = InstanceType<typeof jsPDF>
 
-function unique(values: string[]) {
-  return [...new Set(values.filter(Boolean))]
+function dateLabel(date: string) { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00`)) }
+function addPage(pdf: PdfDocument, page: number) { if (page > 1) pdf.addPage('a4', 'portrait'); pdf.setDrawColor(...LINE); pdf.line(MARGIN, HEIGHT - 15, WIDTH - MARGIN, HEIGHT - 15); pdf.setFontSize(8); pdf.setTextColor(...MUTED); pdf.text('WeekFlow', MARGIN, HEIGHT - 10); pdf.text(`Page ${page}`, WIDTH - MARGIN, HEIGHT - 10, { align: 'right' }); return MARGIN }
+function ensure(pdf: PdfDocument, y: number, amount: number, page: { value: number }) { if (y + amount <= HEIGHT - 22) return y; page.value += 1; return addPage(pdf, page.value) }
+function heading(pdf: PdfDocument, number: string, value: string, y: number, page: { value: number }) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); const wrapped = pdf.splitTextToSize(value, CONTENT - 14) as string[]; const blockHeight = wrapped.length * 6 + 8; y = ensure(pdf, y, blockHeight, page); pdf.setFontSize(8); pdf.setTextColor(...ACCENT); pdf.text(number, MARGIN, y); pdf.setFontSize(15); pdf.setTextColor(...BODY); pdf.text(wrapped, MARGIN + 10, y); pdf.setDrawColor(...LINE); pdf.line(MARGIN, y + wrapped.length * 6 - 1, WIDTH - MARGIN, y + wrapped.length * 6 - 1); return y + blockHeight }
+function bullet(pdf: PdfDocument, value: string, y: number, page: { value: number }) { const wrapped = pdf.splitTextToSize(value || 'Not recorded', CONTENT - 8) as string[]; y = ensure(pdf, y, wrapped.length * 4.5 + 3, page); pdf.setFillColor(...ACCENT); pdf.circle(MARGIN + 1.5, y - 1.2, 0.8, 'F'); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(...BODY); pdf.text(wrapped, MARGIN + 6, y); return y + wrapped.length * 4.5 + 3 }
+function filename(snapshot: ReportSnapshot) { const start = new Date(`${snapshot.weekKey}T12:00:00`); const end = new Date(start); end.setDate(start.getDate() + 4); const month = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(start); const template = snapshot.template ?? FIELD_SALES_TEMPLATE; const prefix = template.id === 'field-sales' ? 'Weekly_Field_Activity_Report' : `${template.name.replace(/[^a-z0-9]+/gi, '_')}_Weekly_Report`; return `${prefix}_${month}${start.getDate()}-${end.getDate()}-${start.getFullYear()}.pdf` }
+
+function groupValue<T>(section: MappedReportSection | undefined, group: string): T[] {
+  const value = section?.groups[group]
+  return Array.isArray(value) ? value as T[] : []
 }
 
-function formatDate(date: string) {
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00`))
+function sectionText(section: MappedReportSection) {
+  if (section.unsupportedGroups.length > 0) return section.presentation.emptyState
+  const values = Object.values(section.groups)
+  const count = values.reduce<number>((total, value) => total + (Array.isArray(value) ? value.length : 1), 0)
+  return count > 0 ? `${count} mapped report item${count === 1 ? '' : 's'}.` : 'No report data recorded.'
 }
 
-function formatDueDate(date?: string) {
-  return date ? formatDate(date) : ''
-}
-
-function dayActivities(day: DayPlan, activities: DailyActivity[]) {
-  return activities.filter((activity) => activity.date === day.date)
-}
-
-function textLines(pdf: PdfDocument, text: string, width: number) {
-  return pdf.splitTextToSize(text || 'Not recorded', width) as string[]
-}
-
-function drawFooter(pdf: PdfDocument, pageNumber: number) {
-  pdf.setDrawColor(...LINE_COLOR)
-  pdf.line(MARGIN, FOOTER_Y - 5, PAGE_WIDTH - MARGIN, FOOTER_Y - 5)
-  pdf.setFont('helvetica', 'normal')
-  pdf.setFontSize(8)
-  pdf.setTextColor(...MUTED_COLOR)
-  pdf.text('WeekFlow | Weekly Field Activity Report', MARGIN, FOOTER_Y)
-  pdf.text(`Page ${pageNumber}`, PAGE_WIDTH - MARGIN, FOOTER_Y, { align: 'right' })
-}
-
-function addPage(pdf: PdfDocument, pageNumber: number) {
-  if (pdf.getNumberOfPages() > 1) pdf.addPage('a4', 'portrait')
-  drawFooter(pdf, pageNumber)
-  return MARGIN
-}
-
-function ensureSpace(pdf: PdfDocument, y: number, height: number, pageNumber: { value: number }, minimum = 0) {
-  if (y + height <= PAGE_HEIGHT - 22) return y
-  pageNumber.value += 1
-  y = addPage(pdf, pageNumber.value)
-  return y + minimum
-}
-
-function drawSectionHeading(pdf: PdfDocument, number: string, eyebrow: string, title: string, y: number, pageNumber: { value: number }) {
-  y = ensureSpace(pdf, y, 18, pageNumber)
-  pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(8)
-  pdf.setTextColor(...ACCENT_COLOR)
-  pdf.text(number, MARGIN, y)
-  pdf.setFontSize(7)
-  pdf.text(eyebrow.toUpperCase(), MARGIN + 10, y)
-  y += 5
-  pdf.setFontSize(15)
-  pdf.setTextColor(...BODY_COLOR)
-  pdf.text(title, MARGIN + 10, y)
-  y += 5
-  pdf.setDrawColor(...LINE_COLOR)
-  pdf.line(MARGIN, y, PAGE_WIDTH - MARGIN, y)
-  return y + 8
-}
-
-function drawBullet(pdf: PdfDocument, text: string, y: number, pageNumber: { value: number }, color = BODY_COLOR) {
-  const lines = textLines(pdf, text, CONTENT_WIDTH - 8)
-  y = ensureSpace(pdf, y, lines.length * 4.5 + 3, pageNumber)
-  pdf.setFillColor(...ACCENT_COLOR)
-  pdf.circle(MARGIN + 1.5, y - 1.2, 0.8, 'F')
-  pdf.setFont('helvetica', 'normal')
-  pdf.setFontSize(9)
-  pdf.setTextColor(...color)
-  pdf.text(lines, MARGIN + 6, y)
-  return y + lines.length * 4.5 + 3
-}
-
-function drawLabeledText(pdf: PdfDocument, label: string, text: string, x: number, y: number, width: number, pageNumber: { value: number }) {
-  const lines = textLines(pdf, text, width)
-  y = ensureSpace(pdf, y, lines.length * 4.2 + 8, pageNumber)
-  pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(7.5)
-  pdf.setTextColor(...MUTED_COLOR)
-  pdf.text(label.toUpperCase(), x, y)
-  pdf.setFont('helvetica', 'normal')
-  pdf.setFontSize(8.5)
-  pdf.setTextColor(...BODY_COLOR)
-  pdf.text(lines, x, y + 4)
-  return y + lines.length * 4.2 + 8
-}
-
-function drawDailyTable(pdf: PdfDocument, plan: WeeklyPlan, activities: DailyActivity[], y: number, pageNumber: { value: number }) {
-  const columns = [
-    { label: 'Day', width: 20 },
-    { label: 'Facilities Visited', width: 34 },
-    { label: 'Doctors Engaged', width: 37 },
-    { label: 'Outcome of Visit', width: 43 },
-    { label: 'Key Intelligence / Next Action', width: 49 },
-  ]
-  const headerHeight = 10
-  const rowPadding = 3
-  const drawHeader = () => {
-    pdf.setFillColor(...TINT_COLOR)
-    pdf.setDrawColor(...LINE_COLOR)
-    pdf.rect(MARGIN, y, CONTENT_WIDTH, headerHeight, 'FD')
-    let x = MARGIN
-    pdf.setFont('helvetica', 'bold')
-    pdf.setFontSize(6.4)
-    pdf.setTextColor(...MUTED_COLOR)
-    columns.forEach((column) => {
-      pdf.text(column.label.toUpperCase(), x + 2, y + 6)
-      x += column.width
-    })
-    y += headerHeight
-  }
-
-  y = ensureSpace(pdf, y, headerHeight + 15, pageNumber)
-  drawHeader()
-  plan.days.forEach((day) => {
-    const records = dayActivities(day, activities)
-    const cells = records.length > 0 ? [
-      `${day.label}\n${formatDate(day.date)}`,
-      unique(records.map((activity) => activity.account)).join(', '),
-      unique(records.flatMap((activity) => activity.hcpNames)).join(', ') || 'Not recorded',
-      records.map((activity) => activity.outcome).filter(Boolean).join(' ') || 'Not recorded',
-      records.flatMap((activity) => [activity.intelligence, activity.nextAction]).filter(Boolean).join(' ') || 'Not recorded',
-    ] : [
-      `${day.label}\n${formatDate(day.date)}`, 'No activity captured', 'Not recorded', 'Not recorded', 'Not recorded',
-    ]
-    const wrapped = cells.map((cell, index) => textLines(pdf, cell, columns[index].width - rowPadding * 2))
-    const rowHeight = Math.max(...wrapped.map((lines) => lines.length)) * 3.6 + rowPadding * 2 + 2
-    if (y + rowHeight > PAGE_HEIGHT - 22) {
-      pageNumber.value += 1
-      y = addPage(pdf, pageNumber.value)
-      drawHeader()
+export function buildReportPdf(snapshot: ReportSnapshot) {
+  const template = snapshot.template ?? FIELD_SALES_TEMPLATE
+  const sections = mapReportSections(snapshot, getReportSectionDescriptors(template), template)
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const page = { value: 1 }
+  let y = addPage(pdf, 1)
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8); pdf.setTextColor(...ACCENT); pdf.text(`WEEKFLOW ${template.name.toUpperCase()} REPORTING`, MARGIN, y); y += 10
+  pdf.setFontSize(23); pdf.setTextColor(...BODY); const titleLines = pdf.splitTextToSize(template.report.title.toUpperCase(), CONTENT) as string[]; pdf.text(titleLines, MARGIN, y); y += titleLines.length * 9; pdf.setDrawColor(...BODY); pdf.line(MARGIN, y, WIDTH - MARGIN, y); y += 9
+  pdf.setFontSize(7); pdf.setTextColor(...MUTED); pdf.text('REPORTING WEEK', MARGIN, y); pdf.setFontSize(9); pdf.setTextColor(...BODY); pdf.text(snapshot.weekLabel, MARGIN, y + 5); y += 18
+  for (const section of sections) {
+    y = heading(pdf, String(section.order).padStart(2, '0'), section.title, y, page)
+    if (template.id === 'small-business' && section.sectionId === 'business-summary') {
+      const activities = groupValue<{ account: string; activityType: string; structuredOutcomes: Array<{ type: string }>; nextAction: string }>(section, 'dailyActivities')
+      y = bullet(pdf, activities.length > 0 ? `${activities.length} business activities recorded.` : section.presentation.emptyState, y, page)
+    } else if (template.id === 'small-business' && section.sectionId === 'daily-business-activity') {
+      const activities = groupValue<{ date: string; activityType: string; account: string; outcome: string; intelligence: string; nextAction: string }>(section, 'dailyActivities')
+      for (const day of snapshot.plan.days) {
+        const records = activities.filter((activity) => activity.date === day.date)
+        y = bullet(pdf, records.length > 0 ? `${day.label} ${dateLabel(day.date)}: ${records.map((activity) => [activity.activityType, activity.account, activity.outcome, activity.intelligence, activity.nextAction].filter(Boolean).join(' | ')).join(' || ')}` : `${day.label} ${dateLabel(day.date)}: No activity captured`, y, page)
+      }
+    } else if (template.id === 'small-business' && ['sales-opportunity-progress', 'customer-client-outcomes', 'orders-payments'].includes(section.sectionId)) {
+      const allowed = section.sectionId === 'sales-opportunity-progress' ? ['Sale / Order Won', 'Lead Qualified'] : section.sectionId === 'customer-client-outcomes' ? ['Customer Retained', 'Follow-up Required'] : ['Payment Received']
+      const outcomes = groupValue<{ type: string; details: string }>(section, 'outcomes').filter((outcome) => allowed.includes(outcome.type))
+      y = bullet(pdf, outcomes.length > 0 ? outcomes.map((outcome) => `${outcome.type}: ${outcome.details || 'Details not recorded.'}`).join(' || ') : section.presentation.emptyState, y, page)
+    } else if (template.id === 'small-business' && section.sectionId === 'supplier-operational-intelligence') {
+      const intelligence = groupValue<{ account: string; type: string; details: string }>(section, 'intelligence')
+      y = bullet(pdf, intelligence.length > 0 ? intelligence.map((item) => `${item.type}: ${item.details}`).join(' || ') : section.presentation.emptyState, y, page)
+    } else if (template.id === 'small-business' && section.sectionId === 'priorities-coming-week') {
+      const followUps = groupValue<{ task: string; status: string }>(section, 'followUps').filter((followUp) => followUp.status === 'open')
+      y = bullet(pdf, followUps.length > 0 ? followUps.map((followUp) => followUp.task).join(' || ') : section.presentation.emptyState, y, page)
+    } else if (template.id === 'small-business' && section.sectionId === 'completed-follow-ups') {
+      const followUps = groupValue<{ task: string; status: string }>(section, 'followUps').filter((followUp) => followUp.status === 'completed')
+      y = bullet(pdf, followUps.length > 0 ? followUps.map((followUp) => followUp.task).join(' || ') : section.presentation.emptyState, y, page)
+    } else if (section.sectionId === 'daily-activity-breakdown') {
+      const activities = groupValue<{ date: string; activityType: string; account: string; hcpNames: string[]; outcome: string; intelligence: string; nextAction: string }>(section, 'dailyActivities')
+      for (const day of snapshot.plan.days) {
+        const records = activities.filter((activity) => activity.date === day.date)
+        const text = records.length > 0 ? records.map((activity) => [activity.activityType, activity.account, activity.hcpNames.join(', '), activity.outcome, activity.intelligence, activity.nextAction].filter(Boolean).join(' | ')).join(' || ') : 'No activity captured'
+        y = bullet(pdf, `${day.label} ${dateLabel(day.date)}: ${text}`, y, page)
+      }
+    } else if (section.sectionId === 'priorities-coming-week') {
+      const followUps = groupValue<{ task: string; status: string }>(section, 'followUps')
+      y = bullet(pdf, followUps.length > 0 ? `${followUps.filter((followUp) => followUp.status === 'open').length} open follow-up(s) recorded.` : 'No open follow-ups recorded.', y, page)
+    } else if (section.sectionId === 'completed-follow-ups') {
+      const followUps = groupValue<{ status: string }>(section, 'followUps')
+      y = bullet(pdf, followUps.some((followUp) => followUp.status === 'completed') ? 'Completed follow-ups recorded.' : 'No completed follow-ups recorded.', y, page)
+    } else {
+      y = bullet(pdf, sectionText(section), y, page)
     }
-    pdf.setDrawColor(...LINE_COLOR)
-    pdf.rect(MARGIN, y, CONTENT_WIDTH, rowHeight)
-    let x = MARGIN
-    wrapped.forEach((lines, index) => {
-      if (index > 0) pdf.line(x, y, x, y + rowHeight)
-      pdf.setFont('helvetica', index === 0 ? 'bold' : 'normal')
-      pdf.setFontSize(index === 0 ? 7.2 : 7.1)
-      pdf.setTextColor(...(index === 0 ? BODY_COLOR : MUTED_COLOR))
-      pdf.text(lines, x + rowPadding, y + rowPadding + 3)
-      x += columns[index].width
-    })
-    y += rowHeight
-  })
-  return y + 8
+  }
+  return pdf
 }
 
-function drawStructuredOutcomes(pdf: PdfDocument, activities: DailyActivity[], y: number, pageNumber: { value: number }) {
-  const outcomes = activities.flatMap((activity) => activity.structuredOutcomes.map((outcome) => ({ ...outcome, account: activity.account })))
-  if (outcomes.length === 0) return y
-  y = drawSectionHeading(pdf, '04', 'Structured intelligence', 'Key Commercial / Patient-Journey Outcomes', y, pageNumber)
-  outcomes.forEach((outcome) => {
-    y = ensureSpace(pdf, y, 16, pageNumber)
-    pdf.setFont('helvetica', 'bold')
-    pdf.setFontSize(9)
-    pdf.setTextColor(...BODY_COLOR)
-    pdf.text(outcome.type, MARGIN, y)
-    pdf.setFont('helvetica', 'normal')
-    pdf.setFontSize(8)
-    pdf.setTextColor(...MUTED_COLOR)
-    pdf.text(outcome.account, MARGIN, y + 4)
-    y = drawLabeledText(pdf, 'Details', [outcome.product, outcome.quantity ? `Quantity: ${outcome.quantity}` : '', outcome.stockStatus, outcome.details].filter(Boolean).join(' - ') || 'Details not recorded.', MARGIN + 38, y, CONTENT_WIDTH - 38, pageNumber)
-    y += 2
-  })
-  return y
+export function getReportPdfFilename(snapshot: ReportSnapshot) {
+  return filename(snapshot)
 }
 
 export function exportReportPdf(snapshot: ReportSnapshot) {
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const pageNumber = { value: 1 }
-  let y = addPage(pdf, pageNumber.value)
-
-  pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(8)
-  pdf.setTextColor(...ACCENT_COLOR)
-  pdf.text('WEEKFLOW FIELD REPORTING', MARGIN, y)
-  y += 10
-  pdf.setFontSize(23)
-  pdf.setTextColor(...BODY_COLOR)
-  pdf.text("THIS WEEK'S FIELD ACTIVITY REPORT", MARGIN, y)
-  y += 9
-  pdf.setDrawColor(...BODY_COLOR)
-  pdf.setLineWidth(0.7)
-  pdf.line(MARGIN, y, PAGE_WIDTH - MARGIN, y)
-  y += 9
-
-  const metadata = [
-    ['Reporting week', snapshot.weekLabel],
-    ['Prepared by', snapshot.preparedBy],
-    ['Role', snapshot.role],
-    ['Company', snapshot.company],
-    ['Portfolio', snapshot.portfolio],
-  ]
-  const metadataWidth = CONTENT_WIDTH / 2
-  metadata.forEach(([label, value], index) => {
-    const column = index % 2
-    const row = Math.floor(index / 2)
-    const x = MARGIN + column * metadataWidth
-    const rowY = y + row * 12
-    pdf.setFont('helvetica', 'bold')
-    pdf.setFontSize(7)
-    pdf.setTextColor(...MUTED_COLOR)
-    pdf.text(label.toUpperCase(), x, rowY)
-    pdf.setFont('helvetica', 'normal')
-    pdf.setFontSize(9)
-    pdf.setTextColor(...BODY_COLOR)
-    pdf.text(textLines(pdf, value, metadataWidth - 5), x, rowY + 5)
-  })
-  y += 36
-
-  y = drawSectionHeading(pdf, '01', 'The week at a glance', 'Activities Summary', y, pageNumber)
-  const facilities = unique(snapshot.activities.map((activity) => activity.account))
-  const physicalVisits = snapshot.activities.filter((activity) => activity.activityType === 'Physical Visit').length
-  const virtualEngagements = snapshot.activities.filter((activity) => activity.activityType === 'Virtual Engagement').length
-  const structuredTypes = unique(snapshot.activities.flatMap((activity) => activity.structuredOutcomes.map((outcome) => outcome.type.toLowerCase())))
-  const summaryLines = [
-    facilities.length > 0 ? `Field coverage recorded across ${facilities.length} account${facilities.length === 1 ? '' : 's'}: ${facilities.join(', ')}.` : '',
-    physicalVisits > 0 ? `${physicalVisits} physical visit${physicalVisits === 1 ? '' : 's'} captured.` : '',
-    virtualEngagements > 0 ? `${virtualEngagements} virtual engagement${virtualEngagements === 1 ? '' : 's'} captured.` : '',
-    structuredTypes.length > 0 ? `Structured outcomes included ${structuredTypes.join(', ')}.` : '',
-  ].filter(Boolean)
-  if (summaryLines.length === 0) summaryLines.push('No Daily Activity has been captured for this week yet.')
-  summaryLines.forEach((line) => { y = drawBullet(pdf, line, y, pageNumber) })
-
-  y = drawSectionHeading(pdf, '02', 'What happened each day', 'Daily Activity Breakdown', y + 5, pageNumber)
-  y = drawDailyTable(pdf, snapshot.plan, snapshot.activities, y, pageNumber)
-
-  const virtualActivities = snapshot.activities.filter((activity) => activity.activityType === 'Virtual Engagement')
-  if (virtualActivities.length > 0) {
-    y = drawSectionHeading(pdf, '03', 'Remote coverage', 'Virtual Engagements', y, pageNumber)
-    virtualActivities.forEach((activity) => {
-      y = ensureSpace(pdf, y, 24, pageNumber)
-      pdf.setFont('helvetica', 'bold')
-      pdf.setFontSize(9)
-      pdf.setTextColor(...BODY_COLOR)
-      pdf.text(activity.account, MARGIN, y)
-      y += 6
-      y = drawLabeledText(pdf, 'Doctors engaged', activity.hcpNames.join(', ') || 'Not recorded', MARGIN, y, CONTENT_WIDTH, pageNumber)
-      y = drawLabeledText(pdf, 'Outcome', activity.outcome || 'Not recorded', MARGIN, y, CONTENT_WIDTH, pageNumber)
-      y = drawLabeledText(pdf, 'Next action', activity.nextAction || 'Not recorded', MARGIN, y, CONTENT_WIDTH, pageNumber)
-    })
-  }
-
-  y = drawStructuredOutcomes(pdf, snapshot.activities, y, pageNumber)
-  const intelligence = unique(snapshot.activities.flatMap((activity) => activity.intelligence ? [`${activity.account}: ${activity.intelligence}`] : []))
-  const plannedPriorities = unique(snapshot.plan.days.flatMap((day) => day.categories.commercialPriorities.map((item) => item.text)))
-  const intelligenceItems = [...intelligence, ...plannedPriorities]
-  if (intelligenceItems.length > 0) {
-    y = drawSectionHeading(pdf, '05', 'Account-level context', 'Strategic Account Intelligence', y, pageNumber)
-    intelligenceItems.forEach((item) => { y = drawBullet(pdf, item, y, pageNumber) })
-  }
-
-  const openFollowUps = snapshot.followUps.filter((followUp) => followUp.status === 'open')
-  const completedFollowUps = snapshot.followUps.filter((followUp) => followUp.status === 'completed')
-  y = drawSectionHeading(pdf, '06', 'Carry-forward actions', 'Priorities for the Coming Week', y, pageNumber)
-  y = ensureSpace(pdf, y, 12, pageNumber)
-  pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(9)
-  pdf.setTextColor(...BODY_COLOR)
-  pdf.text('PRIORITIES FOR NEXT WEEK', MARGIN, y)
-  y += 6
-  if (openFollowUps.length > 0) {
-    openFollowUps.forEach((followUp) => {
-      const context = [followUp.facility, followUp.hcpName, followUp.dueDate ? `Due ${formatDueDate(followUp.dueDate)}` : ''].filter(Boolean).join(' | ')
-      y = drawBullet(pdf, `${followUp.priority === 'high' ? 'HIGH: ' : ''}${followUp.task}${context ? ` (${context})` : ''}`, y, pageNumber, followUp.priority === 'high' ? ACCENT_COLOR : BODY_COLOR)
-    })
-  } else {
-    y = drawBullet(pdf, 'No open follow-ups recorded.', y, pageNumber)
-  }
-  y += 4
-  y = ensureSpace(pdf, y, 12, pageNumber)
-  pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(9)
-  pdf.setTextColor(...BODY_COLOR)
-  pdf.text('COMPLETED THIS WEEK', MARGIN, y)
-  y += 6
-  if (completedFollowUps.length > 0) {
-    completedFollowUps.forEach((followUp) => { y = drawBullet(pdf, followUp.task, y, pageNumber) })
-  } else {
-    y = drawBullet(pdf, 'No completed follow-ups recorded.', y, pageNumber)
-  }
-
-  const safeName = snapshot.preparedBy === 'Not configured' ? 'WeekFlow' : snapshot.preparedBy.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '')
-  const start = new Date(`${snapshot.weekKey}T12:00:00`)
-  const end = new Date(start)
-  end.setDate(start.getDate() + 4)
-  const filename = `${safeName}_Weekly_Field_Activity_Report_${new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit' }).format(start).replace(' ', '')}-${new Intl.DateTimeFormat('en-US', { month: '2-digit', day: 'numeric', year: 'numeric' }).format(end).replace(/ /g, '').replace(',', '-')}.pdf`
-  pdf.save(filename)
-  return { filename, pageCount: pdf.getNumberOfPages() }
+  const pdf = buildReportPdf(snapshot)
+  pdf.save(filename(snapshot))
+  return { filename: filename(snapshot), pageCount: pdf.getNumberOfPages() }
 }

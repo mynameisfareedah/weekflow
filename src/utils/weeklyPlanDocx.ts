@@ -14,7 +14,6 @@ import {
   WidthType,
 } from 'docx'
 import type { PlanItem, WeeklyPlan } from '../types/weeklyPlan'
-import { FIELD_SALES_TEMPLATE } from '../config/templates'
 
 const A4_WIDTH_TWIPS = 11906
 const A4_HEIGHT_TWIPS = 16838
@@ -25,7 +24,6 @@ const VIRTUAL_WIDTHS = [2800, 3600, CONTENT_WIDTH_TWIPS - 2800 - 3600]
 const TWO_COLUMN_WIDTHS = [2600, CONTENT_WIDTH_TWIPS - 2600]
 const BORDER_COLOR = 'C9D1C8'
 const HEADER_COLOR = 'F3F5F0'
-const WEEKLY_PLAN_METADATA = FIELD_SALES_TEMPLATE.report
 
 function clean(value: string | undefined) {
   return value?.trim() || 'Not recorded'
@@ -225,9 +223,6 @@ function buildWeeklyPlanDocument(plan: WeeklyPlan) {
       spacing: { after: 100 },
     }),
     new Paragraph({ text: `Week: ${weekLabel}`, spacing: { after: 60 } }),
-    new Paragraph({ text: `Prepared by: ${WEEKLY_PLAN_METADATA.preparedBy}`, spacing: { after: 60 } }),
-    new Paragraph({ text: `Role: ${WEEKLY_PLAN_METADATA.role}`, spacing: { after: 60 } }),
-    new Paragraph({ text: `Portfolio: ${WEEKLY_PLAN_METADATA.portfolio}`, spacing: { after: 160 } }),
     sectionHeading('1. Weekly Strategic Objectives'),
     ...cellParagraphs(strategicObjectives, true),
     spacer(),

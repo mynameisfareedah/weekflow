@@ -10,10 +10,12 @@ import {
   type VirtualEngagementPlanItem,
   type WeeklyPlan,
 } from '../types/weeklyPlan'
+import { getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getLegacyCompatibleWorkspaceId, getWorkspaceScopedStorageKey, getCurrentCloudWorkspaceId } from './workspaceStorage'
+import { supabase } from '../lib/supabase'
 
 const STORAGE_PREFIX = 'weekflow-weekly-plan:'
 const SELECTED_WEEK_KEY = 'weekflow-selected-week'
-const STORAGE_PREFIXES = [STORAGE_PREFIX, 'weekflow-daily-activities:', 'weekflow-follow-ups:']
+const STORAGE_PREFIXES = [STORAGE_PREFIX, 'weekflow-daily-activities:', 'weekflow-follow-ups:', 'weekflow-smart-start:']
 const DAY_IDS: DayId[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
 const DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
@@ -101,9 +103,21 @@ export function getCurrentWeekStart() {
   return formatDate(today)
 }
 
+function getSelectedWeekStorageKey(workspaceId = getCurrentWorkspaceId()) {
+  return `${SELECTED_WEEK_KEY}:${workspaceId}`
+}
+
 export function getSelectedWeekStart() {
   try {
-    return window.localStorage.getItem(SELECTED_WEEK_KEY) ?? getCurrentWeekStart()
+    const workspaceId = getCurrentWorkspaceId()
+    const workspaceKey = getSelectedWeekStorageKey(workspaceId)
+    const workspaceValue = window.localStorage.getItem(workspaceKey)
+    if (workspaceValue) return workspaceValue
+    if (workspaceId === getLegacyCompatibleWorkspaceId()) {
+      const legacyValue = window.localStorage.getItem(SELECTED_WEEK_KEY)
+      if (legacyValue) return legacyValue
+    }
+    return getCurrentWeekStart()
   } catch {
     return getCurrentWeekStart()
   }
@@ -111,27 +125,36 @@ export function getSelectedWeekStart() {
 
 export function setSelectedWeekStart(weekStart: string) {
   try {
-    window.localStorage.setItem(SELECTED_WEEK_KEY, weekStart)
+    const workspaceId = getCurrentWorkspaceId()
+    window.localStorage.setItem(getSelectedWeekStorageKey(workspaceId), weekStart)
+    if (workspaceId === getLegacyCompatibleWorkspaceId()) {
+      window.localStorage.setItem(SELECTED_WEEK_KEY, weekStart)
+    }
     window.dispatchEvent(new CustomEvent('weekflow-week-change', { detail: weekStart }))
   } catch {
     // Storage can be unavailable in private browsing or restricted environments.
   }
 }
 
-export function getStoredWeekStarts() {
+export function getStoredWeekStarts(workspaceId = getCurrentWorkspaceId()) {
   const weekStarts = new Set<string>()
   try {
     for (let index = 0; index < window.localStorage.length; index += 1) {
       const key = window.localStorage.key(index)
       if (!key) continue
       for (const prefix of STORAGE_PREFIXES) {
-        if (key.startsWith(prefix)) weekStarts.add(key.slice(prefix.length))
+        const scopedPrefix = `${prefix}${workspaceId}:`
+        const isScopedKey = key.startsWith(scopedPrefix)
+        const isLegacyKey = workspaceId === getLegacyCompatibleWorkspaceId() && key.startsWith(prefix) && !key.startsWith(`${prefix}${workspaceId}:`)
+        if (!isScopedKey && !isLegacyKey) continue
+        const weekStart = key.slice(isScopedKey ? scopedPrefix.length : prefix.length)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) weekStarts.add(weekStart)
       }
     }
   } catch {
     return []
   }
-  return [...weekStarts].filter((weekStart) => /^\d{4}-\d{2}-\d{2}$/.test(weekStart)).sort().reverse()
+  return [...weekStarts].sort().reverse()
 }
 
 export function getWeekStartFromInput(value: string) {
@@ -221,19 +244,80 @@ function normalizePlan(plan: unknown, weekStart: string): WeeklyPlan {
   }
 }
 
-export function loadWeeklyPlan(weekStart: string): WeeklyPlan {
+function loadWeeklyPlanLocal(weekStart: string): WeeklyPlan {
   try {
-    const savedPlan = window.localStorage.getItem(`${STORAGE_PREFIX}${weekStart}`)
+    const workspaceId = getCurrentWorkspaceId()
+    const key = getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekStart, workspaceId)
+    const savedPlan = window.localStorage.getItem(key) ?? (workspaceId === getLegacyCompatibleWorkspaceId() ? window.localStorage.getItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart)) : null)
     return savedPlan ? normalizePlan(JSON.parse(savedPlan), weekStart) : createEmptyWeeklyPlan(weekStart)
   } catch {
     return createEmptyWeeklyPlan(weekStart)
   }
 }
 
-export function saveWeeklyPlan(plan: WeeklyPlan) {
+function saveWeeklyPlanLocal(plan: WeeklyPlan) {
   try {
-    window.localStorage.setItem(`${STORAGE_PREFIX}${plan.weekStart}`, JSON.stringify(plan))
+    const workspaceId = getCurrentWorkspaceId()
+    const workspaceKey = getWorkspaceScopedStorageKey(STORAGE_PREFIX, plan.weekStart, workspaceId)
+    window.localStorage.setItem(workspaceKey, JSON.stringify(plan))
+    if (workspaceId === getLegacyCompatibleWorkspaceId()) {
+      window.localStorage.setItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, plan.weekStart), JSON.stringify(plan))
+    }
   } catch {
     // Storage can be unavailable in private browsing or restricted environments.
+  }
+}
+
+export function loadWeeklyPlan(weekStart: string): WeeklyPlan {
+  return loadWeeklyPlanLocal(weekStart)
+}
+
+export function saveWeeklyPlan(plan: WeeklyPlan) {
+  saveWeeklyPlanLocal(plan)
+}
+
+async function getCloudWorkspaceId() {
+  return getCurrentCloudWorkspaceId()
+}
+
+export async function loadWeeklyPlanAsync(weekStart: string): Promise<WeeklyPlan> {
+  const localPlan = loadWeeklyPlanLocal(weekStart)
+  try {
+    const workspaceId = await getCloudWorkspaceId()
+    if (!workspaceId || !supabase) return localPlan
+
+    const { data, error } = await supabase
+      .from('weekly_plans')
+      .select('data')
+      .eq('workspace_id', workspaceId)
+      .eq('week_start', weekStart)
+      .maybeSingle()
+
+    if (error) throw error
+    return data?.data ? normalizePlan(data.data, weekStart) : localPlan
+  } catch {
+    return localPlan
+  }
+}
+
+export async function saveWeeklyPlanAsync(plan: WeeklyPlan): Promise<boolean> {
+  saveWeeklyPlanLocal(plan)
+  try {
+    const workspaceId = await getCloudWorkspaceId()
+    if (!workspaceId || !supabase) return false
+
+    const weekRecord = await supabase
+      .from('workspace_weeks')
+      .upsert({ workspace_id: workspaceId, week_start: plan.weekStart }, { onConflict: 'workspace_id,week_start' })
+
+    if (weekRecord.error) throw weekRecord.error
+    const planRecord = await supabase
+      .from('weekly_plans')
+      .upsert({ workspace_id: workspaceId, week_start: plan.weekStart, data: plan }, { onConflict: 'workspace_id,week_start' })
+
+    if (planRecord.error) throw planRecord.error
+    return true
+  } catch {
+    return false
   }
 }

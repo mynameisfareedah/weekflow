@@ -191,6 +191,12 @@ Do not introduce a backend or database during the initial V1 development unless 
 
 The architecture should allow a backend to be introduced later without requiring a complete rewrite.
 
+WeekFlow uses a canonical `TemplateSchema` for template-specific planning categories, activity types and fields, follow-up fields, intelligence capabilities, and report section metadata. Runtime adapters resolve the selected template through this schema while preserving the shared local persistence model. Template selection does not create template-specific storage keys, rename persisted fields, migrate stored objects, or change existing weekly plan, daily activity, and follow-up contracts.
+
+Report sections also declare canonical `dataGroups`. The shared `ReportSnapshot` remains the calculation source, and `reportDataMapper` resolves each section's groups to existing snapshot data. Groups without a current snapshot source are reported as unsupported rather than substituted with unrelated data. Report calculations and DOCX/PDF presentation remain shared concerns; template-specific presentation is handled separately from this mapping layer.
+
+Each registered template owns its report sections, section ordering, report terminology, declared data groups, supported or unsupported data behavior, and report presentation metadata such as display type, layout preference, empty state, and visibility when empty. Report Preview, DOCX export, and PDF export consume the same schema-driven mapped report sections. WeekFlow does not assume one universal Field Sales report for every template.
+
 ---
 
 # TECHNICAL DIRECTION
@@ -292,6 +298,16 @@ WeekFlow solves one primary problem:
 Every feature should be evaluated against that goal.
 
 If a proposed feature does not directly improve planning, activity capture, follow-up management, or report generation, it should not be added to V1 without explicit approval.
+
+## Universal WeekFlow Identity
+
+WeekFlow is a reusable multi-template weekly execution platform. It must not contain hardcoded employee names, employer names, customer or company names, product portfolios, or organization-specific report metadata.
+
+Templates own their terminology, planning categories, activity types, activity fields, structured outcomes, intelligence interpretation, report sections, and export presentation.
+
+Reports are generated from the selected template and existing WeekFlow data. The same report data source supports both Word (`.docx`) and PDF (`.pdf`) export.
+
+Word and PDF exports use native A4 document layouts with professional margins, hierarchy, wrapping, pagination, page numbering, and neutral WeekFlow footers. Exporters consume the shared `MappedReportSection[]` representation, preserve explicit empty and unsupported states, and generate dynamic template-and-period filenames. No personal or company identity metadata is embedded universally.
 
 ---
 

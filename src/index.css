@@ -1,22 +1,88 @@
 :root {
-  --surface: #f5f6f1;
-  --surface-strong: #fbfcf8;
-  --surface-tint: #eef0e9;
-  --ink: #293129;
-  --ink-soft: #586157;
-  --muted: #7c847b;
-  --muted-light: #a3aaa1;
-  --line: #dfe3da;
-  --line-dark: #c9d0c4;
+  /* WeekFlow design tokens. Existing aliases below keep current components compatible. */
+  --color-primary: #293129;
+  --color-primary-hover: #1f2721;
+  --color-primary-soft: #e8ece6;
+  --color-accent: #a95f39;
+  --color-accent-soft: #f2dfd3;
+  --color-page: #f5f6f1;
+  --color-surface: #fbfcf8;
+  --color-surface-muted: #eef0e9;
+  --color-border: #dfe3da;
+  --color-border-strong: #c9d0c4;
+  --color-text-primary: #293129;
+  --color-text-secondary: #586157;
+  --color-text-muted: #7c847b;
+  --color-text-subtle: #a3aaa1;
+  --color-text-inverse: #fbfcf8;
+  --color-success: #2f6f52;
+  --color-success-soft: #e3f0e8;
+  --color-warning: #92651e;
+  --color-warning-soft: #f7eedc;
+  --color-danger: #a4463f;
+  --color-danger-soft: #f8e6e4;
+  --color-info: #35627a;
+  --color-info-soft: #e5eff5;
+
+  --motion-micro: 90ms;
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-slow: 280ms;
+  --motion-slower: 400ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+  --shadow-subtle: 0 1px 2px rgba(42, 47, 39, 0.06);
+  --shadow-card: 0 4px 14px rgba(42, 47, 39, 0.07);
+  --shadow-elevated: 0 10px 26px rgba(42, 47, 39, 0.12);
+  --font-body: 'Avenir Next', 'Segoe UI', sans-serif;
+  --font-heading: 'Trebuchet MS', 'Avenir Next', sans-serif;
+  --text-page-title: clamp(2rem, 4vw, 3.5rem);
+  --text-section-heading: 1.7rem;
+  --text-card-heading: 1.05rem;
+  --text-body: 1rem;
+  --text-small: 0.8125rem;
+  --text-label: 0.75rem;
+  --text-caption: 0.6875rem;
+  --control-height: 40px;
+  --control-height-sm: 34px;
+  --focus-ring: 0 0 0 3px rgba(169, 95, 57, 0.24);
+  --motion-fast: 140ms ease;
+  --motion-standard: 180ms ease;
+
+  /* Backward-compatible names used throughout the existing screen styles. */
+  --surface: var(--color-page);
+  --surface-strong: var(--color-surface);
+  --surface-tint: var(--color-surface-muted);
+  --ink: var(--color-text-primary);
+  --ink-soft: var(--color-text-secondary);
+  --muted: var(--color-text-muted);
+  --muted-light: var(--color-text-subtle);
+  --line: var(--color-border);
+  --line-dark: var(--color-border-strong);
   --accent: #d07d51;
-  --accent-dark: #a95f39;
-  --accent-soft: #f2dfd3;
-  --sans: 'Avenir Next', 'Segoe UI', sans-serif;
-  --heading: 'Trebuchet MS', 'Avenir Next', sans-serif;
+  --accent-dark: var(--color-accent);
+  --accent-soft: var(--color-accent-soft);
+  --sans: var(--font-body);
+  --heading: var(--font-heading);
 
   background: var(--surface);
   color: var(--ink-soft);
-  font: 16px/145% var(--sans);
+  font: var(--text-body)/1.45 var(--font-body);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -31,9 +97,166 @@ body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
-button, a { font: inherit; }
+button, input, textarea, select { font: inherit; }
+
+button, input, textarea, select {
+  border-radius: var(--radius-sm);
+  transition: border-color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard);
+}
+
+button {
+  cursor: pointer;
+  will-change: transform, box-shadow;
+}
+
+button:hover { transform: translateY(-1px); }
+button:active { transform: translateY(0); }
+
+button:disabled, input:disabled, textarea:disabled, select:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+input, textarea, select {
+  color: var(--color-text-primary);
+}
+
+input:hover, textarea:hover, select:hover { border-color: var(--color-border-strong); }
+
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+  outline: 0;
+}
 
 button:focus-visible, a:focus-visible {
-  outline: 2px solid var(--accent-dark);
+  outline: 2px solid var(--color-accent);
   outline-offset: 3px;
+}
+
+.button {
+  border-radius: var(--radius-md);
+  min-height: var(--control-height);
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard);
+}
+
+.button-primary {
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-text-inverse);
+}
+
+.button:hover,
+.button-primary:hover,
+.button-secondary:hover {
+  box-shadow: 0 6px 18px rgba(41, 49, 41, 0.08);
+}
+
+.button-primary:hover { background: var(--color-primary-hover); }
+
+.button-secondary {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.button-secondary:hover { background: var(--color-primary-soft); }
+
+.button:active { transform: translateY(1px); }
+
+.card-surface {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-subtle);
+}
+
+.status-badge {
+  align-items: center;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  font-size: var(--text-caption);
+  font-weight: 700;
+  gap: var(--space-1);
+  line-height: 1;
+  padding: var(--space-2) var(--space-3);
+}
+
+.status-badge.is-ready, .status-badge.is-completed { background: var(--color-success-soft); color: var(--color-success); }
+.status-badge.is-attention, .status-badge.is-open { background: var(--color-warning-soft); color: var(--color-warning); }
+.status-badge.is-danger, .status-badge.is-high-priority { background: var(--color-danger-soft); color: var(--color-danger); }
+.status-badge.is-info, .status-badge.is-in-progress { background: var(--color-info-soft); color: var(--color-info); }
+
+@keyframes motionFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes motionFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes motionFadeDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes motionScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.motion-enter,
+.motion-fade,
+.motion-fade-in {
+  animation: motionFadeIn var(--motion-slow) var(--ease-standard) both;
+}
+
+.motion-fade-up {
+  animation: motionFadeUp var(--motion-normal) var(--ease-emphasized) both;
+}
+
+.motion-fade-down {
+  animation: motionFadeDown var(--motion-normal) var(--ease-standard) both;
+}
+
+.motion-scale-in {
+  animation: motionScaleIn var(--motion-normal) var(--ease-emphasized) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .motion-enter,
+  .motion-fade,
+  .motion-fade-in,
+  .motion-fade-up,
+  .motion-fade-down,
+  .motion-scale-in {
+    animation: none;
+  }
 }

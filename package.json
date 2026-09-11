@@ -8,9 +8,11 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "validate:intelligence": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/validate-intelligence.ts",
+    "validate:report-mapping": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/validate-report-mapping.ts",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
     "docx": "^9.7.1",
     "jspdf": "^4.2.1",
     "react": "^19.2.8",

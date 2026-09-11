@@ -1,5 +1,6 @@
 import { deriveWeeklyIntelligence } from '../src/intelligence/intelligenceEngine.ts'
 import { getSmartStartCandidates, mergeSmartStartSelections } from '../src/intelligence/smartStart.ts'
+import { getWorkflowTemplateById } from '../src/config/templates.ts'
 import type { DailyActivity } from '../src/types/dailyActivity.ts'
 import type { FollowUp } from '../src/types/followUp.ts'
 import type { WeeklyPlan } from '../src/types/weeklyPlan.ts'
@@ -17,8 +18,8 @@ function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message)
 }
 
-function activity(id: string, account: string, intelligence: string, structuredOutcomes: DailyActivity['structuredOutcomes'] = [], nextAction = ''): DailyActivity {
-  return { id, date: week, weekStart: week, plannedActivityId: null, account, activityType: 'Physical Visit', hcpNames: [], outcome: '', intelligence, nextAction, structuredOutcomes, createdAt: week, updatedAt: week }
+function activity(id: string, account: string, intelligence: string, structuredOutcomes: DailyActivity['structuredOutcomes'] = [], nextAction = '', weekStart = week): DailyActivity {
+  return { id, date: weekStart, weekStart, plannedActivityId: null, account, activityType: 'Physical Visit', hcpNames: [], outcome: '', intelligence, nextAction, structuredOutcomes, createdAt: weekStart, updatedAt: weekStart }
 }
 
 const augustActivities: DailyActivity[] = [
@@ -101,4 +102,131 @@ assert(JSON.stringify({ plan: previousPlan, followUps: previousFollowUps }) === 
 const repeat = mergeSmartStartSelections(merge.plan, newWeek, merge.followUps, smartCandidates, selectedSmartCandidates.map((candidate) => candidate.key))
 assert(repeat.added === 0, 'Smart Start duplicate protection failed')
 
-console.log('Intelligence validation passed: August-pattern, empty-week, week-isolation, and Smart Start merge checks.')
+const serviceWeek = '2026-09-09'
+const serviceActivities: DailyActivity[] = [
+  {
+    id: 'service-1', date: serviceWeek, weekStart: serviceWeek, plannedActivityId: null, account: 'Benazir Org', activityType: 'Repair / Troubleshooting', hcpNames: ['Customer'], outcome: 'Issue unresolved', intelligence: 'Equipment is still down after reset and customer is concerned. SLA risk due to critical priority.', nextAction: 'Escalate to engineering and confirm SLA', structuredOutcomes: [{ id: 'so-1', type: 'Issue Unresolved', details: 'Issue remains unresolved', product: 'Other' }, { id: 'so-2', type: 'Escalation Required', details: 'Escalation required', product: 'Other' }], workOrderJob: 'WO-102', equipmentAsset: 'Generator-T12', issueProblem: 'Generator overheating', resolution: '', serviceStatus: 'Open', partsMaterialsUsed: 'No parts used', escalation: 'Engineering escalation pending', slaPriority: 'Critical priority', downtime: '6 hours', customerSignOff: '', createdAt: serviceWeek, updatedAt: serviceWeek,
+  },
+  {
+    id: 'service-2', date: serviceWeek, weekStart: serviceWeek, plannedActivityId: null, account: 'Benazir Org', activityType: 'Repair / Troubleshooting', hcpNames: ['Customer'], outcome: 'Repeat issue captured', intelligence: 'Same equipment fault reported again. Safety concern due to heat build-up. Customer concern on service quality.', nextAction: 'Review parts requirement and service quality review.', structuredOutcomes: [{ id: 'so-3', type: 'Equipment Fault Identified', details: 'Same fault repeated on Generator-T12', product: 'Other' }, { id: 'so-4', type: 'Parts Required', details: 'Fan assembly needed', product: 'Other' }], workOrderJob: 'WO-103', equipmentAsset: 'Generator-T12', issueProblem: 'Generator overheating', resolution: 'Temporary reset performed', serviceStatus: 'Monitoring', partsMaterialsUsed: 'Fan assembly not yet installed', escalation: 'Escalation previously raised', slaPriority: 'Critical priority', downtime: '8 hours', customerSignOff: '', createdAt: serviceWeek, updatedAt: serviceWeek,
+  },
+  {
+    id: 'service-3', date: serviceWeek, weekStart: serviceWeek, plannedActivityId: null, account: 'Site 24', activityType: 'Preventive Maintenance', hcpNames: ['Operations'], outcome: 'PM completed', intelligence: 'Preventive maintenance performed on compressor set and service quality review logged.', nextAction: 'Schedule next inspection', structuredOutcomes: [{ id: 'so-5', type: 'Preventive Maintenance Completed', details: 'Preventive maintenance completed', product: 'Other' }, { id: 'so-6', type: 'Customer Sign-off Obtained', details: 'Customer sign-off obtained', product: 'Other' }], equipmentAsset: 'Compressor-03', issueProblem: '', resolution: 'Routine maintenance complete', serviceStatus: 'Completed', partsMaterialsUsed: 'Filters replaced', escalation: '', slaPriority: 'Standard', downtime: '1 hour', customerSignOff: 'Signed', createdAt: serviceWeek, updatedAt: serviceWeek,
+  },
+]
+const fieldServiceTemplate = getWorkflowTemplateById('field-service')
+const serviceIntelligence = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: serviceActivities, followUps: [], template: fieldServiceTemplate })
+assert(serviceIntelligence.insights.risks.some((signal) => signal.title.includes('Unresolved service issue') || signal.detail.toLowerCase().includes('unresolved')), 'Field Service unresolved issue signal was not detected')
+assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase() === 'recurring equipment problem' || signal.title.toLowerCase().includes('recurring equipment problem')), 'Field Service recurring equipment problem signal was not detected')
+assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('escalation required')), 'Field Service escalation signal was not detected')
+assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('downtime') || signal.reason.toLowerCase().includes('downtime')), 'Field Service downtime signal was not detected')
+assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'Safety concern' && signal.detail.toLowerCase().includes('safety concern')), 'Field Service safety concern signal was not detected')
+assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('repeat fault') || signal.title.toLowerCase().includes('equipment fault')), 'Field Service repeat-fault signal was not detected')
+assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('preventive maintenance')), 'Field Service preventive maintenance opportunity was not detected')
+assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'SLA risk' && (signal.detail.toLowerCase().includes('sla') || signal.detail.toLowerCase().includes('critical priority'))), 'Field Service SLA risk signal was not detected')
+assert(serviceIntelligence.insights.deliverables.some((signal) => signal.title.toLowerCase().includes('parts') || signal.detail.toLowerCase().includes('parts')), 'Field Service parts requirement signal was not detected as service context')
+assert(serviceIntelligence.insights.stakeholders.some((signal) => signal.title === 'Customer concern' && signal.detail.toLowerCase().includes('customer concern')), 'Field Service customer concern signal was not detected')
+assert(serviceIntelligence.insights.stakeholders.some((signal) => signal.title === 'Customer concern' && signal.detail.toLowerCase().includes('service quality')), 'Field Service service quality signal was not detected')
+assert(serviceIntelligence.insights.stakeholders.some((signal) => signal.title.toLowerCase().includes('customer sign-off') || signal.detail.toLowerCase().includes('customer')), 'Field Service customer sign-off signal was not detected')
+
+const fieldSalesTemplate = getWorkflowTemplateById('field-sales')
+const salesFixture: DailyActivity[] = [
+  activity('sales-1', 'North Hospital', 'Prescription identified.', [{ id: 'sales-outcome-1', type: 'Prescription Generated', details: 'Prescription identified.', product: 'ZYTIGA', quantity: '1' }], 'Follow up NHIS access.', serviceWeek),
+  activity('sales-2', 'Lakeside Clinic', 'Stock depleted in clinic.', [{ id: 'sales-outcome-2', type: 'Stock Issue', details: 'Stock depleted in clinic.', product: 'INVEGA SUSTENNA', stockStatus: 'Stock depleted' }], 'Confirm replenishment.', serviceWeek),
+  activity('sales-3', 'Mercy Hospital', 'MDT held with oncology team.', [{ id: 'sales-outcome-3', type: 'MDT Opportunity', details: 'MDT held with oncology team.' }], 'Arrange follow-up referral.', serviceWeek),
+]
+const salesIsolation = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: salesFixture, followUps: [], template: fieldSalesTemplate })
+assert(!salesIsolation.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('escalation required') || signal.title.toLowerCase().includes('downtime') || signal.title.toLowerCase().includes('equipment fault')), 'Field Sales received Field Service signals')
+assert(salesIsolation.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('stock issue') || signal.title.toLowerCase().includes('mdt opportunity') || signal.title.toLowerCase().includes('prescription identified')), 'Field Sales baseline signals were not available')
+
+const serviceSignalTitles = ['unresolved service issue', 'repeat fault', 'recurring equipment problem', 'escalation required', 'downtime', 'safety concern', 'preventive maintenance', 'sla risk', 'parts required', 'customer concern', 'service quality']
+const reverseIsolation = deriveWeeklyIntelligence({
+  selectedWeek: serviceWeek,
+  plan: createEmptyWeeklyPlan(serviceWeek),
+  activities: [{
+    id: 'service-like-sales-1',
+    date: serviceWeek,
+    weekStart: serviceWeek,
+    plannedActivityId: null,
+    account: 'Sales Account',
+    activityType: 'Sales Activity',
+    hcpNames: ['Rep'],
+    outcome: 'Customer follow-up',
+    intelligence: 'Customer concern on service quality and repeated safety risk with downtime and SLA pressure. Parts are discussed in the meeting.',
+    nextAction: 'Maintain relationship and update the sales pipeline.',
+    structuredOutcomes: [{ id: 'sales-service-1', type: 'Follow-up Required', details: 'Customer concern on service quality', product: 'ZYTIGA' }],
+    createdAt: serviceWeek,
+    updatedAt: serviceWeek,
+  }],
+  followUps: [],
+  template: fieldSalesTemplate,
+})
+assert(!reverseIsolation.opportunitySignals.some((signal) => serviceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Field Sales template incorrectly produced Field Service-specific intelligence from service-like text')
+assert(!reverseIsolation.insights.risks.some((signal) => serviceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Field Sales template incorrectly produced Field Service risk intelligence from service-like text')
+assert(!reverseIsolation.insights.deliverables.some((signal) => signal.title.toLowerCase().includes('parts')), 'Field Sales template incorrectly produced Field Service parts intelligence')
+assert(!reverseIsolation.insights.stakeholders.some((signal) => signal.title.toLowerCase().includes('customer concern') || signal.detail.toLowerCase().includes('service quality')), 'Field Sales template incorrectly produced Field Service customer service intelligence')
+
+const freeTextLeakage = deriveWeeklyIntelligence({
+  selectedWeek: serviceWeek,
+  plan: createEmptyWeeklyPlan(serviceWeek),
+  activities: [{
+    id: 'neutral-free-text-1',
+    date: serviceWeek,
+    weekStart: serviceWeek,
+    plannedActivityId: null,
+    account: 'Neutral Site',
+    activityType: 'Other',
+    hcpNames: ['Team'],
+    outcome: 'General meeting',
+    intelligence: 'We discussed safety, spare parts, customer concern, service quality, SLA, and downtime in a general project review.',
+    nextAction: 'Keep the team aligned.',
+    structuredOutcomes: [],
+    createdAt: serviceWeek,
+    updatedAt: serviceWeek,
+  }],
+  followUps: [],
+  template: fieldServiceTemplate,
+})
+assert(!freeTextLeakage.opportunitySignals.some((signal) => serviceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Generic free-text leaked into Field Service intelligence')
+assert(!freeTextLeakage.insights.risks.some((signal) => serviceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Generic free-text leaked into Field Service risks')
+assert(!freeTextLeakage.insights.deliverables.some((signal) => signal.title.toLowerCase().includes('parts')), 'Generic free-text leaked into Field Service parts intelligence')
+assert(!freeTextLeakage.insights.stakeholders.some((signal) => signal.title.toLowerCase().includes('customer concern') || signal.detail.toLowerCase().includes('service quality')), 'Generic free-text leaked into Field Service customer intelligence')
+
+const smallBusinessTemplate = getWorkflowTemplateById('small-business')
+const smallBusinessOutcomes: Array<{ type: DailyActivity['structuredOutcomes'][number]['type']; category: string; account: string }> = [
+  { type: 'Sale / Order Won', category: 'commercial', account: 'Test Customer' },
+  { type: 'Lead Qualified', category: 'commercial', account: 'Test Opportunity' },
+  { type: 'Customer Retained', category: 'stakeholders', account: 'Test Customer Retained' },
+  { type: 'Payment Received', category: 'commercial', account: 'Test Payment' },
+  { type: 'Supplier Issue Identified', category: 'risks', account: 'Test Supplier' },
+  { type: 'Operational Improvement', category: 'progress', account: 'Test Business Area' },
+  { type: 'Follow-up Required', category: 'stakeholders', account: 'Test Follow-up' },
+]
+const smallBusinessActivities = smallBusinessOutcomes.map((item, index) => activity(`small-business-${index}`, item.account, '', [{ id: `small-business-outcome-${index}`, type: item.type, details: `Synthetic ${item.type} evidence.` }], item.type === 'Follow-up Required' ? 'Follow up with Test Customer.' : '', serviceWeek))
+const smallBusinessIntelligence = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: smallBusinessActivities, followUps: [], template: smallBusinessTemplate })
+for (const item of smallBusinessOutcomes) {
+  const insight = smallBusinessIntelligence.insights[item.category as keyof typeof smallBusinessIntelligence.insights].find((signal) => signal.title === item.type)
+  assert(Boolean(insight), `Small Business ${item.type} insight was not detected`)
+  const signal = smallBusinessIntelligence.opportunitySignals.find((candidate) => candidate.account === item.account && candidate.title === item.type)
+  assert(Boolean(signal), `Small Business ${item.type} opportunity signal was not detected`)
+  assert(signal?.category === item.category, `Small Business ${item.type} category was incorrect`)
+}
+assert(smallBusinessIntelligence.opportunityScores.every((score) => score.score > 0), 'Small Business structured outcomes did not produce opportunity scores')
+assert(smallBusinessIntelligence.followUpSuggestions.length === 1 && smallBusinessIntelligence.followUpSuggestions[0].title === 'Follow up with Test Customer.', 'Small Business follow-up outcome did not connect to follow-up intelligence')
+const smallBusinessWithExistingFollowUp = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: smallBusinessActivities, followUps: [{ id: 'small-business-follow-up', weekKey: serviceWeek, task: 'Follow up with Test Customer.', facility: 'Test Follow-up', priority: 'normal', status: 'open', sourceActivityId: 'small-business-6', createdAt: serviceWeek, updatedAt: serviceWeek }], template: smallBusinessTemplate })
+assert(smallBusinessWithExistingFollowUp.followUpSuggestions.length === 0, 'Small Business follow-up intelligence duplicated an existing follow-up')
+
+const smallBusinessOnlyActivities = smallBusinessActivities.filter((activity) => activity.structuredOutcomes[0]?.type !== 'Follow-up Required')
+const smallBusinessFieldSalesIsolation = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: smallBusinessOnlyActivities, followUps: [], template: fieldSalesTemplate })
+assert(smallBusinessFieldSalesIsolation.opportunitySignals.length === 0, 'Small Business outcomes leaked into Field Sales opportunity signals')
+assert(!smallBusinessFieldSalesIsolation.insights.patient.some((signal) => signal.account.startsWith('Test ')), 'Small Business outcomes leaked into Field Sales patient intelligence')
+const fieldSalesSmallBusinessIsolation = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: salesFixture, followUps: [], template: smallBusinessTemplate })
+assert(fieldSalesSmallBusinessIsolation.opportunitySignals.length === 0, 'Field Sales outcomes leaked into Small Business opportunity signals')
+assert(!fieldSalesSmallBusinessIsolation.insights.patient.some((signal) => signal.account === 'North Hospital'), 'Field Sales patient intelligence leaked into Small Business')
+const fieldServiceOnlyActivities = serviceActivities.map((activity) => ({ ...activity, structuredOutcomes: activity.structuredOutcomes.filter((outcome) => outcome.type !== 'Follow-up Required') }))
+const fieldServiceSmallBusinessIsolation = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: fieldServiceOnlyActivities, followUps: [], template: smallBusinessTemplate })
+assert(fieldServiceSmallBusinessIsolation.opportunitySignals.length === 0, 'Field Service outcomes leaked into Small Business opportunity signals')
+const genericSmallBusinessText = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: [activity('small-business-generic', 'Test Business Area', 'Had a productive meeting with the customer.', [], '', serviceWeek)], followUps: [], template: smallBusinessTemplate })
+assert(!genericSmallBusinessText.opportunitySignals.some((signal) => signal.title === 'Sales opportunity'), 'Generic Small Business meeting text produced an unsupported sales opportunity')
+
+console.log('Intelligence validation passed: August-pattern, empty-week, week-isolation, Smart Start merge checks, Field Service checks, Small Business outcome/scoring checks, and template isolation checks.')

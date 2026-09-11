@@ -7,9 +7,10 @@ export type IntelligenceInput = {
   plan: WeeklyPlan
   activities: DailyActivity[]
   followUps: FollowUp[]
+  template?: import('../config/templates').WeekFlowTemplate
 }
 
-export type IntelligenceCategory = 'commercial' | 'patient' | 'access-market' | 'strategic-accounts' | 'scientific-engagement'
+export type IntelligenceCategory = 'commercial' | 'patient' | 'access-market' | 'strategic-accounts' | 'scientific-engagement' | 'progress' | 'risks' | 'stakeholders' | 'deliverables'
 export type OpportunityStrength = 'low' | 'moderate' | 'high' | 'priority'
 export type PlanGapStatus = 'covered' | 'partially covered' | 'not evidenced' | 'needs review'
 
@@ -30,7 +31,7 @@ export interface FollowUpSuggestion {
 }
 
 export interface OpportunitySignal {
-  type: 'commercial-opportunity'
+  type: 'commercial-opportunity' | 'project-signal'
   account: string
   title: string
   reason: string
