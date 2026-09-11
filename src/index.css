@@ -1,28 +1,30 @@
 :root {
-  /* WeekFlow design tokens. Existing aliases below keep current components compatible. */
-  --color-primary: #293129;
-  --color-primary-hover: #1f2721;
-  --color-primary-soft: #e8ece6;
-  --color-accent: #a95f39;
-  --color-accent-soft: #f2dfd3;
-  --color-page: #f5f6f1;
-  --color-surface: #fbfcf8;
-  --color-surface-muted: #eef0e9;
-  --color-border: #dfe3da;
-  --color-border-strong: #c9d0c4;
-  --color-text-primary: #293129;
-  --color-text-secondary: #586157;
-  --color-text-muted: #7c847b;
-  --color-text-subtle: #a3aaa1;
-  --color-text-inverse: #fbfcf8;
-  --color-success: #2f6f52;
-  --color-success-soft: #e3f0e8;
-  --color-warning: #92651e;
-  --color-warning-soft: #f7eedc;
-  --color-danger: #a4463f;
-  --color-danger-soft: #f8e6e4;
-  --color-info: #35627a;
-  --color-info-soft: #e5eff5;
+  /* WeekFlow design tokens. Premium dark SaaS palette for the full product experience. */
+  --color-primary: #122033;
+  --color-primary-hover: #18314d;
+  --color-primary-soft: #101b2d;
+  --color-accent: #69a9ff;
+  --color-accent-hover: #7bb8ff;
+  --color-accent-soft: rgba(105, 169, 255, 0.14);
+  --color-page: #09131d;
+  --color-surface: #111d2b;
+  --color-surface-strong: #162536;
+  --color-surface-muted: #0f1b2a;
+  --color-border: rgba(148, 163, 184, 0.22);
+  --color-border-strong: rgba(148, 163, 184, 0.36);
+  --color-text-primary: #edf4ff;
+  --color-text-secondary: #d1d9ea;
+  --color-text-muted: #9aa9c2;
+  --color-text-subtle: #7e8ea6;
+  --color-text-inverse: #071018;
+  --color-success: #85d7a2;
+  --color-success-soft: rgba(133, 215, 162, 0.15);
+  --color-warning: #f0bf70;
+  --color-warning-soft: rgba(240, 191, 112, 0.14);
+  --color-danger: #f08a8a;
+  --color-danger-soft: rgba(240, 138, 138, 0.13);
+  --color-info: #7ab7ff;
+  --color-info-soft: rgba(122, 183, 255, 0.13);
 
   --motion-micro: 90ms;
   --motion-fast: 120ms;
@@ -46,9 +48,9 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-pill: 999px;
-  --shadow-subtle: 0 1px 2px rgba(42, 47, 39, 0.06);
-  --shadow-card: 0 4px 14px rgba(42, 47, 39, 0.07);
-  --shadow-elevated: 0 10px 26px rgba(42, 47, 39, 0.12);
+  --shadow-subtle: 0 1px 2px rgba(7, 12, 18, 0.28);
+  --shadow-card: 0 4px 14px rgba(7, 12, 18, 0.28);
+  --shadow-elevated: 0 10px 26px rgba(7, 12, 18, 0.32);
   --font-body: 'Avenir Next', 'Segoe UI', sans-serif;
   --font-heading: 'Trebuchet MS', 'Avenir Next', sans-serif;
   --text-page-title: clamp(2rem, 4vw, 3.5rem);
@@ -60,13 +62,13 @@
   --text-caption: 0.6875rem;
   --control-height: 40px;
   --control-height-sm: 34px;
-  --focus-ring: 0 0 0 3px rgba(169, 95, 57, 0.24);
+  --focus-ring: 0 0 0 3px rgba(105, 169, 255, 0.28);
   --motion-fast: 140ms ease;
   --motion-standard: 180ms ease;
 
   /* Backward-compatible names used throughout the existing screen styles. */
   --surface: var(--color-page);
-  --surface-strong: var(--color-surface);
+  --surface-strong: var(--color-surface-strong);
   --surface-tint: var(--color-surface-muted);
   --ink: var(--color-text-primary);
   --ink-soft: var(--color-text-secondary);
@@ -74,8 +76,8 @@
   --muted-light: var(--color-text-subtle);
   --line: var(--color-border);
   --line-dark: var(--color-border-strong);
-  --accent: #d07d51;
-  --accent-dark: var(--color-accent);
+  --accent: var(--color-accent);
+  --accent-dark: var(--color-accent-hover);
   --accent-soft: var(--color-accent-soft);
   --sans: var(--font-body);
   --heading: var(--font-heading);
@@ -87,6 +89,11 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: var(--color-page);
+  color: var(--color-text-primary);
 }
 
 * { box-sizing: border-box; }
@@ -141,26 +148,27 @@ button:focus-visible, a:focus-visible {
 }
 
 .button-primary {
-  background: var(--color-primary);
-  border: 1px solid var(--color-primary);
+  background: linear-gradient(180deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  border: 1px solid var(--color-accent);
   color: var(--color-text-inverse);
+  box-shadow: 0 12px 24px rgba(105, 169, 255, 0.22);
 }
 
 .button:hover,
 .button-primary:hover,
 .button-secondary:hover {
-  box-shadow: 0 6px 18px rgba(41, 49, 41, 0.08);
+  box-shadow: 0 10px 22px rgba(9, 19, 29, 0.3);
 }
 
-.button-primary:hover { background: var(--color-primary-hover); }
+.button-primary:hover { background: linear-gradient(180deg, var(--color-accent-hover) 0%, var(--color-accent) 100%); }
 
 .button-secondary {
-  background: var(--color-surface);
+  background: rgba(17, 29, 43, 0.72);
   border: 1px solid var(--color-border-strong);
   color: var(--color-text-primary);
 }
 
-.button-secondary:hover { background: var(--color-primary-soft); }
+.button-secondary:hover { background: rgba(22, 37, 54, 0.96); }
 
 .button:active { transform: translateY(1px); }
 

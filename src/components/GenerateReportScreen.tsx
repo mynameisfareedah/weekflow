@@ -15,12 +15,14 @@ import type { DailyActivity, StructuredOutcome } from '../types/dailyActivity'
 import type { FollowUp } from '../types/followUp'
 import type { DayPlan, WeeklyPlan } from '../types/weeklyPlan'
 import type { ReportSnapshot } from '../utils/reportDocx'
+import { navigateTo } from '../utils/navigation'
+import { AppIcon } from './TemplateIcon'
 import './GenerateReport.css'
 
 function formatWeekRange(weekStart: string) {
   const start = new Date(`${weekStart}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+    end.setDate(start.getDate() + 6)
   const startLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(start)
   const endLabel = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(end)
   return `${startLabel} - ${endLabel}`
@@ -296,7 +298,7 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE }
     <main className="generate-report-screen" id="report">
       <header className="generate-report-workspace-header motion-fade-up">
         <div className="generate-report-workspace-copy">
-          <p className="eyebrow">Generate Report</p>
+          <p className="eyebrow">Report</p>
           <h1>{terminology.report}</h1>
         </div>
         <div className="generate-report-workspace-meta">
@@ -336,14 +338,14 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE }
           <div><span>Follow-ups</span><strong>{readiness.openFollowUpCount} open · {readiness.completedFollowUpCount} completed</strong><small>{readiness.openFollowUpCount > 0 ? 'Open work remains visible' : 'No open follow-ups'}</small></div>
         </div>
         <ul className="report-readiness-checklist" aria-label="Report readiness checklist">
-          <li className={readiness.hasMeaningfulPlan ? 'is-complete' : 'is-attention'}><span aria-hidden="true">{readiness.hasMeaningfulPlan ? '✓' : '!'}</span><strong>Weekly Plan</strong><small>{readiness.hasMeaningfulPlan ? 'Complete' : 'Needs attention'}</small></li>
-          <li className={readiness.activityCount > 0 ? 'is-complete' : 'is-attention'}><span aria-hidden="true">{readiness.activityCount > 0 ? '✓' : '!'}</span><strong>Daily Activity</strong><small>{readiness.activityCount > 0 ? 'Captured' : 'Not started'}</small></li>
-          <li className={activityDetailWarningCount === 0 && readiness.activityCount > 0 ? 'is-complete' : 'is-attention'}><span aria-hidden="true">{activityDetailWarningCount === 0 && readiness.activityCount > 0 ? '✓' : '!'}</span><strong>Activity details</strong><small>{activityDetailWarningCount > 0 ? `${activityDetailWarningCount} item${activityDetailWarningCount === 1 ? '' : 's'} need review` : readiness.activityCount > 0 ? 'No detail warnings' : 'Waiting for activity'}</small></li>
-          <li className={readiness.openFollowUpCount === 0 ? 'is-complete' : 'is-attention'}><span aria-hidden="true">{readiness.openFollowUpCount === 0 ? '✓' : '!'}</span><strong>Follow-ups reviewed</strong><small>{readiness.openFollowUpCount > 0 ? 'Open items remain' : 'No open items'}</small></li>
+          <li className={readiness.hasMeaningfulPlan ? 'is-complete' : 'is-attention'}><span aria-hidden="true">{readiness.hasMeaningfulPlan ? <AppIcon name="check" /> : '!'}</span><strong>Weekly Plan</strong><small>{readiness.hasMeaningfulPlan ? 'Complete' : 'Needs attention'}</small></li>
+          <li className={readiness.activityCount > 0 ? 'is-complete' : 'is-attention'}><span aria-hidden="true">{readiness.activityCount > 0 ? <AppIcon name="check" /> : '!'}</span><strong>Daily Activity</strong><small>{readiness.activityCount > 0 ? 'Captured' : 'Not started'}</small></li>
+          <li className={activityDetailWarningCount === 0 && readiness.activityCount > 0 ? 'is-complete' : 'is-attention'}><span aria-hidden="true">{activityDetailWarningCount === 0 && readiness.activityCount > 0 ? <AppIcon name="check" /> : '!'}</span><strong>Activity details</strong><small>{activityDetailWarningCount > 0 ? `${activityDetailWarningCount} item${activityDetailWarningCount === 1 ? '' : 's'} need review` : readiness.activityCount > 0 ? 'No detail warnings' : 'Waiting for activity'}</small></li>
+          <li className={readiness.openFollowUpCount === 0 ? 'is-complete' : 'is-attention'}><span aria-hidden="true">{readiness.openFollowUpCount === 0 ? <AppIcon name="check" /> : '!'}</span><strong>Follow-ups reviewed</strong><small>{readiness.openFollowUpCount > 0 ? 'Open items remain' : 'No open items'}</small></li>
         </ul>
-        <nav className="report-readiness-links" aria-label="Review report inputs"><a href="/weekly-plan">Review Weekly Plan <span aria-hidden="true">→</span></a><a href="/daily-activity">Review Daily Activity <span aria-hidden="true">→</span></a><a href="/follow-ups">Review Follow-ups <span aria-hidden="true">→</span></a></nav>
+        <nav className="report-readiness-links" aria-label="Review report inputs"><a href="/weekly-plan" onClick={(event) => { event.preventDefault(); navigateTo('/weekly-plan') }}>Review Weekly Plan <AppIcon name="arrow-right" /></a><a href="/daily-activity" onClick={(event) => { event.preventDefault(); navigateTo('/daily-activity') }}>Review Daily Activity <AppIcon name="arrow-right" /></a><a href="/follow-ups" onClick={(event) => { event.preventDefault(); navigateTo('/follow-ups') }}>Review Follow-ups <AppIcon name="arrow-right" /></a></nav>
       </section>
-      {intelligence.dataQualityWarnings.length > 0 && <section className="report-review-items" aria-labelledby="report-review-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Before export</p><h2 id="report-review-heading">Review Before Export</h2></div><span>{intelligence.dataQualityWarnings.length}</span></div><ul>{intelligence.dataQualityWarnings.slice(0, 5).map((warning) => <li key={`${warning.title}-${warning.sourceActivityId ?? ''}`}><div><strong>{warning.title}</strong><p>{warning.reason}</p></div><a href={`${warning.sourceActivityId ? '/daily-activity' : '/follow-ups'}`}>Review <span aria-hidden="true">→</span></a></li>)}</ul></section>}
+      {intelligence.dataQualityWarnings.length > 0 && <section className="report-review-items" aria-labelledby="report-review-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Before export</p><h2 id="report-review-heading">Review Before Export</h2></div><span>{intelligence.dataQualityWarnings.length}</span></div><ul>{intelligence.dataQualityWarnings.slice(0, 5).map((warning) => <li key={`${warning.title}-${warning.sourceActivityId ?? ''}`}><div><strong>{warning.title}</strong><p>{warning.reason}</p></div><a href={`${warning.sourceActivityId ? '/daily-activity' : '/follow-ups'}`}>Review <AppIcon name="arrow-right" /></a></li>)}</ul></section>}
       {intelligence.carryForwardCandidates.length > 0 && <section className="report-carry-forward" aria-labelledby="carry-forward-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Next week planning</p><h2 id="carry-forward-heading">Suggested Carry-Forward</h2><p>These unfinished items may be relevant to next week. Selecting one does not copy it automatically.</p></div><span>{intelligence.carryForwardCandidates.length}</span></div><ul>{intelligence.carryForwardCandidates.slice(0, 6).map((candidate) => { const key = carryForwardKey(candidate.title, candidate.account); return <li key={key}><label><input type="checkbox" checked={selectedCarryForward.includes(key)} onChange={(event) => setSelectedCarryForward((current) => event.target.checked ? [...current, key] : current.filter((item) => item !== key))} /><span><strong>{candidate.title}</strong><small>{candidate.reason}</small></span></label></li> })}</ul><button className="button button-secondary" type="button" disabled={selectedCarryForward.length === 0} onClick={() => { window.history.pushState(null, '', '/weekly-plan'); window.dispatchEvent(new PopStateEvent('popstate')) }}>Review Selected in Weekly Plan</button></section>}
       <section className="weekly-report-outputs" aria-labelledby="weekly-reports-heading">
         <div className="weekly-report-outputs-heading">
@@ -360,8 +362,8 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE }
             <p>{template.terminology.activityPlural}, {template.terminology.objectives.toLowerCase()} and {template.terminology.accounts.toLowerCase()} for the selected week.</p>
             <span className="weekly-report-output-availability">Available for export</span>
             <div className="weekly-report-output-actions">
-              <a className="button button-secondary" href="/weekly-plan">Review Weekly Plan</a>
-              <button className="button button-primary" type="button" onClick={handleExportWeeklyPlan} disabled={isExportingPlan} aria-busy={isExportingPlan}>{isExportingPlan ? 'Generating...' : 'Export Weekly Plan'} {!isExportingPlan && <span aria-hidden="true">→</span>}</button>
+              <a className="button button-secondary" href="/weekly-plan" onClick={(event) => { event.preventDefault(); navigateTo('/weekly-plan') }}>Review Weekly Plan</a>
+              <button className="button button-primary" type="button" onClick={handleExportWeeklyPlan} disabled={isExportingPlan} aria-busy={isExportingPlan}>{isExportingPlan ? 'Generating...' : 'Export Weekly Plan'} {!isExportingPlan && <AppIcon name="arrow-right" />}</button>
             </div>
             {planExportMessage && <p className="export-message" role="status">{planExportMessage}</p>}
           </article>
@@ -372,15 +374,15 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE }
             <span className="weekly-report-output-availability">Available for export</span>
             <div className="weekly-report-output-actions">
               <a className="button button-secondary" href="#report-preview-heading">Review Report</a>
-              <button className="button button-primary" type="button" onClick={handleExportWord} disabled={isExporting} aria-busy={isExporting}>{isExporting ? 'Generating...' : 'Export Word Document'} {!isExporting && <span aria-hidden="true">→</span>}</button>
-              <button className="button button-secondary" type="button" onClick={handleExportPdf} disabled={isExportingPdf} aria-busy={isExportingPdf}>{isExportingPdf ? 'Generating...' : 'Export PDF'} {!isExportingPdf && <span aria-hidden="true">→</span>}</button>
+              <button className="button button-primary" type="button" onClick={handleExportWord} disabled={isExporting} aria-busy={isExporting}>{isExporting ? 'Generating...' : 'Export Word Document'} {!isExporting && <AppIcon name="arrow-right" />}</button>
+              <button className="button button-secondary" type="button" onClick={handleExportPdf} disabled={isExportingPdf} aria-busy={isExportingPdf}>{isExportingPdf ? 'Generating...' : 'Export PDF'} {!isExportingPdf && <AppIcon name="arrow-right" />}</button>
             </div>
             {exportMessage && <p className={`export-message ${exportMessage.toLowerCase().includes('could not') ? 'is-error' : 'is-success'}`} role="status" aria-live="polite">{exportMessage}</p>}
             {pdfExportMessage && <p className={`export-message ${pdfExportMessage.toLowerCase().includes('could not') ? 'is-error' : 'is-success'}`} role="status" aria-live="polite">{pdfExportMessage}</p>}
           </article>
         </div>
       </section>
-      <div className="report-actions"><a className="button button-secondary" href="/weekly-plan">Back to Edit</a><div className="report-source-links"><a href="/weekly-plan">Weekly Plan</a><a href="/daily-activity">Daily Activity</a><a href="/follow-ups">Follow-ups</a></div><button className="button button-secondary" type="button" onClick={() => window.print()}>Print Report</button></div>
+      <div className="report-actions"><a className="button button-secondary" href="/weekly-plan" onClick={(event) => { event.preventDefault(); navigateTo('/weekly-plan') }}>Back to Edit</a><div className="report-source-links"><a href="/weekly-plan" onClick={(event) => { event.preventDefault(); navigateTo('/weekly-plan') }}>Weekly Plan</a><a href="/daily-activity" onClick={(event) => { event.preventDefault(); navigateTo('/daily-activity') }}>Daily Activity</a><a href="/follow-ups" onClick={(event) => { event.preventDefault(); navigateTo('/follow-ups') }}>Follow-ups</a></div><button className="button button-secondary" type="button" onClick={() => window.print()}>Print Report</button></div>
       <article className="report-preview" aria-labelledby="report-preview-heading">
         <div className="report-preview-label" id="report-preview-heading">Report Preview</div>
         <ReportHeader weekKey={weekKey} template={template} />

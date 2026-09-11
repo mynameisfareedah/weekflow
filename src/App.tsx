@@ -5,6 +5,8 @@ import FollowUpsScreen from './components/FollowUpsScreen'
 import GenerateReportScreen from './components/GenerateReportScreen'
 import OverviewScreen from './components/OverviewScreen'
 import TemplateSelectionScreen from './components/TemplateSelectionScreen'
+import ProfileSettingsScreen from './components/ProfileSettingsScreen'
+import TemplateIcon, { AppIcon } from './components/TemplateIcon'
 import { loadDailyActivities } from './storage/dailyActivityStorage'
 import { loadFollowUps } from './storage/followUpsStorage'
 import { deriveWeeklyIntelligence } from './intelligence/intelligenceEngine'
@@ -35,26 +37,28 @@ import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from './config/templates'
 import { getSelectedTemplate } from './storage/templateStorage'
 import { getPlanningCategoryDescriptors, getPlanningCategoryItems, type PlanningCategoryDescriptor } from './planning/planningCategoryAdapter'
 import { getTemplateTerminology } from './config/templateTerminology'
-import { createWorkspace, DEFAULT_ACCOUNT_ID, getCurrentWorkspace, isWorkspaceNameTaken, loadWorkspaces, normalizeWorkspaceName, provisionWorkspaceInCloud, setCurrentWorkspaceId } from './storage/workspaceStorage'
+import { WEEK_DAY_IDS } from './utils/week'
+import { navigateTo } from './utils/navigation'
+import { createWorkspace, DEFAULT_ACCOUNT_ID, ensureFirstWorkspaceForOwner, getCurrentWorkspace, isWorkspaceNameTaken, loadWorkspaces, normalizeWorkspaceName, provisionWorkspaceInCloud, setCurrentWorkspaceId } from './storage/workspaceStorage'
 import { getAvailableTemplates } from './config/templates'
-import { accountProvider, type AccountState, createAccount, getCurrentUser, signIn, signOut } from './account'
+import { accountProvider, type AccountState, createAccount, getCurrentUser, requestPasswordReset, signIn, signOut, updatePassword } from './account'
 import { isSupabaseConfigured } from './lib/supabase'
 import type { UserProfile } from './types/workspace'
 import './App.css'
 import './landing.css'
 
 const navigationItems = [
-  { label: 'Overview', path: '/', icon: '○' },
-  { label: 'Weekly Plan', path: '/weekly-plan', icon: '□' },
-  { label: 'Daily Activity', path: '/daily-activity', icon: '✦' },
-  { label: 'Follow-ups', path: '/follow-ups', icon: '↗' },
-  { label: 'Report', path: '/report', icon: '▤' },
-  { label: 'Report History', path: '/report-history', icon: '◷' },
-  { label: 'Template', path: '/template-selection', icon: '◇' },
+  { label: 'Overview', path: '/', icon: 'overview' as const },
+  { label: 'Weekly Plan', path: '/weekly-plan', icon: 'weekly-plan' as const },
+  { label: 'Daily Activity', path: '/daily-activity', icon: 'daily-activity' as const },
+  { label: 'Follow-ups', path: '/follow-ups', icon: 'follow-ups' as const },
+  { label: 'Generate Report', path: '/report', icon: 'report' as const },
+  { label: 'Report History', path: '/report-history', icon: 'report-history' as const },
+  { label: 'Template', path: '/template-selection', icon: 'workflow' as const },
 ]
 
 const navigationGroups = [
-  { label: 'Workflows', items: [{ label: 'Your Workflows', path: '/workspaces', icon: '▣' }] },
+  { label: 'Your Workflows', items: [{ label: 'Your Workflows', path: '/workspaces', icon: 'workspaces' as const }] },
   { label: 'Workspace', items: navigationItems.slice(0, 5) },
   { label: 'History', items: navigationItems.slice(5, 6) },
   { label: 'Configuration', items: navigationItems.slice(6) },
@@ -64,6 +68,9 @@ function getScreenFromPath(): string {
   const pathname = window.location.pathname
   if (pathname === '/sign-in') return 'sign-in'
   if (pathname === '/sign-up') return 'sign-up'
+  if (pathname === '/forgot-password') return 'forgot-password'
+  if (pathname === '/reset-password') return 'reset-password'
+  if (pathname === '/profile') return 'profile'
   if (pathname === '/workspaces') return 'workspaces'
   if (pathname === '/template-selection') return 'template-selection'
   if (pathname === '/weekly-plan') return 'weekly-plan'
@@ -85,11 +92,6 @@ function getInitialScreen(): string {
   if (hash === '#overview') return 'overview'
   // Fall back to pathname-based routing
   return getScreenFromPath()
-}
-
-function navigateTo(path: string): void {
-  window.history.pushState(null, '', path)
-  window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
 function handleOldHashRoutes(): void {
@@ -115,14 +117,46 @@ function handleOldHashRoutes(): void {
 function formatHeaderWeek(weekStart: string) {
   const start = new Date(`${weekStart}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+  end.setDate(start.getDate() + 6)
   const startLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(start)
   const endLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(end)
   return `${startLabel} - ${endLabel}`
 }
 
+const landingWorkflowDemos = [
+  { id: 'field-sales', name: 'Pharma Field Sales', status: 'Ready to review', planned: 12, activities: 18, followUps: 5, plan: ['UPTH Urology/Oncology', 'RSUTH', 'Peter Odili Cardiovascular & Cancer Hospital', 'Shalom Medical Center'], activity: ['UPTH Urology/Oncology', 'RSUTH', 'Peter Odili Hospital'], followThrough: '5 actions remain visible' },
+  { id: 'small-business', name: 'Small Business', status: 'On track', planned: 9, activities: 14, followUps: 4, plan: ['Customer meetings', 'Orders', 'Supplier activity', 'Sales priorities'], activity: ['Customer Meeting', 'Sales Activity', 'Order Processing'], followThrough: '4 actions remain visible' },
+  { id: 'personal', name: 'Personal Productivity', status: 'Making progress', planned: 8, activities: 11, followUps: 3, plan: ['Personal goals', 'Important tasks', 'Weekly priorities'], activity: ['Morning planning', 'Priority task', 'Personal errand', 'Follow-up'], followThrough: '3 actions remain visible' },
+  { id: 'project-management', name: 'Project Management', status: 'Ready to review', planned: 10, activities: 16, followUps: 4, plan: ['Project deliverables', 'Stakeholder updates', 'Project priorities', 'Risks and blockers'], activity: ['Project task', 'Stakeholder meeting', 'Deliverable review'], followThrough: '4 actions remain visible' },
+  { id: 'field-service', name: 'Field Operations', status: 'On track', planned: 11, activities: 15, followUps: 6, plan: ['Site visits', 'Inspections', 'Service jobs', 'Equipment checks'], activity: ['Site visit', 'Inspection', 'Service job'], followThrough: '6 actions remain visible' },
+  { id: 'ngo-community', name: 'NGO & Community Work', status: 'Making progress', planned: 8, activities: 13, followUps: 4, plan: ['Community outreach', 'Beneficiary engagement', 'Partner coordination', 'Programme activities'], activity: ['Community visit', 'Beneficiary engagement', 'Partner meeting'], followThrough: '4 actions remain visible' },
+  { id: 'education', name: 'Education', status: 'On track', planned: 9, activities: 14, followUps: 3, plan: ['Lesson planning', 'Student activities', 'Assessment', 'Academic priorities'], activity: ['Lesson preparation', 'Student session', 'Assessment review'], followThrough: '3 actions remain visible' },
+] as const
+
+function AnimatedLandingPreview() {
+  const [activeIndex, setActiveIndex] = useState(0)
+  const demo = landingWorkflowDemos[activeIndex]
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const timer = window.setInterval(() => setActiveIndex((current) => (current + 1) % landingWorkflowDemos.length), 5600)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return <div className="landing-preview-wrap landing-preview-carousel" aria-label={`${demo.name} WeekFlow product preview`}>
+    <div className="landing-demo-selector"><span>WORKFLOW</span><div className="landing-demo-options">{landingWorkflowDemos.map((item, index) => <button type="button" className={index === activeIndex ? 'is-active' : ''} onClick={() => setActiveIndex(index)} key={item.id} aria-label={`Show ${item.name}`}><TemplateIcon templateId={item.id} /><span>{item.name}</span></button>)}</div></div>
+    <div className="landing-product-preview landing-product-preview-live" key={demo.id}><div className="preview-window-bar"><span className="preview-dots"><i /><i /><i /></span><span>WeekFlow</span><span className="preview-week">Week of Aug 10 - Aug 16</span></div><div className="preview-body"><aside><strong>WeekFlow</strong><span className="preview-active">Overview</span><span>Weekly Plan</span><span>Daily Activity</span><span>Follow-ups</span><span>Report</span></aside><div className="preview-main"><div className="preview-heading"><div><small>{demo.name}</small><h2>Your week at a glance.</h2></div><b>{demo.status}</b></div><div className="preview-metrics"><div><small>Planned</small><strong>{demo.planned}</strong></div><div><small>Activities</small><strong>{demo.activities}</strong></div><div><small>Follow-ups</small><strong>{demo.followUps}</strong></div></div><div className="preview-content-grid"><div className="preview-plan"><small>Weekly Plan</small>{demo.plan.map((item) => <strong key={item}>{item}</strong>)}</div><div className="preview-followups"><small>Daily Activity</small>{demo.activity.map((item) => <strong key={item}>{item}</strong>)}<span className="preview-pill">{demo.followThrough}</span></div></div></div></div></div>
+  </div>
+}
+
 function PublicLandingScreen({ onSignIn, onCreateAccount }: { onSignIn: () => void; onCreateAccount: () => void }) {
   useEffect(() => {
+    document.querySelector('.landing-hero-actions')?.remove()
+    const finalSignIn = document.querySelector<HTMLButtonElement>('.landing-final-cta .landing-secondary-cta')
+    if (finalSignIn) {
+      finalSignIn.textContent = 'Already have an account? Sign in'
+      finalSignIn.setAttribute('aria-label', 'Already have an account? Sign in')
+    }
     const elements = document.querySelectorAll<HTMLElement>('.landing-reveal')
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       elements.forEach((element) => element.classList.add('is-visible'))
@@ -139,6 +173,7 @@ function PublicLandingScreen({ onSignIn, onCreateAccount }: { onSignIn: () => vo
     elements.forEach((element) => observer.observe(element))
     return () => observer.disconnect()
   }, [])
+
   const templateGroups = [
     { label: 'Business & Operations', ids: ['field-sales', 'field-service', 'small-business', 'project-management'] },
     { label: 'People & Impact', ids: ['ngo-community', 'education'] },
@@ -155,16 +190,18 @@ function PublicLandingScreen({ onSignIn, onCreateAccount }: { onSignIn: () => vo
     ['05', 'REPORT', 'Report History', 'Keep a useful record of completed weeks and reports.'],
   ]
   return <main className="landing-page">
-    <nav className="landing-nav"><a className="landing-brand" href="/" aria-label="WeekFlow home"><img src={logoImage} alt="WeekFlow" /></a><div className="landing-nav-actions"><span className="landing-free-label">Free to use</span><button type="button" className="landing-sign-in" onClick={onSignIn}>Sign In</button><button type="button" className="button button-primary landing-nav-cta" onClick={onCreateAccount}>Create Free Account</button></div></nav>
-    <section className="landing-hero"><div className="landing-hero-copy"><p className="landing-eyebrow">Your week, working better</p><h1>Plan your week.<br /><em>Stay on top of the work.</em></h1><p className="landing-hero-text">WeekFlow brings your weekly plans, daily activity, follow-ups, review, and reporting into one simple workspace.</p><div className="landing-hero-actions"><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create Free Account <span aria-hidden="true">→</span></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div><span className="landing-reassurance">Free to use</span></div><div className="landing-preview-wrap"><span className="preview-float preview-float-week">Week of Aug 10–14</span><span className="preview-float preview-float-followups">5 follow-ups</span><div className="landing-product-preview" aria-label="WeekFlow product preview"><div className="preview-window-bar"><span className="preview-dots"><i /><i /><i /></span><span>WeekFlow</span><span className="preview-week">Aug 10 - Aug 14</span></div><div className="preview-body"><aside><strong>WeekFlow</strong><span className="preview-active">Overview</span><span>Weekly Plan</span><span>Daily Activity</span><span>Follow-ups</span><span>Report</span></aside><div className="preview-main"><div className="preview-heading"><div><small>Current work week</small><h2>Your week at a glance.</h2></div><b>Ready to review</b></div><div className="preview-metrics"><div><small>Planned</small><strong>12</strong></div><div><small>Activities</small><strong>18</strong></div><div><small>Follow-ups</small><strong>5</strong></div></div><div className="preview-content-grid"><div className="preview-plan"><small>Weekly Plan</small><strong>Priority accounts and next actions</strong><span className="preview-line" /><span className="preview-line short" /><span className="preview-line" /></div><div className="preview-followups"><small>Follow-through</small><strong>5 actions remain visible</strong><span className="preview-pill">On track</span></div></div></div></div></div></div></section>
-    <section className="landing-section landing-workflow landing-reveal" id="workflow"><div className="landing-section-heading"><p className="landing-eyebrow">The WeekFlow rhythm</p><h2>One clear rhythm for every week.</h2><p>Plan the work. Capture what happened. Follow through. Review the week. Turn it into a report.</p></div><div className="landing-workflow-grid">{workflow.map(([number, label, title, description], index) => <article className="landing-workflow-card landing-stagger" style={{ ['--stagger' as string]: `${index * 110}ms` }} key={number}><span>{number}</span><small>{label}</small><h3>{title}</h3><p>{description}</p></article>)}</div></section>
-    <section className="landing-section landing-templates landing-reveal" id="templates"><div className="landing-section-heading"><p className="landing-eyebrow">Built for different kinds of work</p><h2>One platform. Different workflows.</h2><p>Choose a workflow that fits the way you work, or build your own.</p></div><div className="landing-template-groups">{templateGroups.map((group) => <div className="landing-template-group landing-stagger" key={group.label}><h3>{group.label}</h3><div>{group.ids.map((id) => { const template = templateById.get(id); return template ? <article key={id}><strong>{template.name}</strong><p>{template.description}</p></article> : null })}</div></div>)}</div></section>
-    <section className="landing-section landing-workspaces landing-reveal"><div className="landing-split-copy"><p className="landing-eyebrow">Your work. Your workspaces.</p><h2>Keep different parts of your life organised.</h2><p>Create separate workspaces for different kinds of work, each with its own weekly rhythm.</p></div><div className="landing-workspace-examples"><article><span>Franklin's Field Work</span><strong>Pharma Field Sales</strong><small>Plans, activity, accounts, follow-ups</small></article><article><span>Oak Cherry Kraft</span><strong>Small Business</strong><small>Customers, sales, orders, priorities</small></article><article><span>Personal Goals</span><strong>Personal Productivity</strong><small>Goals, tasks, routines, next actions</small></article></div></section>
-    <section className="landing-feature-band landing-reveal"><div><p className="landing-eyebrow">Smart Start</p><h2>Start the new week without starting from scratch.</h2><p>Smart Start helps carry forward the unfinished work that still matters.</p><strong>Carry forward what needs attention. Leave completed work behind.</strong></div><div className="landing-smart-visual"><div><small>Last week</small><span>✓ Completed work</span><span>✓ Completed follow-ups</span><b>→ Unfinished priorities</b></div><div><small>New week</small><b>→ Carry forward what still matters</b></div></div></section>
-    <section className="landing-section landing-reporting landing-reveal"><div className="landing-section-heading"><p className="landing-eyebrow">Reporting, without rewriting</p><h2>From weekly activity to a professional report.</h2><p>WeekFlow turns the work you've already captured into a structured weekly report, so you don't have to recreate the week from scratch.</p></div><div className="landing-report-preview"><div><strong>Weekly Activity Report</strong><span>Activities Summary</span><span>Daily Activity Breakdown</span><span>Key Outcomes</span></div><div><span>Strategic Intelligence</span><span>Priorities for Coming Week</span><span>Completed Follow-ups</span><b>Export professional Word documents.</b></div></div></section>
-    <section className="landing-section landing-benefits landing-reveal"><div className="landing-section-heading"><p className="landing-eyebrow">A calmer operating rhythm</p><h2>Less time organising. More time doing.</h2></div><div className="landing-benefits-grid">{[['Plan with intention', 'Know what matters before the week begins.'], ['Capture reality', 'Record what actually happened, not just what was planned.'], ['Keep follow-ups visible', 'Never lose track of the next action.'], ['Learn from your week', 'Use outcomes and intelligence to understand what changed.'], ['Report without rewriting', 'Turn completed weekly activity into a structured report.']].map(([title, text], index) => <article className="landing-stagger" style={{ ['--stagger' as string]: `${index * 90}ms` }} key={title}><strong>{title}</strong><p>{text}</p></article>)}</div></section>
-    <section className="landing-final-cta"><p className="landing-eyebrow">Free to use</p><h2>Make every week easier to run.</h2><p>Plan it. Work it. Follow through. Review it. Report it.</p><div><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create Free Account <span aria-hidden="true">→</span></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div></section>
-    <footer className="landing-footer"><div><img src={logoImage} alt="WeekFlow" /><p>Plan your week. Stay on top of the work.</p></div><span>Free to use</span><div><a href="#workflow">The rhythm</a><a href="#templates">Workflows</a><a href="/workspaces">Your Workflows</a></div><small>© {new Date().getFullYear()} WeekFlow</small></footer>
+    <AnimatedLandingPreview />
+    <nav className="landing-nav"><a className="landing-brand" href="/" aria-label="WeekFlow home"><img src={logoImage} alt="WeekFlow mark" /><span className="landing-wordmark">WeekFlow</span></a><div className="landing-nav-actions"><button type="button" className="landing-sign-in" onClick={onSignIn}>Sign In</button><button type="button" className="button button-primary landing-nav-cta" onClick={onCreateAccount}>Create a free account</button></div></nav>
+    <section className="landing-hero"><div className="landing-hero-copy"><p className="landing-eyebrow">Your week, working better</p><h1>Plan your week.<br /><em>Stay on top of the work.</em></h1><p className="landing-hero-text">WeekFlow brings your weekly plans, daily activity, follow-ups, review, and reporting into one simple workspace.</p><div className="landing-hero-actions"><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create a free account <AppIcon name="arrow-right" /></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div></div><div className="landing-preview-wrap"><span className="preview-float preview-float-week">Week of Aug 10-16</span><span className="preview-float preview-float-followups">5 follow-ups</span><div className="landing-product-preview" aria-label="WeekFlow product preview"><div className="preview-window-bar"><span className="preview-dots"><i /><i /><i /></span><span>WeekFlow</span><span className="preview-week">Aug 10 - Aug 16</span></div><div className="preview-body"><aside><strong>WeekFlow</strong><span className="preview-active">Overview</span><span>Weekly Plan</span><span>Daily Activity</span><span>Follow-ups</span><span>Report</span></aside><div className="preview-main"><div className="preview-heading"><div><small>Current work week</small><h2>Your week at a glance.</h2></div><b>Ready to review</b></div><div className="preview-metrics"><div><small>Planned</small><strong>12</strong></div><div><small>Activities</small><strong>18</strong></div><div><small>Follow-ups</small><strong>5</strong></div></div><div className="preview-content-grid"><div className="preview-plan"><small>Weekly Plan</small><strong>Priority accounts and next actions</strong><span className="preview-line" /><span className="preview-line short" /><span className="preview-line" /></div><div className="preview-followups"><small>Follow-through</small><strong>5 actions remain visible</strong><span className="preview-pill">On track</span></div></div></div></div></div></div></section>
+    <section className="landing-section landing-workflow" id="workflow"><div className="landing-section-heading"><p className="landing-eyebrow">The WeekFlow rhythm</p><h2>One week. One clear rhythm.</h2><p>Plan. Work. Follow through. Review. Report.</p></div><div className="landing-orbit-window" aria-label="WeekFlow rhythm stages"><div className="landing-orbit-ring" aria-hidden="true" />{workflow.map(([number, label, title, description], index) => <article className="landing-orbit-card" style={{ ['--orbit-delay' as string]: `${index * -4}s` }} key={number}><span>{number}</span><small>{label}</small><h3>{title}</h3><p>{description}</p></article>)}</div></section>
+        <section className="landing-story landing-story-activity landing-reveal"><div className="landing-story-visual landing-activity-visual"><div className="story-window-label">Planned work <span>Actual activity</span></div><div className="story-flow-step"><b>Weekly Plan</b><span>Planned priorities</span></div><div className="story-flow-arrow"><AppIcon name="arrow-down" /></div><div className="story-flow-step is-active"><b>Daily Activity</b><span>What actually happened</span></div><div className="story-outcome-row"><span>Outcome</span><span>Intelligence</span><span>Next Action</span></div></div><div className="landing-story-copy"><p className="landing-eyebrow">Product in action</p><h2>Turn the plan into real work.</h2><p>Start the week knowing what matters. Capture what actually happens as the work unfolds.</p></div></section>
+    <section className="landing-story landing-story-followups landing-reveal"><div className="landing-story-copy"><p className="landing-eyebrow">Follow-ups</p><h2>Don't let important work disappear.</h2><p>Keep unresolved actions visible until they're complete.</p></div><div className="landing-story-visual landing-followups-visual"><div className="story-window-label">Follow-ups <span>Open work</span></div><div className="story-followup-row"><span className="story-dot is-open" /><strong>Confirm account next action</strong><small>Priority</small></div><div className="story-followup-row"><span className="story-dot is-open" /><strong>Share outcome with team</strong><small>Due this week</small></div><div className="story-followup-row is-complete"><span className="story-dot is-done"><AppIcon name="check" /></span><strong>Complete follow-up</strong><small>Completed</small></div></div></section>
+    <section className="landing-feature-band landing-reveal"><div><p className="landing-eyebrow">Smart Start</p><h2>Start the next week with less work to rebuild.</h2><p>Carry forward the unfinished work that still matters. Leave completed work behind.</p></div><div className="landing-smart-visual"><div><small>Last week</small><span>[done] Completed work</span><span>[done] Completed follow-ups</span><b>-&gt; Unfinished priorities</b></div><div className="smart-start-bridge"><span>Smart Start</span><b>select what still matters</b></div><div><small>New week</small><b>-&gt; Carry forward what still matters</b></div></div></section>
+    <section className="landing-section landing-reporting landing-reveal"><div className="landing-section-heading"><p className="landing-eyebrow">Reporting</p><h2>Turn the week's work into a finished report.</h2><p>Bring together what you planned, what happened, what changed, and what still needs attention.</p></div><div className="landing-report-preview"><div><strong>Weekly Activity</strong><span>Activities Summary</span><span>Daily Activity Breakdown</span><span>Key Outcomes</span></div><div className="report-transform"><b>WeekFlow Review</b><span>-&gt;</span><strong>Professional Report</strong><small>Export professional Word documents.</small></div></div></section>
+    <section className="landing-section landing-templates landing-reveal" id="templates"><div className="landing-section-heading"><p className="landing-eyebrow">Built for different kinds of work</p><h2>One platform. Different kinds of work.</h2><p>Choose a workflow that fits how you work.</p></div><div className="landing-template-groups">{templateGroups.map((group) => <div className="landing-template-group landing-stagger" key={group.label}><h3>{group.label}</h3><div>{group.ids.map((id) => { const template = templateById.get(id); return template ? <article key={id}><span className="landing-template-icon"><TemplateIcon templateId={template.id} /></span><strong>{template.name}</strong><p>{template.description}</p></article> : null })}</div></div>)}</div></section>
+    <section className="landing-section landing-workspaces landing-reveal"><div className="landing-split-copy"><p className="landing-eyebrow">Your work. Your workspaces.</p><h2>Keep every workflow in its place.</h2><p>Keep different kinds of work organised without mixing their workflows.</p></div><div className="landing-workspace-examples"><article><span>Waheed's Field Work</span><strong>Pharma Field Sales</strong><small>Plans, activity, accounts, follow-ups</small></article><article><span>Benazir's</span><strong>Small Business</strong><small>Customers, sales, orders, priorities</small></article><article><span>Personal Goals</span><strong>Personal Productivity</strong><small>Goals, tasks, routines, next actions</small></article></div></section>
+    <section className="landing-final-cta"><h2>Make every week easier to run.</h2><p>Start with a free WeekFlow account.</p><div><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create a free account <AppIcon name="arrow-right" /></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div></section>
+    <footer className="landing-footer"><div><div className="landing-footer-brand"><img src={logoImage} alt="WeekFlow mark" /><span className="landing-wordmark">WeekFlow</span></div><p>Plan your week. Stay on top of the work.</p></div><div><a href="#workflow">The rhythm</a><a href="#templates">Workflows</a><a href="/workspaces">Your Workflows</a></div><small>(c) {new Date().getFullYear()} WeekFlow</small></footer>
   </main>
 }
 
@@ -220,13 +257,14 @@ function AuthenticationScreen({ initialMode = 'welcome' }: { initialMode?: 'welc
   }
 
   if (mode === 'welcome') {
-    return <main className="auth-screen"><div className="auth-panel auth-welcome-panel"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Your weekly operating rhythm</p><h1>Plan your week. Track what happens. Stay on top of what comes next.</h1><p className="auth-intro">A focused workspace for turning plans, activity, and follow-through into a clearer week.</p><div className="auth-actions"><button type="button" className="button button-primary" onClick={() => { resetMessages(); setMode('signin') }}>Sign In</button><button type="button" className="button button-secondary" onClick={() => { resetMessages(); setMode('signup') }}>Create Account</button></div></div></main>
+    return <main className="auth-screen"><div className="auth-panel auth-welcome-panel"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Weekly workflow</p><h1>Plan your week. Track what happens. Stay on top of what comes next.</h1><p className="auth-intro">A focused workspace for turning plans, activity, and follow-through into a clearer week.</p><div className="auth-actions"><button type="button" className="button button-primary" onClick={() => { resetMessages(); setMode('signin') }}>Sign In</button><button type="button" className="button button-secondary" onClick={() => { resetMessages(); setMode('signup') }}>Create Account</button></div></div></main>
   }
 
-  return <main className="auth-screen"><section className="auth-panel" aria-labelledby="auth-title"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">WeekFlow account</p><h1 id="auth-title">{mode === 'signin' ? 'Welcome back' : 'Create your account'}</h1><p className="auth-intro">{mode === 'signin' ? 'Sign in to return to your workflows.' : 'Start building a calmer, more useful weekly rhythm.'}</p><form className="auth-form" onSubmit={submit} noValidate>
+  return <main className="auth-screen"><section className="auth-panel" aria-labelledby="auth-title"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Account</p><h1 id="auth-title">{mode === 'signin' ? 'Welcome back' : 'Create your account'}</h1><p className="auth-intro">{mode === 'signin' ? 'Sign in to return to your workflows.' : 'Start building a calmer, more useful weekly rhythm.'}</p><form className="auth-form" onSubmit={submit} noValidate>
     {mode === 'signup' && <label className="auth-field"><span>Full Name</span><input autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>}
     <label className="auth-field"><span>Email</span><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
     <label className="auth-field"><span>Password</span><input type="password" autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+    {mode === 'signin' && <button className="auth-inline-link" type="button" onClick={() => navigateTo('/forgot-password')}>Forgot password?</button>}
     {mode === 'signup' && <label className="auth-field"><span>Confirm Password</span><input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>}
     {errorMessage && <p className="auth-message auth-error" role="alert">{errorMessage}</p>}
     {successMessage && <p className="auth-message auth-success" role="status">{successMessage}</p>}
@@ -234,8 +272,97 @@ function AuthenticationScreen({ initialMode = 'welcome' }: { initialMode?: 'welc
   </form><button className="auth-switch" type="button" onClick={() => { resetMessages(); setMode(mode === 'signin' ? 'signup' : 'signin') }}>{mode === 'signin' ? 'Need an account? Create Account' : 'Already have an account? Sign In'}</button><button className="auth-back" type="button" onClick={() => { resetMessages(); setMode('welcome') }}>Back to WeekFlow</button></section></main>
 }
 
+function humanizeResetError(error: unknown, isPasswordUpdate = false) {
+  if (error instanceof TypeError || (error instanceof Error && /network|fetch|connection|offline/i.test(error.message))) {
+    return 'We could not connect right now. Check your connection and try again.'
+  }
+  if (isPasswordUpdate) return 'This password reset link is no longer valid. Request a new one to continue.'
+  return 'We could not complete that request. Please try again.'
+}
+
+function ForgotPasswordScreen() {
+  const [email, setEmail] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setErrorMessage('')
+    const normalizedEmail = email.trim()
+    if (!normalizedEmail) {
+      setErrorMessage('Enter your email address.')
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setErrorMessage('Enter a valid email address.')
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      await requestPasswordReset(normalizedEmail, `${window.location.origin}/reset-password`)
+      setSubmitted(true)
+    } catch (error) {
+      setErrorMessage(humanizeResetError(error))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return <main className="auth-screen"><section className="auth-panel" aria-labelledby="reset-request-title"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Account recovery</p>{submitted ? <><h1 id="reset-request-title">Check your email</h1><p className="auth-intro">If an account exists for that email address, we&apos;ve sent a password reset link.</p></> : <><h1 id="reset-request-title">Forgot your password?</h1><p className="auth-intro">Enter the email address associated with your WeekFlow account and we&apos;ll send you a link to reset your password.</p><form className="auth-form" onSubmit={submit} noValidate><label className="auth-field"><span>Email address</span><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>{errorMessage && <p className="auth-message auth-error" role="alert">{errorMessage}</p>}<button className="button button-primary auth-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Sending...' : 'Send reset link'}</button></form></>}<button className="auth-switch" type="button" onClick={() => navigateTo('/sign-in')}>Back to sign in</button></section></main>
+}
+
+function ResetPasswordScreen() {
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
+  const [updated, setUpdated] = useState(false)
+  const [linkExpired, setLinkExpired] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setErrorMessage('')
+    if (!password) {
+      setErrorMessage('Enter a new password.')
+      return
+    }
+    if (password.length < 8) {
+      setErrorMessage('Your password must be at least 8 characters.')
+      return
+    }
+    if (password !== confirmPassword) {
+      setErrorMessage('Passwords do not match.')
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      await updatePassword(password)
+      setUpdated(true)
+      setPassword('')
+      setConfirmPassword('')
+    } catch (error) {
+      const isConnectionError = error instanceof TypeError || (error instanceof Error && /network|fetch|connection|offline/i.test(error.message))
+      if (!isConnectionError) setLinkExpired(true)
+      setErrorMessage(humanizeResetError(error, true))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return <main className="auth-screen"><section className="auth-panel" aria-labelledby="new-password-title"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Account recovery</p>{updated ? <><h1 id="new-password-title">Password updated</h1><p className="auth-intro">Your password has been changed successfully.</p><button className="button button-primary auth-submit" type="button" onClick={() => navigateTo('/sign-in')}>Continue to sign in</button></> : linkExpired ? <><h1 id="new-password-title">Reset link expired</h1><p className="auth-intro">This password reset link is no longer valid. Request a new one to continue.</p></> : <><h1 id="new-password-title">Create a new password</h1><p className="auth-intro">Choose a new password for your WeekFlow account.</p><form className="auth-form" onSubmit={submit} noValidate><label className="auth-field"><span>New password</span><input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label><label className="auth-field"><span>Confirm new password</span><input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>{errorMessage && <p className="auth-message auth-error" role="alert">{errorMessage}</p>}<button className="button button-primary auth-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Updating...' : 'Update password'}</button></form></>}<button className="auth-switch" type="button" onClick={() => navigateTo('/forgot-password')}>Request a new reset link</button><button className="auth-back" type="button" onClick={() => navigateTo('/sign-in')}>Back to sign in</button></section></main>
+}
+
 function AuthLoadingScreen() {
   return <main className="auth-screen"><div className="auth-panel auth-loading"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p>Restoring your session...</p></div></main>
+}
+
+function getUserInitials(user: UserProfile | null) {
+  const source = user?.displayName?.trim() || user?.email?.trim() || ''
+  const words = source.split(/\s+/).filter(Boolean)
+  return words.length > 1 ? `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase() : (words[0]?.slice(0, 2) || 'WF').toUpperCase()
 }
 
 function Header({
@@ -247,6 +374,7 @@ function Header({
   onOpenNavigation,
   onSelectWorkspace,
   onOpenCreateWorkspace,
+  onOpenProfile,
   user,
   onSignOut,
 }: {
@@ -258,21 +386,39 @@ function Header({
   onOpenNavigation: () => void
   onSelectWorkspace: (workspaceId: string) => void
   onOpenCreateWorkspace: () => void
+  onOpenProfile: () => void
   user: UserProfile | null
   onSignOut: () => void
 }) {
   const isHistorical = selectedWeek !== getCurrentWeekStart()
   const workspaces = loadWorkspaces()
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const profileMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!profileMenuOpen) return
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) setProfileMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [profileMenuOpen])
 
   return (
     <header className="app-header">
-      <button className="mobile-menu-button" type="button" onClick={onOpenNavigation} aria-label="Open navigation" aria-controls="main-navigation"><span aria-hidden="true">☰</span></button>
-      <a className="brand" href="/" aria-label="WeekFlow overview">
+      <button className="mobile-menu-button" type="button" onClick={onOpenNavigation} aria-label="Open navigation" aria-controls="main-navigation"><AppIcon name="menu" /></button>
+      <a className="brand" href="/" aria-label="WeekFlow overview" onClick={(event) => { event.preventDefault(); navigateTo('/') }}>
         <img className="brand-logo" src={logoImage} alt="WeekFlow" />
       </a>
       <div className="header-context">
-        <span className="context-label">Current workspace</span>
+        <span className="context-label">Current week</span>
         <span className="context-value">Week of {formatHeaderWeek(selectedWeek)}</span>
         {isHistorical && <span className="context-history">Historical report</span>}
       </div>
@@ -289,7 +435,7 @@ function Header({
               const templateName = getAvailableTemplates().find((template) => template.id === workspace.templateId)?.name ?? currentTemplate.name
               return (
                 <button type="button" className={`workspace-switcher-item${isCurrent ? ' is-current' : ''}`} key={workspace.id} onClick={() => onSelectWorkspace(workspace.id)} role="menuitemradio" aria-checked={isCurrent}>
-                  <span className="workspace-switcher-item-title">{isCurrent ? '✓' : '•'} {workspace.name}</span>
+                  <span className="workspace-switcher-item-title"><AppIcon name={isCurrent ? 'check' : 'dot'} /> {workspace.name}</span>
                   <span className="workspace-switcher-item-template">{templateName}</span>
                 </button>
               )
@@ -298,7 +444,7 @@ function Header({
           </div>
         )}
       </div>
-      <div className="profile-wrap"><button className="profile-button" type="button" aria-label="Open profile menu" aria-expanded={profileMenuOpen} onClick={() => setProfileMenuOpen((current) => !current)}><span aria-hidden="true">{user?.displayName ? user.displayName.slice(0, 2).toUpperCase() : 'WY'}</span></button>{profileMenuOpen && <div className="profile-menu"><strong>{user?.displayName || 'WeekFlow account'}</strong>{user?.email && <span>{user.email}</span>}<button type="button" onClick={onSignOut}>Sign Out</button></div>}</div>
+      <div className="profile-wrap" ref={profileMenuRef}><button className="profile-button" type="button" aria-label={`Open profile menu for ${user?.displayName || user?.email || 'account'}`} aria-haspopup="menu" aria-expanded={profileMenuOpen} onClick={() => setProfileMenuOpen((current) => !current)}><span className="profile-avatar" aria-hidden="true">{getUserInitials(user)}</span><span className="profile-button-name">{user?.displayName || user?.email || 'Account'}</span><span className="profile-chevron" aria-hidden="true">⌄</span></button>{profileMenuOpen && <div className="profile-menu" role="menu" aria-label="Account menu"><strong>{user?.displayName || 'WeekFlow account'}</strong>{user?.email && <span>{user.email}</span>}<button type="button" role="menuitem" onClick={() => { setProfileMenuOpen(false); onOpenProfile() }}>Profile Settings</button><button type="button" role="menuitem" onClick={onSignOut}>Sign out</button></div>}</div>
     </header>
   )
 }
@@ -335,7 +481,7 @@ function WorkspaceCreateDialog({
             <p className="eyebrow">Workspace</p>
             <h2 id="create-workspace-title">Create New Workspace</h2>
           </div>
-          <button type="button" className="workspace-modal-close" onClick={onClose} aria-label="Close create workspace dialog">×</button>
+          <button type="button" className="workspace-modal-close" onClick={onClose} aria-label="Close create workspace dialog"><AppIcon name="close" /></button>
         </div>
         <label className="workspace-field">
           <span>Workspace Name</span>
@@ -366,19 +512,19 @@ function WorkspaceCreateDialog({
   )
 }
 
-function AppNavigation({ activeScreen, templateName, onSwitchTemplate, collapsed, mobileOpen, onToggleCollapse, onClose }: { activeScreen: string; templateName: string; onSwitchTemplate: () => void; collapsed: boolean; mobileOpen: boolean; onToggleCollapse: () => void; onClose: () => void }) {
+function AppNavigation({ activeScreen, templateName, onSwitchTemplate, onNavigate, collapsed, mobileOpen, onToggleCollapse, onClose }: { activeScreen: string; templateName: string; onSwitchTemplate: () => void; onNavigate: (path: string) => void; collapsed: boolean; mobileOpen: boolean; onToggleCollapse: () => void; onClose: () => void }) {
   return (
     <nav className={`app-navigation${collapsed ? ' is-collapsed' : ''}${mobileOpen ? ' is-mobile-open' : ''}`} id="main-navigation" aria-label="Main navigation">
       <div className="navigation-brand"><img src={logoImage} alt="WeekFlow" /><span>WeekFlow</span></div>
-      <button className="navigation-close-button" type="button" onClick={onClose} aria-label="Close navigation"><span aria-hidden="true">×</span></button>
-      <div className="navigation-topline"><div className="navigation-template"><span className="navigation-template-label">Workflow</span><strong>{templateName}</strong><button type="button" onClick={onSwitchTemplate}>Switch workflow</button></div><button className="navigation-collapse-button" type="button" onClick={onToggleCollapse} aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!collapsed}><span aria-hidden="true">{collapsed ? '»' : '«'}</span></button></div>
+      <button className="navigation-close-button" type="button" onClick={onClose} aria-label="Close navigation"><AppIcon name="close" /></button>
+      <div className="navigation-topline"><div className="navigation-template"><span className="navigation-template-label">Workflow</span><strong>{templateName}</strong><button type="button" onClick={onSwitchTemplate}>Switch workflow</button></div><button className="navigation-collapse-button" type="button" onClick={onToggleCollapse} aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!collapsed}><AppIcon name={collapsed ? 'expand' : 'collapse'} /></button></div>
       <div className="navigation-groups">
         {navigationGroups.map((group) => <div className="navigation-group" key={group.label}><span className="navigation-label">{group.label}</span><div className="navigation-links">{group.items.map((item) => {
           const isItemActive = item.path === '/' ? activeScreen === 'overview' : item.path === '/workspaces' ? activeScreen === 'workspaces' : activeScreen === item.path.slice(1)
-          return <a className={`navigation-link${isItemActive ? ' is-active' : ''}`} href={item.path} key={item.path} aria-current={isItemActive ? 'page' : undefined} onClick={onClose} title={collapsed ? item.label : undefined}><span className="navigation-icon" aria-hidden="true">{item.icon}</span><span className="navigation-link-label">{item.label}</span></a>
+          return <a className={`navigation-link${isItemActive ? ' is-active' : ''}`} href={item.path} key={item.path} aria-current={isItemActive ? 'page' : undefined} onClick={(event) => { event.preventDefault(); onNavigate(item.path); onClose() }} title={collapsed ? item.label : undefined}><span className="navigation-icon"><AppIcon name={item.icon} /></span><span className="navigation-link-label">{item.label}</span></a>
         })}</div></div>)}
       </div>
-      <div className="navigation-footer"><span className="navigation-footer-label">Current workflow</span><strong>{templateName}</strong></div>
+      <div className="navigation-footer"><span className="navigation-footer-label">Selected workflow</span><strong>{templateName}</strong></div>
     </nav>
   )
 }
@@ -395,12 +541,13 @@ function WorkspaceHomeScreen({
   user: UserProfile | null
 }) {
   const workspaces = loadWorkspaces().filter((workspace) => !workspace.archived)
+  const welcomeName = user?.displayName?.trim().toUpperCase() || 'there'
 
   if (workspaces.length === 0) {
     return (
       <main className="workspace-home-screen">
         <div className="workspace-home-empty">
-          <p className="eyebrow">Workflows</p>
+            <p className="eyebrow">Your Workflows</p>
           <h1>Your first workflow starts here</h1>
           <p>Create a workspace for the kind of work you want to organize.</p>
           <button type="button" className="button button-primary" onClick={onCreateWorkspace}>+ Create New Workspace</button>
@@ -412,9 +559,9 @@ function WorkspaceHomeScreen({
   return (
     <main className="workspace-home-screen">
       <div className="workspace-home-header">
-        <p className="eyebrow">Workspace</p>
-        <h1>Your Workflows</h1>
-        <p>{user?.displayName ? `Welcome back, ${user.displayName}. ` : ''}Choose a workspace to continue your week, or create a new one.</p>
+        <p className="eyebrow">Your Workflows</p>
+        <h1>Welcome back, {welcomeName}! 👋</h1>
+        <p>Your workspaces are ready. Choose one to continue, or create a new workspace for what’s next.</p>
       </div>
       <div className="workspace-home-grid">
         {workspaces.map((workspace) => {
@@ -424,6 +571,7 @@ function WorkspaceHomeScreen({
           return (
             <article className={`workspace-home-card${isCurrent ? ' is-current' : ''}`} key={workspace.id}>
               {isCurrent && <span className="workspace-home-badge">Current workspace</span>}
+              <span className="workspace-home-icon"><TemplateIcon templateId={workspace.templateId} /></span>
               <h2>{workspace.name}</h2>
               <p className="workspace-home-template">{template.name}</p>
               <p className="workspace-home-description">{template.description}</p>
@@ -446,7 +594,7 @@ function formatDateLabel(date: string) {
 function formatWeekRange(weekStart: string) {
   const start = new Date(`${weekStart}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+  end.setDate(start.getDate() + 6)
   const startLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(start)
   const endLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(end)
   return `${startLabel} - ${endLabel}`
@@ -462,9 +610,9 @@ function WeekNavigation({ weekStart, onChange }: { weekStart: string; onChange: 
   const currentWeek = getCurrentWeekStart()
   return (
     <div className="week-navigation" aria-label="Reporting week navigation">
-      <button type="button" onClick={() => onChange(shiftWeek(weekStart, -1))}>← Previous Week</button>
+      <button type="button" onClick={() => onChange(shiftWeek(weekStart, -1))}><AppIcon name="chevron-left" /> Previous Week</button>
       <button type="button" onClick={() => onChange(currentWeek)} disabled={weekStart === currentWeek}>Current Week</button>
-      <button type="button" onClick={() => onChange(shiftWeek(weekStart, 1))}>Next Week →</button>
+      <button type="button" onClick={() => onChange(shiftWeek(weekStart, 1))}>Next Week <AppIcon name="chevron-right" /></button>
     </div>
   )
 }
@@ -567,7 +715,7 @@ function DayPlanSection({ day, onChange, template = FIELD_SALES_TEMPLATE }: { da
   return (
     <section className="day-plan" aria-labelledby={`${day.id}-heading`}>
       <div className="day-heading">
-        <span className="day-index">{String(['monday', 'tuesday', 'wednesday', 'thursday', 'friday'].indexOf(day.id) + 1).padStart(2, '0')}</span>
+        <span className="day-index">{String(WEEK_DAY_IDS.indexOf(day.id) + 1).padStart(2, '0')}</span>
         <div>
           <h2 id={`${day.id}-heading`}>{day.label}</h2>
           <p>{formatDateLabel(day.date)}</p>
@@ -636,7 +784,7 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
     <section className="weekly-plan-summary-section" aria-labelledby={`${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-heading`}>
       <div className="weekly-plan-summary-header">
         <div>
-          <p className="eyebrow">Weekly focus</p>
+          <p className="eyebrow">Weekly Plan</p>
           <h3 id={`${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-heading`}>{title}</h3>
         </div>
         <span>{summary}</span>
@@ -744,7 +892,7 @@ function WeeklyPlanVirtualEngagementSection({
     <section className="weekly-plan-summary-section">
       <div className="weekly-plan-summary-header">
         <div>
-          <p className="eyebrow">Weekly work plan</p>
+          <p className="eyebrow">Weekly Plan</p>
           <h3>{title}</h3>
         </div>
         <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
@@ -877,7 +1025,7 @@ function WeeklyPlanAccountObjectiveSection({
     <section className="weekly-plan-summary-section">
       <div className="weekly-plan-summary-header">
         <div>
-          <p className="eyebrow">Weekly work plan</p>
+          <p className="eyebrow">Weekly Plan</p>
           <h3>{title}</h3>
         </div>
         <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
@@ -969,7 +1117,7 @@ function WeeklyPlanCommercialPrioritySection({
     <section className="weekly-plan-summary-section">
       <div className="weekly-plan-summary-header">
         <div>
-          <p className="eyebrow">Weekly work plan</p>
+          <p className="eyebrow">Weekly Plan</p>
           <h3>{title}</h3>
         </div>
         <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
@@ -1062,7 +1210,7 @@ function WeeklyPlanSuccessMeasureSection({
     <section className="weekly-plan-summary-section">
       <div className="weekly-plan-summary-header">
         <div>
-          <p className="eyebrow">Weekly work plan</p>
+          <p className="eyebrow">Weekly Plan</p>
           <h3>{title}</h3>
         </div>
         <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
@@ -1177,7 +1325,7 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     <main className="weekly-plan-screen" id="weekly-plan">
       <div className="plan-page-heading">
         <div>
-          <p className="eyebrow">Plan before the week begins</p>
+          <p className="eyebrow">Weekly Plan</p>
           <h1>Weekly Work Plan</h1>
           <p className="plan-intro">Align weekly priorities, {terminology.accounts.toLowerCase()} and {terminology.activityPlural.toLowerCase()} for the selected week.</p>
         </div>{cloudStatus && <span role="status">{cloudStatus}</span>}
@@ -1272,10 +1420,10 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
       <section className="daily-field-plan-section" aria-labelledby="daily-field-plan-heading">
         <div className="weekly-plan-summary-header daily-plan-header">
           <div>
-            <p className="eyebrow">Week plan</p>
+            <p className="eyebrow">Weekly Plan</p>
             <h2 id="daily-field-plan-heading">Daily {terminology.activity} Plan</h2>
           </div>
-          <span>Monday–Friday</span>
+          <span>Monday-Sunday</span>
         </div>
         <p className="weekly-plan-helper">Plan {terminology.accounts.toLowerCase()}, {terminology.people.toLowerCase()} and {terminology.objectives.toLowerCase()} for each working day.</p>
         <div className="days-list">
@@ -1377,7 +1525,7 @@ function ReportHistory({ selectedWeek, onSelectWeek, template = FIELD_SALES_TEMP
     <section className="report-history" aria-labelledby="report-history-heading">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Saved reporting weeks</p>
+          <p className="eyebrow">Report History</p>
           <h2 id="report-history-heading">Report History</h2>
         </div>
         <p>Reopen a saved week or export its report again.</p>
@@ -1413,6 +1561,35 @@ function App() {
   const [workspaceCreateReturnPath, setWorkspaceCreateReturnPath] = useState('/')
   const [navigationCollapsed, setNavigationCollapsed] = useState(false)
   const [navigationOpen, setNavigationOpen] = useState(false)
+  const [workspaceInitializationError, setWorkspaceInitializationError] = useState('')
+  const [workspaceInitializationPending, setWorkspaceInitializationPending] = useState(false)
+  const initializedWorkspaceOwnersRef = useRef(new Map<string, Promise<void>>())
+
+  async function initializeAuthenticatedWorkspace(user: UserProfile) {
+    setWorkspaceInitializationPending(true)
+    const existingInitialization = initializedWorkspaceOwnersRef.current.get(user.id)
+    if (existingInitialization) return existingInitialization
+
+    const initialization = (async () => {
+      setWorkspaceInitializationError('')
+      const workspace = await ensureFirstWorkspaceForOwner(user.id, 'My Workspace', 'personal')
+      if (!workspace) return
+      const provisionedWorkspace = await provisionWorkspaceInCloud(workspace)
+      setCurrentWorkspace(provisionedWorkspace)
+      setSelectedTemplate(getSelectedTemplate())
+      setSelectedWeek(getSelectedWeekStart())
+    })().catch((error) => {
+      initializedWorkspaceOwnersRef.current.delete(user.id)
+      setWorkspaceInitializationError(error instanceof Error ? error.message : 'Workspace setup could not be completed. Your local workspace is still available.')
+      setCurrentWorkspace(getCurrentWorkspace())
+      setSelectedTemplate(getSelectedTemplate())
+      setSelectedWeek(getSelectedWeekStart())
+    }).finally(() => {
+      setWorkspaceInitializationPending(false)
+    })
+    initializedWorkspaceOwnersRef.current.set(user.id, initialization)
+    return initialization
+  }
 
   useEffect(() => {
     if (!isSupabaseConfigured) return
@@ -1423,6 +1600,7 @@ function App() {
           const nextState: AccountState = user ? { status: 'authenticated', user } : { status: 'unauthenticated', user: null }
           accountStatusRef.current = nextState.status
           setAccountState(nextState)
+          if (user && window.location.pathname !== '/reset-password') void initializeAuthenticatedWorkspace(user)
         }
       })
       .catch(() => {
@@ -1436,7 +1614,12 @@ function App() {
       const previousStatus = accountStatusRef.current
       accountStatusRef.current = state.status
       setAccountState(state)
-      if (state.status === 'authenticated' && previousStatus === 'unauthenticated') navigateTo('/workspaces')
+      if (state.status === 'authenticated' && previousStatus === 'unauthenticated') {
+        if (window.location.pathname !== '/reset-password') {
+          void initializeAuthenticatedWorkspace(state.user)
+          navigateTo('/workspaces')
+        }
+      }
     })
     return () => {
       active = false
@@ -1565,10 +1748,12 @@ function App() {
     }
   }
 
-  if (accountState.status === 'loading') return <AuthLoadingScreen />
+  if (window.location.pathname === '/forgot-password') return <ForgotPasswordScreen />
+  if (window.location.pathname === '/reset-password') return <ResetPasswordScreen />
+  if (accountState.status === 'loading' || workspaceInitializationPending) return <AuthLoadingScreen />
   if (accountState.status === 'unauthenticated') {
     if (window.location.pathname === '/') return <PublicLandingScreen onSignIn={() => navigateTo('/sign-in')} onCreateAccount={() => navigateTo('/sign-up')} />
-    return <AuthenticationScreen initialMode={window.location.pathname === '/sign-up' ? 'signup' : window.location.pathname === '/sign-in' ? 'signin' : 'welcome'} />
+    return <AuthenticationScreen initialMode={window.location.pathname === '/sign-up' ? 'signup' : 'signin'} />
   }
 
   return (
@@ -1589,9 +1774,11 @@ function App() {
           setShowCreateWorkspace(true)
           setWorkspaceMenuOpen(false)
         }}
+        onOpenProfile={() => navigateTo('/profile')}
         user={accountState.status === 'authenticated' ? accountState.user : null}
         onSignOut={handleSignOut}
       />
+      {workspaceInitializationError && <p className="workspace-initialization-error" role="status">{workspaceInitializationError}</p>}
       <WorkspaceCreateDialog
         isOpen={showCreateWorkspace}
         templateId={newWorkspaceTemplateId}
@@ -1613,11 +1800,11 @@ function App() {
         onCreate={createWorkspaceFromDialog}
         validationMessage={workspaceCreateValidation}
       />
-      {activeScreen !== 'template-selection' && <WeekNavigation weekStart={selectedWeek} onChange={changeWeek} />}
+      {activeScreen !== 'template-selection' && activeScreen !== 'profile' && <WeekNavigation weekStart={selectedWeek} onChange={changeWeek} />}
       <div className="app-body">
-        <AppNavigation activeScreen={activeScreen} templateName={selectedTemplate.name} onSwitchTemplate={openTemplateSelection} collapsed={navigationCollapsed} mobileOpen={navigationOpen} onToggleCollapse={() => setNavigationCollapsed((current) => !current)} onClose={() => setNavigationOpen(false)} />
+        <AppNavigation activeScreen={activeScreen} templateName={selectedTemplate.name} onSwitchTemplate={openTemplateSelection} onNavigate={navigateTo} collapsed={navigationCollapsed} mobileOpen={navigationOpen} onToggleCollapse={() => setNavigationCollapsed((current) => !current)} onClose={() => setNavigationOpen(false)} />
         {navigationOpen && <button className="navigation-overlay" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />}
-        {activeScreen === 'workspaces' ? <WorkspaceHomeScreen user={accountState.status === 'authenticated' ? accountState.user : null} currentWorkspaceId={currentWorkspace.id} onOpenWorkspace={(workspaceId) => { selectWorkspace(workspaceId); navigateTo('/') }} onCreateWorkspace={() => {
+        {activeScreen === 'profile' ? <ProfileSettingsScreen user={accountState.status === 'authenticated' ? accountState.user : { id: '', displayName: '', email: '', createdAt: '', updatedAt: '' }} workspaces={loadWorkspaces()} currentWorkspaceId={currentWorkspace.id} onProfileUpdated={(profile) => setAccountState((state) => state.status === 'authenticated' ? { ...state, user: profile } : state)} onWorkspaceSelected={selectWorkspace} /> : activeScreen === 'workspaces' ? <WorkspaceHomeScreen user={accountState.status === 'authenticated' ? accountState.user : null} currentWorkspaceId={currentWorkspace.id} onOpenWorkspace={(workspaceId) => { selectWorkspace(workspaceId); navigateTo('/') }} onCreateWorkspace={() => {
           setWorkspaceCreateReturnPath('/workspaces')
           setWorkspaceCreateValidation('')
           setNewWorkspaceName('')

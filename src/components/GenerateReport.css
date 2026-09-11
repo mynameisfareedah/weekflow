@@ -230,7 +230,7 @@
 .report-section-heading h3 { color: var(--color-text-primary); font-family: var(--font-heading); font-size: 22px; letter-spacing: -.5px; margin: 0; }
 .report-bullet-list { display: grid; gap: 9px; list-style: none; margin: 0; padding: 0; }
 .report-bullet-list li { color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; padding-left: 17px; position: relative; }
-.report-bullet-list li::before { color: var(--color-accent); content: '•'; left: 0; position: absolute; }
+.report-bullet-list li::before { background: var(--color-accent); border-radius: 50%; content: ''; height: 5px; left: 2px; position: absolute; top: .65em; width: 5px; }
 .report-bullet-list li.is-high-priority strong { color: var(--color-accent); }
 .report-muted { color: var(--color-text-secondary); font-size: 13px; margin: 0; }
 

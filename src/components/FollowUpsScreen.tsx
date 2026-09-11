@@ -10,6 +10,7 @@ import type { WeeklyPlan } from '../types/weeklyPlan'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from '../config/templates'
 import { getTemplateTerminology } from '../config/templateTerminology'
 import { getFollowUpField } from '../followUp/followUpFieldAdapter'
+import { AppIcon } from './TemplateIcon'
 import './FollowUps.css'
 
 const EMPTY_DRAFT: FollowUpDraft = {
@@ -28,7 +29,7 @@ function createId() {
 function formatWeekRange(weekStart: string) {
   const start = new Date(`${weekStart}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+    end.setDate(start.getDate() + 6)
   const startLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(start)
   const endLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(end)
   return `${startLabel} - ${endLabel}`
@@ -105,7 +106,7 @@ function FollowUpForm({
   return (
     <form className="follow-up-form" onSubmit={save}>
       <div className="follow-up-form-heading">
-        <div><p className="eyebrow">{initialFollowUp ? 'Edit follow-up' : 'Quick capture'}</p><h2>{initialFollowUp ? 'Update follow-up' : 'Add a follow-up'}</h2></div>
+        <div><p className="eyebrow">{initialFollowUp ? 'Edit follow-up' : 'Follow-up'}</p><h2>{initialFollowUp ? 'Update follow-up' : 'Add a follow-up'}</h2></div>
         <button className="text-button" type="button" onClick={onCancel}>Cancel</button>
       </div>
       {isFieldVisible(taskField) && <label><span>{taskField?.label ?? `${template.terminology.followUp} / Next Action`}</span><input value={draft.task} onChange={(event) => updateDraft('task', event.target.value)} placeholder="Follow up on the next action..." required={taskField?.required ?? true} autoFocus /></label>}
@@ -116,7 +117,7 @@ function FollowUpForm({
         {isFieldVisible(priorityField) && <label><span>{priorityField?.label ?? 'Priority'}</span><select value={draft.priority} onChange={(event) => updateDraft('priority', event.target.value as FollowUpPriority)} required={priorityField?.required ?? false}><option value="normal">Normal</option><option value="high">High</option></select></label>}
       </div>
       {isFieldVisible(notesField) && <label><span>{notesField?.label ?? 'Notes'}</span><textarea value={draft.notes} onChange={(event) => updateDraft('notes', event.target.value)} placeholder="Optional context..." rows={2} required={notesField?.required ?? false} /></label>}
-      <div className="follow-up-form-actions"><button className="button button-primary" type="submit">{initialFollowUp ? 'Save Changes' : 'Save Follow-up'} <span aria-hidden="true">→</span></button></div>
+      <div className="follow-up-form-actions"><button className="button button-primary" type="submit">{initialFollowUp ? 'Save Changes' : 'Save Follow-up'} <AppIcon name="arrow-right" /></button></div>
     </form>
   )
 }
@@ -124,7 +125,7 @@ function FollowUpForm({
 function FollowUpCard({ followUp, onToggleStatus, onEdit, onDelete, className = '' }: { followUp: FollowUp; onToggleStatus: () => void; onEdit: () => void; onDelete: () => void; className?: string }) {
   return (
     <article className={`follow-up-card${followUp.status === 'completed' ? ' is-completed' : ''}${followUp.priority === 'high' ? ' is-high-priority' : ''}${className ? ` ${className}` : ''}`}>
-      <div className="follow-up-card-marker" aria-hidden="true">{followUp.status === 'completed' ? '✓' : '•'}</div>
+      <div className="follow-up-card-marker" aria-hidden="true">{followUp.status === 'completed' ? <AppIcon name="check" /> : <AppIcon name="dot" />}</div>
       <div className="follow-up-card-main">
         <div className="follow-up-card-title"><h3>{followUp.task}</h3>{followUp.priority === 'high' && <span className="priority-label">High priority</span>}</div>
         <div className="follow-up-meta">{followUp.facility && <span>{followUp.facility}</span>}{followUp.hcpName && <span>{followUp.hcpName}</span>}{followUp.dueDate && <span>Due {formatDueDate(followUp.dueDate)}</span>}</div>
@@ -225,7 +226,7 @@ export default function FollowUpsScreen({ template = FIELD_SALES_TEMPLATE }: { t
 
   return (
     <main className="follow-ups-screen" id="follow-ups">
-      <div className="follow-ups-page-heading"><div><p className="eyebrow">Keep the week moving</p><h1>{terminology.followUps}</h1><p className="follow-ups-intro">Track unresolved next actions so nothing important gets forgotten.</p></div><div className="follow-ups-week"><span>Current week</span><strong>{formatWeekRange(weekKey)}</strong></div></div>
+      <div className="follow-ups-page-heading"><div><p className="eyebrow">Follow-ups</p><h1>{terminology.followUps}</h1><p className="follow-ups-intro">Track unresolved next actions so nothing important gets forgotten.</p></div><div className="follow-ups-week"><span>Current week</span><strong>{formatWeekRange(weekKey)}</strong></div></div>
       <div className="follow-ups-content">
         {!formOpen && <div className="follow-ups-toolbar"><p>{openFollowUps.length} open follow-up{openFollowUps.length === 1 ? '' : 's'} this week</p><button className="button button-primary compact-button" type="button" onClick={startAdd}>+ Add Follow-up</button></div>}
         {formOpen && <FollowUpForm initialFollowUp={editingFollowUp} prefill={prefill} plan={plan} onSave={saveFollowUp} onCancel={cancelForm} template={template} />}

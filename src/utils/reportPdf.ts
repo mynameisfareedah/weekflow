@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf'
 import type { ReportSnapshot } from './reportDocx.ts'
-import { FIELD_SALES_TEMPLATE } from '../config/templates.ts'
+import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from '../config/templates.ts'
 import { getReportSectionDescriptors } from '../report/reportTemplateAdapter.ts'
 import { mapReportSections, type MappedReportSection } from '../report/reportDataMapper.ts'
 
@@ -13,13 +13,20 @@ const MUTED: [number, number, number] = [105, 114, 104]
 const ACCENT: [number, number, number] = [169, 95, 57]
 const LINE: [number, number, number] = [214, 219, 211]
 type PdfDocument = InstanceType<typeof jsPDF>
+const FIELD_REPORT_DAY_IDS = new Set(['monday', 'tuesday', 'wednesday', 'thursday', 'friday'])
+
+function getReportDays(snapshot: ReportSnapshot, template: WeekFlowTemplate) {
+  return template.id === 'field-sales'
+    ? snapshot.plan.days.filter((day) => FIELD_REPORT_DAY_IDS.has(day.id))
+    : snapshot.plan.days
+}
 
 function dateLabel(date: string) { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00`)) }
 function addPage(pdf: PdfDocument, page: number) { if (page > 1) pdf.addPage('a4', 'portrait'); pdf.setDrawColor(...LINE); pdf.line(MARGIN, HEIGHT - 15, WIDTH - MARGIN, HEIGHT - 15); pdf.setFontSize(8); pdf.setTextColor(...MUTED); pdf.text('WeekFlow', MARGIN, HEIGHT - 10); pdf.text(`Page ${page}`, WIDTH - MARGIN, HEIGHT - 10, { align: 'right' }); return MARGIN }
 function ensure(pdf: PdfDocument, y: number, amount: number, page: { value: number }) { if (y + amount <= HEIGHT - 22) return y; page.value += 1; return addPage(pdf, page.value) }
 function heading(pdf: PdfDocument, number: string, value: string, y: number, page: { value: number }) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); const wrapped = pdf.splitTextToSize(value, CONTENT - 14) as string[]; const blockHeight = wrapped.length * 6 + 8; y = ensure(pdf, y, blockHeight, page); pdf.setFontSize(8); pdf.setTextColor(...ACCENT); pdf.text(number, MARGIN, y); pdf.setFontSize(15); pdf.setTextColor(...BODY); pdf.text(wrapped, MARGIN + 10, y); pdf.setDrawColor(...LINE); pdf.line(MARGIN, y + wrapped.length * 6 - 1, WIDTH - MARGIN, y + wrapped.length * 6 - 1); return y + blockHeight }
 function bullet(pdf: PdfDocument, value: string, y: number, page: { value: number }) { const wrapped = pdf.splitTextToSize(value || 'Not recorded', CONTENT - 8) as string[]; y = ensure(pdf, y, wrapped.length * 4.5 + 3, page); pdf.setFillColor(...ACCENT); pdf.circle(MARGIN + 1.5, y - 1.2, 0.8, 'F'); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(...BODY); pdf.text(wrapped, MARGIN + 6, y); return y + wrapped.length * 4.5 + 3 }
-function filename(snapshot: ReportSnapshot) { const start = new Date(`${snapshot.weekKey}T12:00:00`); const end = new Date(start); end.setDate(start.getDate() + 4); const month = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(start); const template = snapshot.template ?? FIELD_SALES_TEMPLATE; const prefix = template.id === 'field-sales' ? 'Weekly_Field_Activity_Report' : `${template.name.replace(/[^a-z0-9]+/gi, '_')}_Weekly_Report`; return `${prefix}_${month}${start.getDate()}-${end.getDate()}-${start.getFullYear()}.pdf` }
+function filename(snapshot: ReportSnapshot) { const start = new Date(`${snapshot.weekKey}T12:00:00`); const end = new Date(start); end.setDate(start.getDate() + 6); const month = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(start); const template = snapshot.template ?? FIELD_SALES_TEMPLATE; const prefix = template.id === 'field-sales' ? 'Weekly_Field_Activity_Report' : `${template.name.replace(/[^a-z0-9]+/gi, '_')}_Weekly_Report`; return `${prefix}_${month}${start.getDate()}-${end.getDate()}-${start.getFullYear()}.pdf` }
 
 function groupValue<T>(section: MappedReportSection | undefined, group: string): T[] {
   const value = section?.groups[group]
@@ -49,7 +56,7 @@ export function buildReportPdf(snapshot: ReportSnapshot) {
       y = bullet(pdf, activities.length > 0 ? `${activities.length} business activities recorded.` : section.presentation.emptyState, y, page)
     } else if (template.id === 'small-business' && section.sectionId === 'daily-business-activity') {
       const activities = groupValue<{ date: string; activityType: string; account: string; outcome: string; intelligence: string; nextAction: string }>(section, 'dailyActivities')
-      for (const day of snapshot.plan.days) {
+      for (const day of getReportDays(snapshot, template)) {
         const records = activities.filter((activity) => activity.date === day.date)
         y = bullet(pdf, records.length > 0 ? `${day.label} ${dateLabel(day.date)}: ${records.map((activity) => [activity.activityType, activity.account, activity.outcome, activity.intelligence, activity.nextAction].filter(Boolean).join(' | ')).join(' || ')}` : `${day.label} ${dateLabel(day.date)}: No activity captured`, y, page)
       }
@@ -68,7 +75,7 @@ export function buildReportPdf(snapshot: ReportSnapshot) {
       y = bullet(pdf, followUps.length > 0 ? followUps.map((followUp) => followUp.task).join(' || ') : section.presentation.emptyState, y, page)
     } else if (section.sectionId === 'daily-activity-breakdown') {
       const activities = groupValue<{ date: string; activityType: string; account: string; hcpNames: string[]; outcome: string; intelligence: string; nextAction: string }>(section, 'dailyActivities')
-      for (const day of snapshot.plan.days) {
+      for (const day of getReportDays(snapshot, template)) {
         const records = activities.filter((activity) => activity.date === day.date)
         const text = records.length > 0 ? records.map((activity) => [activity.activityType, activity.account, activity.hcpNames.join(', '), activity.outcome, activity.intelligence, activity.nextAction].filter(Boolean).join(' | ')).join(' || ') : 'No activity captured'
         y = bullet(pdf, `${day.label} ${dateLabel(day.date)}: ${text}`, y, page)

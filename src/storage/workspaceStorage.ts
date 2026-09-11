@@ -191,6 +191,70 @@ export function createWorkspace(name: string, templateId: string, ownerId: strin
   return workspace
 }
 
+export async function ensureFirstWorkspaceForOwner(ownerId: string, defaultName = 'My Workspace', templateId = 'personal') {
+  if (!ownerId || !ownerId.trim()) return null
+
+  const workspaces = loadWorkspaces().filter((workspace) => !workspace.archived)
+  const currentWorkspace = getCurrentWorkspace()
+  const preserveCurrentWorkspace = currentWorkspace.ownerId === ownerId && !currentWorkspace.archived
+  const existingOwnedWorkspace = workspaces.find((workspace) => workspace.ownerId === ownerId)
+  if (existingOwnedWorkspace?.cloudId) {
+    if (!preserveCurrentWorkspace) setCurrentWorkspaceId(existingOwnedWorkspace.id)
+    return existingOwnedWorkspace
+  }
+
+  if (supabase) {
+    const existingCloud = await supabase
+      .from('workspaces')
+      .select('id, name, template_id, created_at, updated_at, archived')
+      .eq('owner_id', ownerId)
+      .eq('archived', false)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+
+    if (existingCloud.error) throw existingCloud.error
+    if (existingCloud.data) {
+      const localWorkspace = existingOwnedWorkspace ?? workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID && workspace.ownerId === DEFAULT_ACCOUNT_ID)
+      const existingWorkspace: Workspace = {
+        id: localWorkspace?.id ?? existingCloud.data.id,
+        cloudId: existingCloud.data.id,
+        ownerId,
+        name: existingCloud.data.name,
+        templateId: existingCloud.data.template_id,
+        createdAt: existingCloud.data.created_at,
+        updatedAt: existingCloud.data.updated_at,
+        archived: existingCloud.data.archived,
+      }
+      upsertWorkspace(existingWorkspace)
+      if (!preserveCurrentWorkspace) setCurrentWorkspaceId(existingWorkspace.id)
+      return existingWorkspace
+    }
+  }
+
+  if (existingOwnedWorkspace) {
+    if (!preserveCurrentWorkspace) setCurrentWorkspaceId(existingOwnedWorkspace.id)
+    return existingOwnedWorkspace
+  }
+
+  const localDefaultWorkspace = workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID && workspace.ownerId === DEFAULT_ACCOUNT_ID)
+  if (localDefaultWorkspace) {
+    const firstWorkspace = {
+      ...localDefaultWorkspace,
+      ownerId,
+      name: defaultName,
+      templateId,
+      updatedAt: createTimestamp(),
+    }
+    upsertWorkspace(firstWorkspace)
+    setCurrentWorkspaceId(firstWorkspace.id)
+    return firstWorkspace
+  }
+
+  const workspace = createWorkspace(defaultName, templateId, ownerId)
+  return workspace
+}
+
 export async function provisionWorkspaceInCloud(workspace: Workspace): Promise<Workspace> {
   if (!supabase) return workspace
   const user = await getCurrentUser()

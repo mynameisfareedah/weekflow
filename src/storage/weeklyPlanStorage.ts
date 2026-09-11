@@ -12,12 +12,13 @@ import {
 } from '../types/weeklyPlan'
 import { getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getLegacyCompatibleWorkspaceId, getWorkspaceScopedStorageKey, getCurrentCloudWorkspaceId } from './workspaceStorage'
 import { supabase } from '../lib/supabase'
+import { WEEK_DAY_IDS, WEEK_DAY_LABELS } from '../utils/week'
 
 const STORAGE_PREFIX = 'weekflow-weekly-plan:'
 const SELECTED_WEEK_KEY = 'weekflow-selected-week'
 const STORAGE_PREFIXES = [STORAGE_PREFIX, 'weekflow-daily-activities:', 'weekflow-follow-ups:', 'weekflow-smart-start:']
-const DAY_IDS: DayId[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
-const DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+const DAY_IDS: DayId[] = [...WEEK_DAY_IDS]
+const DAY_LABELS = [...WEEK_DAY_LABELS]
 
 function formatDate(date: Date) {
   const year = date.getFullYear()

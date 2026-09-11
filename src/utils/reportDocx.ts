@@ -54,7 +54,7 @@ function formatDate(dateString: string) {
 function formatWeekRange(weekStart: string) {
   const start = new Date(`${weekStart}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+  end.setDate(start.getDate() + 6)
   const startLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(start)
   const endLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(end)
   return `${startLabel} - ${endLabel}`
@@ -62,6 +62,14 @@ function formatWeekRange(weekStart: string) {
 
 function getDayActivities(day: DayPlan, activities: DailyActivity[]) {
   return activities.filter((activity) => activity.date === day.date)
+}
+
+const FIELD_REPORT_DAY_IDS = new Set(['monday', 'tuesday', 'wednesday', 'thursday', 'friday'])
+
+function getReportDays(snapshot: ReportSnapshot) {
+  return snapshot.template?.id === 'field-sales'
+    ? snapshot.plan.days.filter((day) => FIELD_REPORT_DAY_IDS.has(day.id))
+    : snapshot.plan.days
 }
 
 function sectionById(sections: readonly MappedReportSection[], id: string) {
@@ -187,7 +195,7 @@ function buildDailyTable(snapshot: ReportSnapshot, sections: readonly MappedRepo
     }),
   ]
 
-  snapshot.plan.days.forEach((day) => {
+  getReportDays(snapshot).forEach((day) => {
     const records = getDayActivities(day, activities)
     const cells = records.length > 0
       ? [
@@ -534,7 +542,7 @@ function buildSchemaDocument(snapshot: ReportSnapshot) {
 function buildReportFilename(weekKey: string) {
   const start = new Date(`${weekKey}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+  end.setDate(start.getDate() + 6)
   const monthFormatter = new Intl.DateTimeFormat('en-US', { month: 'short' })
   const startMonth = monthFormatter.format(start)
   const startDay = String(start.getDate()).padStart(2, '0')
@@ -546,7 +554,7 @@ function buildReportFilename(weekKey: string) {
 function buildProjectManagementReportFilename(weekKey: string) {
   const start = new Date(`${weekKey}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+  end.setDate(start.getDate() + 6)
   const month = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(start)
   return `Project_Management_Weekly_Report_${month}${start.getDate()}-${end.getDate()}-${start.getFullYear()}.docx`
 }
@@ -564,7 +572,7 @@ export function getReportDownloadFilename(snapshot: ReportSnapshot) {
   if (template.id === 'field-sales') return buildReportFilename(snapshot.weekKey)
   const start = new Date(`${snapshot.weekKey}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+  end.setDate(start.getDate() + 6)
   const month = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(start)
   return `${template.name.replace(/[^a-z0-9]+/gi, '_')}_Weekly_Report_${month}${start.getDate()}-${end.getDate()}-${start.getFullYear()}.docx`
 }

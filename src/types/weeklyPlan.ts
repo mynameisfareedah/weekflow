@@ -10,7 +10,7 @@ export const PLAN_CATEGORIES = [
 
 export type PlanCategory = (typeof PLAN_CATEGORIES)[number]
 
-export type DayId = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday'
+export type DayId = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
 
 export interface PlanItem {
   id: string

@@ -25,6 +25,9 @@ export type CreateAccountResult = { user: UserProfile; authenticated: boolean }
 export interface AccountProvider {
   getCurrentUser(): Promise<UserProfile | null>
   signIn(credentials: SignInCredentials): Promise<UserProfile>
+  updateProfile(displayName: string): Promise<UserProfile>
+  requestPasswordReset(email: string, redirectTo: string): Promise<void>
+  updatePassword(password: string): Promise<void>
   signOut(): Promise<void>
   createAccount(input: CreateAccountInput): Promise<CreateAccountResult>
   onAuthStateChange(listener: AuthStateListener): () => void
@@ -43,6 +46,15 @@ const localDemoAccountProvider: AccountProvider = {
   },
   signIn() {
     return unsupportedAuthentication('Sign in')
+  },
+  updateProfile() {
+    return unsupportedAuthentication('Profile update')
+  },
+  requestPasswordReset() {
+    return unsupportedAuthentication('Password reset')
+  },
+  updatePassword() {
+    return unsupportedAuthentication('Password update')
   },
   signOut() {
     return Promise.resolve()
@@ -65,6 +77,18 @@ export function getCurrentUser() {
 
 export function signIn(credentials: SignInCredentials) {
   return accountProvider.signIn(credentials)
+}
+
+export function updateProfile(displayName: string) {
+  return accountProvider.updateProfile(displayName)
+}
+
+export function requestPasswordReset(email: string, redirectTo: string) {
+  return accountProvider.requestPasswordReset(email, redirectTo)
+}
+
+export function updatePassword(password: string) {
+  return accountProvider.updatePassword(password)
 }
 
 export function signOut() {

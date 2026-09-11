@@ -16,6 +16,7 @@ import {
 import type { DayPlan, PlanItem, WeeklyPlan } from '../types/weeklyPlan'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from '../config/templates'
 import { getTemplateTerminology } from '../config/templateTerminology'
+import { AppIcon } from './TemplateIcon'
 import { getActivityFieldDescriptors, isActivityFieldEnabled, isActivityFieldRequired, type ActivityFieldKey } from '../activity/activityFieldAdapter'
 import { getActivityTypeOptions } from '../activity/activityTypeAdapter'
 import { getStructuredOutcomeOptions } from '../activity/structuredOutcomeAdapter'
@@ -196,7 +197,7 @@ function ActivityCaptureForm({
     <form className="activity-capture-form" onSubmit={save}>
       <div className="capture-form-heading">
         <div>
-          <p className="eyebrow">{initialActivity ? 'Edit activity' : 'Quick capture'}</p>
+          <p className="eyebrow">{initialActivity ? 'Edit activity' : 'Daily activity'}</p>
           <h2>{initialActivity ? 'Update what happened' : 'What did you actually do?'}</h2>
         </div>
         <button className="text-button" type="button" onClick={onCancel}>Cancel</button>
@@ -301,7 +302,7 @@ function ActivityCaptureForm({
           </div>
         ))}
       </section>}
-      <div className="capture-form-actions"><button className="button button-primary" type="submit">{initialActivity ? 'Save Changes' : 'Save Activity'} <span aria-hidden="true">→</span></button></div>
+      <div className="capture-form-actions"><button className="button button-primary" type="submit">{initialActivity ? 'Save Changes' : 'Save Activity'} <AppIcon name="arrow-right" /></button></div>
     </form>
   )
 }
@@ -312,7 +313,7 @@ function ActivitySummary({ activity, onEdit, onDelete, onFollowUp, template, cla
 
   return (
     <article className={`activity-summary${className ? ` ${className}` : ''}`}>
-      <div className="activity-summary-check" aria-hidden="true">✓</div>
+      <div className="activity-summary-check" aria-hidden="true"><AppIcon name="check" /></div>
       <div className="activity-summary-main"><div className="activity-summary-title"><h3>{activity.account}</h3><span>{activity.activityType}</span></div><p>{activity.hcpNames.length ? `${activity.hcpNames.length} ${contactCountLabel} involved` : `No ${noContactsLabel} recorded`}</p>{activity.outcome && <p className="summary-outcome">{activity.outcome}</p>}{activity.nextAction && <div className="next-action-summary"><span>Next action</span><p>{activity.nextAction}</p><button type="button" onClick={onFollowUp}>+ Add Follow-up</button></div>}{activity.structuredOutcomes.length > 0 && <div className="summary-tags">{activity.structuredOutcomes.map((outcome) => <span key={outcome.id}>{outcome.type}</span>)}</div>}</div>
       <div className="summary-actions"><button type="button" onClick={onEdit}>Edit</button><button type="button" onClick={onDelete}>Delete</button></div>
     </article>
@@ -427,14 +428,14 @@ export default function DailyActivityScreen({ template = FIELD_SALES_TEMPLATE }:
   return (
     <main className="daily-activity-screen" id="daily-activity">
       <div className="daily-page-heading">
-        <div><p className="eyebrow">Capture what happened</p><h1>Daily {terminology.activity}</h1><p className="daily-intro">Record the work you actually did in a few quick notes.</p></div>
+        <div><p className="eyebrow">Daily Activity</p><h1>Daily {terminology.activity}</h1><p className="daily-intro">Record the work you actually did in a few quick notes.</p></div>
         <div className="daily-status"><span>Current week</span><strong>{formatDate(selectedDay.date)}</strong><p>{dayActivities.length} activit{dayActivities.length === 1 ? 'y' : 'ies'} captured today</p></div>
       </div>
       <div className="day-switcher" aria-label="Select activity day">{weekDays.map((day) => <button key={day.id} className={day.id === selectedDay.id ? 'is-selected' : ''} type="button" onClick={() => selectDay(day)}><span>{day.label.slice(0, 3)}</span><strong>{new Date(`${day.date}T12:00:00`).getDate()}</strong></button>)}</div>
       <div className="daily-content">
-        <section className="planned-activities" aria-labelledby="planned-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">From your Weekly Plan</p><h2 id="planned-activities-heading">Today's planned {template.terminology.activityPlural.toLowerCase()}</h2></div><button className="button button-secondary compact-button" type="button" onClick={startUnplannedActivity}>+ Add {template.terminology.activity}</button></div>{plannedActivities.length > 0 ? <div className="planned-activity-list">{plannedActivities.map((activity) => <button className="planned-activity" type="button" key={activity.id} onClick={() => startPlannedActivity(activity)}><span>{activity.label}</span><small>{activity.activityType === 'Virtual Engagement' ? 'Virtual engagement' : 'Start capture'} <b>→</b></small></button>)}</div> : <div className="empty-planned"><p>No {template.terminology.activityPlural.toLowerCase()} planned for {selectedDay.label}.</p><button className="text-button" type="button" onClick={startUnplannedActivity}>+ Add an unplanned {template.terminology.activity.toLowerCase()}</button></div>}</section>
+        <section className="planned-activities" aria-labelledby="planned-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">Weekly Plan</p><h2 id="planned-activities-heading">Today's planned {template.terminology.activityPlural.toLowerCase()}</h2></div><button className="button button-secondary compact-button" type="button" onClick={startUnplannedActivity}>+ Add {template.terminology.activity}</button></div>{plannedActivities.length > 0 ? <div className="planned-activity-list">{plannedActivities.map((activity) => <button className="planned-activity" type="button" key={activity.id} onClick={() => startPlannedActivity(activity)}><span>{activity.label}</span><small>{activity.activityType === 'Virtual Engagement' ? 'Virtual engagement' : 'Start capture'} <AppIcon name="arrow-right" /></small></button>)}</div> : <div className="empty-planned"><p>No {template.terminology.activityPlural.toLowerCase()} planned for {selectedDay.label}.</p><button className="text-button" type="button" onClick={startUnplannedActivity}>+ Add an unplanned {template.terminology.activity.toLowerCase()}</button></div>}</section>
         {captureOpen && <ActivityCaptureForm key={editingActivity?.id ?? selectedPlannedActivity?.id ?? 'new'} day={selectedDay} plannedActivity={selectedPlannedActivity} initialActivity={editingActivity} onSave={saveActivity} onCancel={() => { setCaptureOpen(false); setEditingActivity(null); setSelectedPlannedActivity(null) }} template={template} />}
-        <section className="today-activities" aria-labelledby="today-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">Saved to this week</p><h2 id="today-activities-heading">Today's {template.terminology.activityPlural}</h2></div><span className="activity-count">{dayActivities.length}</span></div>{dayActivities.length > 0 ? <div className="activity-summary-list">{dayActivities.map((activity) => <ActivitySummary className={newActivityId === activity.id ? 'is-new' : ''} key={activity.id} activity={activity} template={template} onEdit={() => editActivity(activity)} onDelete={() => deleteActivity(activity.id)} onFollowUp={() => createFollowUpFromActivity(activity)} />)}</div> : <p className="empty-activities">Captured activities will appear here.</p>}</section>
+        <section className="today-activities" aria-labelledby="today-activities-heading"><div className="daily-section-heading"><div><p className="eyebrow">Daily Activity</p><h2 id="today-activities-heading">Today's {template.terminology.activityPlural}</h2></div><span className="activity-count">{dayActivities.length}</span></div>{dayActivities.length > 0 ? <div className="activity-summary-list">{dayActivities.map((activity) => <ActivitySummary className={newActivityId === activity.id ? 'is-new' : ''} key={activity.id} activity={activity} template={template} onEdit={() => editActivity(activity)} onDelete={() => deleteActivity(activity.id)} onFollowUp={() => createFollowUpFromActivity(activity)} />)}</div> : <p className="empty-activities">Captured activities will appear here.</p>}</section>
         {followUpSuggestion && suggestedActivity && <aside className="smart-follow-up" aria-label="Possible follow-up"><div><p className="eyebrow">WeekFlow Intelligence</p><h2>Possible Follow-up</h2><strong>{followUpSuggestion.title}</strong><p>{followUpSuggestion.reason}</p><small>{suggestedActivity.account}{suggestedActivity.hcpNames.length === 1 ? ` · ${suggestedActivity.hcpNames[0]}` : ''}</small></div><div className="smart-follow-up-actions"><button className="button button-primary compact-button" type="button" onClick={() => createFollowUpFromActivity(suggestedActivity, followUpSuggestion.title)}>Create Follow-up</button><button className="text-button" type="button" onClick={() => setFollowUpSuggestion(null)}>Dismiss</button></div></aside>}
       </div>
     </main>

@@ -102,7 +102,7 @@ function spacer() {
 function formatWeeklyPlanWeekLabel(weekStart: string) {
   const start = new Date(`${weekStart}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+  end.setDate(start.getDate() + 6)
   const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'long' })
   const monthFormatter = new Intl.DateTimeFormat('en-US', { month: 'long' })
   return `${weekdayFormatter.format(start)} ${start.getDate()} – ${weekdayFormatter.format(end)} ${end.getDate()} ${monthFormatter.format(start)} ${start.getFullYear()}`

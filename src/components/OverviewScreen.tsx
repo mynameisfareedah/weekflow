@@ -15,6 +15,7 @@ import { PLAN_CATEGORIES, type DayPlan, type WeeklyPlan } from '../types/weeklyP
 import { exportReportWord, getFixedReportWeekLabel } from '../utils/reportDocx'
 import type { WeekFlowTemplate } from '../config/templates'
 import { getTemplateTerminology } from '../config/templateTerminology'
+import { AppIcon } from './TemplateIcon'
 import './OverviewScreen.css'
 
 interface OverviewScreenProps {
@@ -33,7 +34,7 @@ interface OverviewData {
 function formatCompactWeekHeading(weekStart: string) {
   const start = new Date(`${weekStart}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 4)
+    end.setDate(start.getDate() + 6)
   const format = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
   return `${format.format(start).toUpperCase()} - ${format.format(end).toUpperCase()}`
 }
@@ -197,7 +198,7 @@ function MetricCard({ label, value, detail, delay = 0 }: { label: string; value:
 }
 
 function SectionHeader({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action?: string; onAction?: () => void }) {
-  return <div className="overview-section-header"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div>{action && onAction && <button className="overview-text-action" type="button" onClick={onAction}>{action} <span aria-hidden="true">→</span></button>}</div>
+  return <div className="overview-section-header"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div>{action && onAction && <button className="overview-text-action" type="button" onClick={onAction}>{action} <AppIcon name="arrow-right" /></button>}</div>
 }
 
 const intelligenceCategoryLabels: Record<IntelligenceCategory, string> = {
@@ -334,7 +335,7 @@ export default function OverviewScreen({ selectedWeek, template, onNavigate }: O
     <main key={selectedWeek} className={`overview-dashboard overview-hero-screen${intelligence.reportReadiness.status === 'empty' ? ' is-empty' : ''}`} id="overview">
       <header className="overview-week-header overview-hero-enter">
         <div className="overview-week-copy">
-          <p className="eyebrow overview-hero-context">{isHistorical ? 'Historical week' : 'Current work week'}</p>
+          <p className="eyebrow overview-hero-context">{isHistorical ? 'Historical week' : 'Current week'}</p>
           <h1 className="overview-hero-heading">{template.name}</h1>
           <p className="overview-week-date overview-hero-meta">{isHistorical ? 'Historical week' : 'Current week'} · {formatCompactWeekHeading(selectedWeek)}</p>
           <p className="overview-week-description overview-hero-copy">Your week at a glance.</p>
@@ -344,7 +345,7 @@ export default function OverviewScreen({ selectedWeek, template, onNavigate }: O
           <span className={`overview-readiness overview-readiness-${intelligence.reportReadiness.status} overview-hero-status`}><span aria-hidden="true" />{intelligence.reportReadiness.status === 'ready' ? 'Ready to review' : intelligence.reportReadiness.status === 'review' ? 'Needs attention' : 'Ready when you are'}</span>
           <div className="overview-week-actions overview-hero-actions">
           <button className="button button-secondary" type="button" onClick={() => onNavigate('weekly-plan')}>{intelligence.reportReadiness.status === 'empty' ? 'Open Weekly Plan' : 'View Weekly Plan'}</button>
-          <button className="button button-primary" type="button" onClick={() => onNavigate('daily-activity')}>{intelligence.reportReadiness.status === 'empty' ? 'Record Activity' : 'Continue Daily Activity'} <span aria-hidden="true">→</span></button>
+          <button className="button button-primary" type="button" onClick={() => onNavigate('daily-activity')}>{intelligence.reportReadiness.status === 'empty' ? 'Record Activity' : 'Continue Daily Activity'} <AppIcon name="arrow-right" /></button>
           </div>
         </div>
       </header>
@@ -357,11 +358,11 @@ export default function OverviewScreen({ selectedWeek, template, onNavigate }: O
       </section>
 
       <nav className="overview-workflow-rail overview-workflow-rail-enter" aria-label="WeekFlow workflow">
-        <a className="overview-workflow-step is-complete" href="/weekly-plan" style={{ animationDelay: '0ms', ['--step-index' as any]: 0 }}><span>01</span><strong>Plan</strong><small>Weekly Plan</small></a>
-        <a className={`overview-workflow-step${activities.length > 0 ? ' is-complete' : ' is-current'}`} href="/daily-activity" style={{ animationDelay: '80ms', ['--step-index' as any]: 1 }}><span>02</span><strong>Act</strong><small>Daily Activity</small></a>
-        <a className={`overview-workflow-step${openFollowUps.length > 0 ? ' is-current' : ''}`} href="/follow-ups" style={{ animationDelay: '160ms', ['--step-index' as any]: 2 }}><span>03</span><strong>Follow up</strong><small>Follow-ups</small></a>
-        <a className={`overview-workflow-step${reportReady ? ' is-complete' : ' is-current'}`} href="/report" style={{ animationDelay: '240ms', ['--step-index' as any]: 3 }}><span>04</span><strong>Review</strong><small>Generate Report</small></a>
-        <a className="overview-workflow-step" href="/report-history" style={{ animationDelay: '320ms', ['--step-index' as any]: 4 }}><span>05</span><strong>Report</strong><small>Report History</small></a>
+        <a className="overview-workflow-step is-complete" href="/weekly-plan" onClick={(event) => { event.preventDefault(); onNavigate('weekly-plan') }} style={{ animationDelay: '0ms', ['--step-index' as any]: 0 }}><span>01</span><strong>Plan</strong><small>Weekly Plan</small></a>
+        <a className={`overview-workflow-step${activities.length > 0 ? ' is-complete' : ' is-current'}`} href="/daily-activity" onClick={(event) => { event.preventDefault(); onNavigate('daily-activity') }} style={{ animationDelay: '80ms', ['--step-index' as any]: 1 }}><span>02</span><strong>Act</strong><small>Daily Activity</small></a>
+        <a className={`overview-workflow-step${openFollowUps.length > 0 ? ' is-current' : ''}`} href="/follow-ups" onClick={(event) => { event.preventDefault(); onNavigate('follow-ups') }} style={{ animationDelay: '160ms', ['--step-index' as any]: 2 }}><span>03</span><strong>Follow up</strong><small>Follow-ups</small></a>
+        <a className={`overview-workflow-step${reportReady ? ' is-complete' : ' is-current'}`} href="/report" onClick={(event) => { event.preventDefault(); onNavigate('report') }} style={{ animationDelay: '240ms', ['--step-index' as any]: 3 }}><span>04</span><strong>Review</strong><small>Generate Report</small></a>
+        <a className="overview-workflow-step" href="/report-history" onClick={(event) => { event.preventDefault(); onNavigate('report-history') }} style={{ animationDelay: '320ms', ['--step-index' as any]: 4 }}><span>05</span><strong>Report</strong><small>Report History</small></a>
       </nav>
 
       <div className={`overview-grid overview-main-grid${isTrulyEmpty ? ' is-empty' : ''}`}>
@@ -381,10 +382,10 @@ export default function OverviewScreen({ selectedWeek, template, onNavigate }: O
       </div>
 
       <section className={`overview-intelligence-panel${intelligence.reportReadiness.status === 'empty' ? ' is-empty' : ''}`} aria-labelledby="intelligence-heading">
-        <div className="overview-intelligence-heading"><div><p className="eyebrow">WeekFlow Intelligence</p><h2 id="intelligence-heading">{intelligence.reportReadiness.status === 'empty' ? 'Start with the work already planned' : 'What needs attention'}</h2><p>{intelligence.reportReadiness.status === 'empty' ? 'Insights and recommendations will appear as activity is captured.' : intelligence.reportReadiness.summary}</p></div><span className={`intelligence-status ${intelligence.reportReadiness.status}`}>{intelligence.reportReadiness.status}</span></div>
+        <div className="overview-intelligence-heading"><div><p className="eyebrow">Intelligence</p><h2 id="intelligence-heading">{intelligence.reportReadiness.status === 'empty' ? 'Start with the work already planned' : 'What needs attention'}</h2><p>{intelligence.reportReadiness.status === 'empty' ? 'Insights and recommendations will appear as activity is captured.' : intelligence.reportReadiness.summary}</p></div><span className={`intelligence-status ${intelligence.reportReadiness.status}`}>{intelligence.reportReadiness.status}</span></div>
         {intelligence.reportReadiness.status === 'empty' ? <div className="intelligence-empty-actions overview-empty-cta"><button className="button button-secondary" type="button" onClick={() => onNavigate('weekly-plan')}>Review Weekly Plan</button><button className="button button-primary" type="button" onClick={() => onNavigate('daily-activity')}>Record Activity</button></div> : <div className="overview-intelligence-grid">
           <section className="intelligence-column overview-intelligence-column" aria-labelledby="happening-heading"><h3 id="happening-heading">What&apos;s happening</h3>{getTopInsights(intelligence.insights, template).length > 0 ? <ul className="intelligence-insight-list">{getTopInsights(intelligence.insights, template).map((insight: WeeklyInsight, index: number) => <li key={`${insight.category}-${insight.account}-${insight.title}-${insight.detail}`} className="overview-intelligence-item" style={{ animationDelay: `${index * 70}ms` }}><span className="intelligence-category">{intelligenceCategoryLabels[insight.category]}</span><strong>{insight.title}</strong><p>{insight.account}: {insight.detail}</p></li>)}</ul> : <p className="intelligence-muted">No derived insights yet.</p>}</section>
-          <section className="intelligence-column overview-intelligence-column" aria-labelledby="attention-heading"><h3 id="attention-heading">What needs attention</h3>{getAttentionItems(intelligence, followUps).length > 0 ? <ul className="intelligence-attention-list">{getAttentionItems(intelligence, followUps).map((item, index: number) => <li key={`${item.title}-${item.action}`} className="overview-intelligence-item" style={{ animationDelay: `${index * 70}ms` }}><span className={`intelligence-level ${item.level.toLowerCase().replace(' ', '-')}`}>{item.level}</span><div><strong>{item.title}</strong><p>{item.reason}</p><button type="button" onClick={() => onNavigate(item.action)}>Review <span aria-hidden="true">→</span></button></div></li>)}</ul> : <p className="intelligence-muted">Nothing needs attention right now.</p>}</section>
+          <section className="intelligence-column overview-intelligence-column" aria-labelledby="attention-heading"><h3 id="attention-heading">What needs attention</h3>{getAttentionItems(intelligence, followUps).length > 0 ? <ul className="intelligence-attention-list">{getAttentionItems(intelligence, followUps).map((item, index: number) => <li key={`${item.title}-${item.action}`} className="overview-intelligence-item" style={{ animationDelay: `${index * 70}ms` }}><span className={`intelligence-level ${item.level.toLowerCase().replace(' ', '-')}`}>{item.level}</span><div><strong>{item.title}</strong><p>{item.reason}</p><button type="button" onClick={() => onNavigate(item.action)}>Review <AppIcon name="arrow-right" /></button></div></li>)}</ul> : <p className="intelligence-muted">Nothing needs attention right now.</p>}</section>
           <section className="intelligence-column overview-intelligence-column" aria-labelledby="next-heading"><h3 id="next-heading">What should happen next</h3>{intelligence.recommendations.length > 0 ? <ol className="intelligence-recommendation-list">{intelligence.recommendations.slice(0, 5).map((recommendation, index) => <li key={`${recommendation.title}-${recommendation.account ?? ''}`} className="overview-intelligence-item" style={{ animationDelay: `${index * 70}ms` }}><span>{String(index + 1).padStart(2, '0')}</span><div><strong>{recommendation.title}</strong><p>{recommendation.reason}</p></div></li>)}</ol> : <p className="intelligence-muted">Recommendations will appear as activity is captured.</p>}</section>
         </div>}
       </section>
@@ -410,13 +411,13 @@ export default function OverviewScreen({ selectedWeek, template, onNavigate }: O
 
       <div className="overview-grid overview-secondary-grid">
         <section className="overview-panel overview-followups-secondary">
-          <div className="overview-section-header overview-attention-header"><div><p className="eyebrow">Attention needed</p><h2>Priority Follow-ups</h2><div className="overview-attention-summary"><strong>{highPriorityFollowUps} High Priority</strong><span>{openFollowUps.length} Open</span></div></div><button className="overview-text-action" type="button" onClick={() => onNavigate('follow-ups')}>View All Follow-ups <span aria-hidden="true">→</span></button></div>
+          <div className="overview-section-header overview-attention-header"><div><p className="eyebrow">Follow-ups</p><h2>Priority Follow-ups</h2><div className="overview-attention-summary"><strong>{highPriorityFollowUps} High Priority</strong><span>{openFollowUps.length} Open</span></div></div><button className="overview-text-action" type="button" onClick={() => onNavigate('follow-ups')}>View All Follow-ups <AppIcon name="arrow-right" /></button></div>
           {priorityFollowUps.length > 0 ? <ul className="overview-follow-up-list">{priorityFollowUps.map((followUp) => <li key={followUp.id}><span className={followUp.priority === 'high' ? 'follow-up-priority high' : 'follow-up-priority'} aria-hidden="true" /> <div><strong>{followUp.task}</strong><small>{followUp.priority === 'high' ? 'High priority' : 'Normal priority'}{followUp.dueDate ? ` · Due ${formatDayDate(followUp.dueDate)}` : ''}</small></div></li>)}</ul> : <p className="overview-empty-copy">No open follow-ups. You&apos;re caught up.</p>}
         </section>
 
         <section className="overview-panel overview-execution-panel">
-          <SectionHeader eyebrow="Execution snapshot" title="Five-Day Progress" />
-          <div className="overview-day-list">{plan.days.map((day) => { const status = getStatus(day, activities); const dayActivityCount = getDayActivities(day, activities).length; return <button className="overview-day-row" type="button" key={day.id} onClick={() => onNavigate('daily-activity')}><span>{day.label.slice(0, 3).toUpperCase()}</span><strong>{formatDayDate(day.date)}</strong><div><em className={`day-status ${status.toLowerCase().replace(' ', '-')}`}>{status}</em><small>{dayActivityCount} activit{dayActivityCount === 1 ? 'y' : 'ies'}</small></div><b aria-hidden="true">→</b></button> })}</div>
+          <SectionHeader eyebrow="Progress" title="Seven-Day Progress" />
+          <div className="overview-day-list">{plan.days.map((day) => { const status = getStatus(day, activities); const dayActivityCount = getDayActivities(day, activities).length; return <button className="overview-day-row" type="button" key={day.id} onClick={() => onNavigate('daily-activity')}><span>{day.label.slice(0, 3).toUpperCase()}</span><strong>{formatDayDate(day.date)}</strong><div><em className={`day-status ${status.toLowerCase().replace(' ', '-')}`}>{status}</em><small>{dayActivityCount} activit{dayActivityCount === 1 ? 'y' : 'ies'}</small></div></button> })}</div>
         </section>
       </div>
 
@@ -426,8 +427,8 @@ export default function OverviewScreen({ selectedWeek, template, onNavigate }: O
       </section>
 
       <section className="overview-report-card">
-        <div><p className="eyebrow">Weekly report</p><h2>{reportReady ? `Your weekly ${template.id === 'project-management' ? 'project report' : 'field activity report'} is ready to review.` : 'Capture activity to prepare your weekly report.'}</h2><p>Activities captured: {activities.length} · Follow-ups: {followUps.length} · Readiness: {intelligence.reportReadiness.status}</p></div>
-        <div className="overview-report-actions"><button className="button button-secondary" type="button" onClick={() => onNavigate('report')}>Review Report</button><button className="button button-primary" type="button" onClick={handleExport} disabled={!reportReady || isExporting}>{isExporting ? 'Generating...' : 'Export Word Document'} <span aria-hidden="true">→</span></button></div>
+        <div><p className="eyebrow">Report</p><h2>{reportReady ? `Your weekly ${template.id === 'project-management' ? 'project report' : 'field activity report'} is ready to review.` : 'Capture activity to prepare your weekly report.'}</h2><p>Activities captured: {activities.length} · Follow-ups: {followUps.length} · Readiness: {intelligence.reportReadiness.status}</p></div>
+        <div className="overview-report-actions"><button className="button button-secondary" type="button" onClick={() => onNavigate('report')}>Review Report</button><button className="button button-primary" type="button" onClick={handleExport} disabled={!reportReady || isExporting}>{isExporting ? 'Generating...' : 'Export Word Document'}</button></div>
         {exportMessage && <p className="export-message" role="status">{exportMessage}</p>}
       </section>
     </main>
