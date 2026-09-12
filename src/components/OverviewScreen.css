@@ -50,14 +50,29 @@
 }
 
 .overview-workflow-rail {
+  --rail-line: rgba(169, 95, 57, 0.14);
   display: grid;
   gap: 18px;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 0 auto 24px;
   max-width: 1180px;
+  position: relative;
+}
+
+.overview-workflow-rail::before {
+  background: linear-gradient(90deg, transparent 0%, rgba(169, 95, 57, 0.18) 12%, rgba(169, 95, 57, 0.18) 88%, transparent 100%);
+  border-radius: 999px;
+  content: "";
+  height: 1px;
+  left: 6%;
+  position: absolute;
+  top: 34px;
+  width: 88%;
+  z-index: 0;
 }
 
 .overview-workflow-step {
+  --orb-delay: 0s;
   --step-index: 0;
   align-items: flex-start;
   border-radius: 14px;
@@ -65,11 +80,27 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  isolation: isolate;
   min-height: 92px;
+  overflow: hidden;
   padding: 10px 8px 12px;
   position: relative;
   text-decoration: none;
-  transition: color var(--motion-standard) var(--ease-standard), transform var(--motion-fast) var(--ease-standard), background-color var(--motion-standard) var(--ease-standard);
+  transition: color var(--motion-standard) var(--ease-standard), transform var(--motion-fast) var(--ease-standard), background-color var(--motion-standard) var(--ease-standard), box-shadow var(--motion-standard) var(--ease-standard);
+}
+
+.overview-workflow-step::before {
+  background: radial-gradient(circle at 35% 30%, rgba(169, 95, 57, 0.12), rgba(169, 95, 57, 0.04) 24%, rgba(169, 95, 57, 0.02) 38%, transparent 62%);
+  content: "";
+  height: 160%;
+  left: -12%;
+  opacity: 0.75;
+  pointer-events: none;
+  position: absolute;
+  top: -18%;
+  transform: translate3d(0, 0, 0) scale(0.96);
+  width: 140%;
+  z-index: 0;
 }
 
 .overview-workflow-step::after {
@@ -87,7 +118,33 @@
   width: 100%;
 }
 
-.overview-workflow-step > span {
+.overview-workflow-step > * {
+  position: relative;
+  z-index: 1;
+}
+
+.overview-workflow-orb {
+  --orb-duration: 6.5s;
+  --orb-delay: 0s;
+  animation: weekflowOrbFloat var(--orb-duration) ease-in-out infinite;
+  animation-delay: var(--orb-delay);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.92), rgba(196, 121, 82, 0.48) 24%, rgba(169, 95, 57, 0.18) 48%, rgba(169, 95, 57, 0) 70%);
+  border-radius: 50%;
+  bottom: 10%;
+  box-shadow: 0 0 28px rgba(169, 95, 57, 0.14), inset 0 0 18px rgba(255, 255, 255, 0.22);
+  filter: blur(12px);
+  height: 120px;
+  opacity: 0.72;
+  pointer-events: none;
+  position: absolute;
+  right: 10%;
+  transform: translate3d(-8px, 4px, 0) scale(1);
+  width: 120px;
+  will-change: transform, opacity;
+  z-index: 0;
+}
+
+.overview-workflow-step > span:not(.overview-workflow-orb) {
   align-items: center;
   border: 1px solid rgba(60, 64, 58, 0.12);
   border-radius: 999px;
@@ -123,9 +180,15 @@
 
 .overview-workflow-step.is-current {
   background: rgba(169, 95, 57, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(169, 95, 57, 0.06);
 }
 
-.overview-workflow-step.is-current > span {
+.overview-workflow-step.is-current::before,
+.overview-workflow-step.is-current .overview-workflow-orb {
+  opacity: 1;
+}
+
+.overview-workflow-step.is-current > span:not(.overview-workflow-orb) {
   background: rgba(169, 95, 57, 0.08);
   border-color: rgba(169, 95, 57, 0.18);
   color: var(--accent-dark);
@@ -144,7 +207,12 @@
   color: var(--ink-soft);
 }
 
-.overview-workflow-step.is-complete > span {
+.overview-workflow-step.is-complete::before,
+.overview-workflow-step.is-complete .overview-workflow-orb {
+  opacity: 0.68;
+}
+
+.overview-workflow-step.is-complete > span:not(.overview-workflow-orb) {
   background: rgba(47, 111, 82, 0.06);
   border-color: rgba(47, 111, 82, 0.18);
   color: var(--color-success);
@@ -156,10 +224,16 @@
 
 .overview-workflow-step:hover {
   background: rgba(60, 64, 58, 0.02);
+  box-shadow: 0 12px 24px rgba(37, 45, 37, 0.06);
   transform: translateY(-1px);
 }
 
-.overview-workflow-step:hover > span {
+.overview-workflow-step:hover::before,
+.overview-workflow-step:hover .overview-workflow-orb {
+  opacity: 1;
+}
+
+.overview-workflow-step:hover > span:not(.overview-workflow-orb) {
   transform: translateY(-1px);
 }
 
@@ -176,6 +250,29 @@
   100% {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes weekflowOrbFloat {
+  0% {
+    opacity: 0.5;
+    transform: translate3d(-10px, 8px, 0) scale(0.98) rotate(-6deg);
+  }
+  25% {
+    opacity: 0.8;
+    transform: translate3d(10px, -10px, 0) scale(1.07) rotate(0deg);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translate3d(16px, 2px, 0) scale(1.12) rotate(5deg);
+  }
+  75% {
+    opacity: 0.72;
+    transform: translate3d(-6px, 12px, 0) scale(1.04) rotate(-2deg);
+  }
+  100% {
+    opacity: 0.5;
+    transform: translate3d(-10px, 8px, 0) scale(0.98) rotate(-6deg);
   }
 }
 
@@ -259,6 +356,13 @@
     transform: scaleX(1) !important;
   }
 
+  .overview-workflow-orb,
+  .overview-workflow-step::before {
+    animation: none !important;
+    opacity: 0.58 !important;
+    transform: none !important;
+  }
+
   .overview-workflow-step,
   .overview-readiness,
   .overview-metric-card,
@@ -276,9 +380,18 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .overview-workflow-rail::before {
+    display: none;
+  }
+
   .overview-workflow-step {
     min-height: 78px;
     padding: 10px 8px 10px;
+  }
+
+  .overview-workflow-step::before,
+  .overview-workflow-orb {
+    opacity: 0.55;
   }
 
   .overview-workflow-step > span {
@@ -1109,6 +1222,94 @@
   .overview-intelligence-heading h2 { font-size: 23px; }
   .overview-section-header h2 { font-size: 20px; }
   .overview-today-stats strong { font-size: 21px; }
+}
+
+.overview-orientation { gap: clamp(28px, 5vw, 64px); }
+.overview-orientation-header { align-items: flex-end; min-height: 300px; }
+.overview-orientation-header .overview-week-copy { max-width: 720px; }
+.overview-orientation-header .overview-week-date { margin-top: var(--space-4); }
+.overview-orientation-header .overview-hero-heading { margin-top: var(--space-5); }
+.overview-orientation-header .overview-week-description { font-size: var(--text-body); max-width: 520px; }
+.overview-orientation-header .overview-week-side { align-items: flex-end; }
+.overview-orientation-pathway { margin: 0 auto; max-width: 1180px; width: 100%; }
+.overview-orientation-intro { margin-bottom: var(--space-6); text-align: center; }
+.overview-orientation-intro .eyebrow { color: var(--color-accent); margin-bottom: var(--space-3); }
+.overview-orientation-intro h2 { color: var(--color-text-primary); font-family: var(--font-heading); font-size: clamp(1.7rem, 3vw, 2.35rem); letter-spacing: -1px; margin: 0; }
+.overview-orientation .overview-workflow-rail { margin: 0; max-width: none; }
+.overview-orientation .overview-workflow-step { min-height: 116px; padding: var(--space-4) var(--space-3) var(--space-5); }
+.overview-orientation .overview-workflow-step.is-muted { opacity: .48; }
+.overview-orientation .overview-workflow-step.is-muted::after { display: none; }
+
+@media (max-width: 760px) {
+  .overview-orientation { gap: var(--space-6); }
+  .overview-orientation-header { min-height: 0; }
+  .overview-orientation-header .overview-week-date { font-size: 1rem; }
+  .overview-orientation-header .overview-hero-heading { font-size: 2.35rem; margin-top: var(--space-4); }
+  .overview-orientation-header .overview-week-description { font-size: var(--text-small); }
+  .overview-orientation-header .overview-week-side,
+  .overview-orientation-header .overview-week-side .button { width: 100%; }
+  .overview-orientation-intro { margin-bottom: var(--space-4); text-align: left; }
+  .overview-orientation-intro h2 { font-size: 1.7rem; }
+  .overview-orientation .overview-workflow-rail { grid-template-columns: 1fr; gap: var(--space-2); }
+  .overview-orientation .overview-workflow-step { align-items: center; display: grid; gap: var(--space-3); grid-template-columns: 36px minmax(82px, .45fr) 1fr; min-height: 0; padding: var(--space-3); }
+  .overview-orientation .overview-workflow-step > span { justify-content: center; }
+}
+
+.overview-dashboard.is-empty .overview-workflow-step.is-muted {
+  background: transparent;
+  opacity: .48;
+}
+
+.overview-dashboard.is-empty .overview-workflow-step.is-muted::after {
+  display: none;
+}
+
+.overview-dashboard.is-empty .overview-selected-day.is-secondary-empty {
+  background: transparent;
+  border-color: rgba(60, 64, 58, .08);
+  opacity: .72;
+}
+
+.overview-dashboard.is-empty .overview-intelligence-panel {
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 20px 22px;
+}
+
+.overview-dashboard.is-empty .overview-intelligence-heading .eyebrow {
+  color: var(--accent-dark);
+}
+
+.overview-dashboard.is-empty .overview-intelligence-heading h2 {
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.overview-dashboard.is-empty .overview-intelligence-heading p:last-child {
+  color: var(--muted);
+}
+
+.overview-dashboard.is-empty .overview-intelligence-heading .intelligence-status {
+  display: none;
+}
+
+.overview-dashboard.is-empty .intelligence-empty-actions {
+  gap: 16px;
+  display: flex;
+  margin-top: 14px;
+}
+
+.overview-dashboard.is-empty .intelligence-empty-actions .button {
+  background: transparent;
+  border: 0;
+  color: var(--accent-dark);
+  font-size: 12px;
+  padding: 3px 0;
+}
+
+.overview-dashboard.is-empty .intelligence-empty-actions .button-primary {
+  box-shadow: none;
 }
 
 /* Week-first command centre */

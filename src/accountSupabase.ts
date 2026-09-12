@@ -99,7 +99,10 @@ export const supabaseAccountProvider: AccountProvider = {
     const { data, error } = await getConfiguredSupabase().auth.signUp({
       email: input.email,
       password: input.password,
-      options: { data: { displayName: input.displayName } },
+      options: {
+        data: { displayName: input.displayName },
+        emailRedirectTo: new URL('/', window.location.origin).toString(),
+      },
     })
     if (error || !data.user) throw error ?? new Error('Supabase account creation did not return a user.')
     const profile = data.session ? await syncProfile(data.user, input.displayName) : toUserProfile(data.user, input.displayName)

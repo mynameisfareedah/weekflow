@@ -13,7 +13,6 @@ import { deriveWeeklyIntelligence } from './intelligence/intelligenceEngine'
 import {
   getCurrentWeekStart,
   getSelectedWeekStart,
-  getStoredWeekStarts,
   getWeekStartFromInput,
   loadWeeklyPlan,
   loadWeeklyPlanAsync,
@@ -22,9 +21,9 @@ import {
   toWeekInput,
 } from './storage/weeklyPlanStorage'
 import {
-  PLAN_CATEGORIES,
   type AccountObjective,
   type CommercialPriority,
+  type DayId,
   type DayPlan,
   type PlanCategory,
   type PlanItem,
@@ -32,14 +31,15 @@ import {
   type VirtualEngagementPlanItem,
   type WeeklyPlan,
 } from './types/weeklyPlan'
-import { exportReportWord, getFixedReportWeekLabel } from './utils/reportDocx'
+import { exportReportWord } from './utils/reportDocx'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from './config/templates'
+import { getReportHistoryEntry, loadReportHistoryEntries, type ReportHistoryEntry } from './storage/reportHistoryStorage'
 import { getSelectedTemplate } from './storage/templateStorage'
 import { getPlanningCategoryDescriptors, getPlanningCategoryItems, type PlanningCategoryDescriptor } from './planning/planningCategoryAdapter'
 import { getTemplateTerminology } from './config/templateTerminology'
 import { WEEK_DAY_IDS } from './utils/week'
 import { navigateTo } from './utils/navigation'
-import { createWorkspace, DEFAULT_ACCOUNT_ID, ensureFirstWorkspaceForOwner, getCurrentWorkspace, isWorkspaceNameTaken, loadWorkspaces, normalizeWorkspaceName, provisionWorkspaceInCloud, setCurrentWorkspaceId } from './storage/workspaceStorage'
+import { createWorkspace, DEFAULT_ACCOUNT_ID, ensureFirstWorkspaceForOwner, getCurrentWorkspace, getCurrentWorkspaceId, isWorkspaceNameTaken, loadWorkspaces, normalizeWorkspaceName, provisionWorkspaceInCloud, setCurrentWorkspaceId, setWorkspaceOwner } from './storage/workspaceStorage'
 import { getAvailableTemplates } from './config/templates'
 import { accountProvider, type AccountState, createAccount, getCurrentUser, requestPasswordReset, signIn, signOut, updatePassword } from './account'
 import { isSupabaseConfigured } from './lib/supabase'
@@ -301,7 +301,7 @@ function ForgotPasswordScreen() {
 
     setIsSubmitting(true)
     try {
-      await requestPasswordReset(normalizedEmail, `${window.location.origin}/reset-password`)
+      await requestPasswordReset(normalizedEmail, new URL('/reset-password', window.location.origin).toString())
       setSubmitted(true)
     } catch (error) {
       setErrorMessage(humanizeResetError(error))
@@ -472,6 +472,12 @@ function WorkspaceCreateDialog({
 
   const templates = getAvailableTemplates()
   const selectedTemplate = templates.find((template) => template.id === templateId) ?? templates[0]
+  const templateGroups = [
+    { label: 'Business & Operations', ids: ['field-sales', 'field-service', 'small-business', 'project-management'] },
+    { label: 'People & Impact', ids: ['ngo-community', 'education'] },
+    { label: 'Personal', ids: ['personal'] },
+    { label: 'Build Your Own', ids: ['custom'] },
+  ]
 
   return (
     <div className="workspace-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="create-workspace-title">
@@ -483,25 +489,34 @@ function WorkspaceCreateDialog({
           </div>
           <button type="button" className="workspace-modal-close" onClick={onClose} aria-label="Close create workspace dialog"><AppIcon name="close" /></button>
         </div>
+        <p className="workspace-modal-intro">Choose what you&apos;re using WeekFlow for.</p>
+        <div className="workspace-template-groups" aria-label="Workspace templates">
+          {templateGroups.map((group) => <section className="workspace-template-group" key={group.label} aria-labelledby={`workspace-template-group-${group.label.toLowerCase().replace(/[^a-z]+/g, '-')}`}>
+            <h3 id={`workspace-template-group-${group.label.toLowerCase().replace(/[^a-z]+/g, '-')}`}>{group.label}</h3>
+            <div className="workspace-template-options">
+              {group.ids.map((id) => {
+                const template = templates.find((candidate) => candidate.id === id)
+                if (!template) return null
+                const isSelected = template.id === selectedTemplate.id
+                return <button type="button" className={`workspace-template-option${isSelected ? ' is-selected' : ''}`} key={template.id} onClick={() => onTemplateChange(template.id)} aria-pressed={isSelected}>
+                  <span className="workspace-template-option-icon"><TemplateIcon templateId={template.id} /></span>
+                  <span className="workspace-template-option-copy"><strong>{template.name}</strong><span>{template.description}</span></span>
+                  {isSelected && <span className="workspace-template-option-check" aria-label="Selected"><AppIcon name="check" /></span>}
+                </button>
+              })}
+            </div>
+          </section>)}
+        </div>
         <label className="workspace-field">
-          <span>Workspace Name</span>
+          <span>Workspace name</span>
           <input
             value={workspaceName}
             onChange={(event) => onNameChange(event.target.value)}
-            placeholder="e.g. Franklin's Field Work"
-            aria-label="Workspace Name"
+            placeholder="My workspace"
+            aria-label="Workspace name"
             aria-invalid={Boolean(validationMessage)}
           />
           {validationMessage && <span className="workspace-field-error" role="alert">{validationMessage}</span>}
-        </label>
-        <label className="workspace-field">
-          <span>Template</span>
-          <select value={templateId} onChange={(event) => onTemplateChange(event.target.value)} aria-label="Workspace template">
-            {templates.map((template) => (
-              <option value={template.id} key={template.id}>{template.name}</option>
-            ))}
-          </select>
-          <span className="workspace-template-preview">{selectedTemplate.description}</span>
         </label>
         <div className="workspace-modal-actions">
           <button type="button" className="button button-secondary" onClick={onClose}>Cancel</button>
@@ -531,11 +546,13 @@ function AppNavigation({ activeScreen, templateName, onSwitchTemplate, onNavigat
 
 function WorkspaceHomeScreen({
   currentWorkspaceId,
+  selectedWeek,
   onOpenWorkspace,
   onCreateWorkspace,
   user,
 }: {
   currentWorkspaceId: string
+  selectedWeek: string
   onOpenWorkspace: (workspaceId: string) => void
   onCreateWorkspace: () => void
   user: UserProfile | null
@@ -547,10 +564,9 @@ function WorkspaceHomeScreen({
     return (
       <main className="workspace-home-screen">
         <div className="workspace-home-empty">
-            <p className="eyebrow">Your Workflows</p>
-          <h1>Your first workflow starts here</h1>
+          <h1>Your first workspace starts here</h1>
           <p>Create a workspace for the kind of work you want to organize.</p>
-          <button type="button" className="button button-primary" onClick={onCreateWorkspace}>+ Create New Workspace</button>
+          <button type="button" className="button button-primary" onClick={onCreateWorkspace}>+ New Workspace</button>
         </div>
       </main>
     )
@@ -559,9 +575,12 @@ function WorkspaceHomeScreen({
   return (
     <main className="workspace-home-screen">
       <div className="workspace-home-header">
-        <p className="eyebrow">Your Workflows</p>
         <h1>Welcome back, {welcomeName}! 👋</h1>
         <p>Your workspaces are ready. Choose one to continue, or create a new workspace for what’s next.</p>
+      </div>
+      <div className="workspace-home-section-heading">
+        <h2>Workspaces</h2>
+        <button type="button" className="button button-secondary" onClick={onCreateWorkspace}>New Workspace</button>
       </div>
       <div className="workspace-home-grid">
         {workspaces.map((workspace) => {
@@ -570,18 +589,19 @@ function WorkspaceHomeScreen({
 
           return (
             <article className={`workspace-home-card${isCurrent ? ' is-current' : ''}`} key={workspace.id}>
-              {isCurrent && <span className="workspace-home-badge">Current workspace</span>}
-              <span className="workspace-home-icon"><TemplateIcon templateId={workspace.templateId} /></span>
-              <h2>{workspace.name}</h2>
+              <div className="workspace-home-card-top">
+                <span className="workspace-home-icon"><TemplateIcon templateId={workspace.templateId} /></span>
+                {isCurrent && <span className="workspace-home-state">Selected workspace</span>}
+              </div>
+              <h3>{workspace.name}</h3>
               <p className="workspace-home-template">{template.name}</p>
-              <p className="workspace-home-description">{template.description}</p>
+              <span className="workspace-home-week">Week of {formatHeaderWeek(selectedWeek)}</span>
               <button type="button" className="button button-primary" onClick={() => onOpenWorkspace(workspace.id)}>
                 Open Workspace
               </button>
             </article>
           )
         })}
-        <button type="button" className="workspace-home-create" onClick={onCreateWorkspace}>+ Create New Workspace</button>
       </div>
     </main>
   )
@@ -707,33 +727,37 @@ function PlanCategory({
   )
 }
 
-function DayPlanSection({ day, onChange, template = FIELD_SALES_TEMPLATE }: { day: DayPlan; onChange: (day: DayPlan) => void; template?: WeekFlowTemplate }) {
+function DayPlanSection({ day, expanded, onToggle, onChange, template = FIELD_SALES_TEMPLATE }: { day: DayPlan; expanded: boolean; onToggle: () => void; onChange: (day: DayPlan) => void; template?: WeekFlowTemplate }) {
   function updateCategory(category: PlanCategory, items: PlanItem[]) {
     onChange({ ...day, categories: { ...day.categories, [category]: items } })
   }
 
   return (
-    <section className="day-plan" aria-labelledby={`${day.id}-heading`}>
-      <div className="day-heading">
+    <section className={`day-plan${expanded ? ' is-expanded' : ''}`} aria-labelledby={`${day.id}-heading`}>
+      <button className="day-heading" type="button" aria-expanded={expanded} aria-controls={`${day.id}-content`} onClick={onToggle}>
         <span className="day-index">{String(WEEK_DAY_IDS.indexOf(day.id) + 1).padStart(2, '0')}</span>
         <div>
           <h2 id={`${day.id}-heading`}>{day.label}</h2>
           <p>{formatDateLabel(day.date)}</p>
         </div>
+        <span className="day-toggle-indicator" aria-hidden="true">{expanded ? '-' : '+'}</span>
+      </button>
+      {expanded && <div className="day-plan-content" id={`${day.id}-content`}>
+        <div className="day-categories">
+          {getPlanningCategoryDescriptors(template).map((descriptor) => (
+            <PlanCategory
+              dayId={day.id}
+              descriptor={descriptor}
+              items={getPlanningCategoryItems(day, descriptor.key)}
+              key={descriptor.key}
+              onAdd={(text, itemId) => updateCategory(descriptor.key, [...getPlanningCategoryItems(day, descriptor.key), { id: itemId ?? crypto.randomUUID(), text }])}
+              onEdit={(itemId, text) => updateCategory(descriptor.key, getPlanningCategoryItems(day, descriptor.key).map((item) => item.id === itemId ? { ...item, text } : item))}
+              onDelete={(itemId) => updateCategory(descriptor.key, getPlanningCategoryItems(day, descriptor.key).filter((item) => item.id !== itemId))}
+            />
+          ))}
+        </div>
       </div>
-      <div className="day-categories">
-        {getPlanningCategoryDescriptors(template).map((descriptor) => (
-          <PlanCategory
-            dayId={day.id}
-            descriptor={descriptor}
-            items={getPlanningCategoryItems(day, descriptor.key)}
-            key={descriptor.key}
-            onAdd={(text, itemId) => updateCategory(descriptor.key, [...getPlanningCategoryItems(day, descriptor.key), { id: itemId ?? crypto.randomUUID(), text }])}
-            onEdit={(itemId, text) => updateCategory(descriptor.key, getPlanningCategoryItems(day, descriptor.key).map((item) => item.id === itemId ? { ...item, text } : item))}
-            onDelete={(itemId) => updateCategory(descriptor.key, getPlanningCategoryItems(day, descriptor.key).filter((item) => item.id !== itemId))}
-          />
-        ))}
-      </div>
+      }
     </section>
   )
 }
@@ -744,6 +768,7 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
   items,
   emptyText,
   placeholder,
+  compact = false,
   onChange,
 }: {
   title: string
@@ -751,6 +776,7 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
   items: T[]
   emptyText: string
   placeholder: string
+  compact?: boolean
   onChange: (items: T[]) => void
 }) {
   const [draft, setDraft] = useState('')
@@ -802,9 +828,9 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
             </li>
           ))}
         </ul>
-      ) : (
+      ) : !compact ? (
         <p className="weekly-plan-summary-empty">{emptyText}</p>
-      )}
+      ) : null}
       <form className="weekly-plan-summary-form" onSubmit={addItem}>
         <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={placeholder} aria-label={placeholder} />
         <button type="submit" aria-label={`Add ${title}`}>+ Add</button>
@@ -816,12 +842,13 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
 function WeeklyPlanVirtualEngagementSection({
   items,
   onChange,
-  title = 'Virtual Engagement Plan',
-  helperText = 'Map where you need to engage virtually, the key stakeholders and the purpose of the outreach.',
-  emptyText: _emptyText = 'No virtual engagements planned yet.',
-  addButtonText: _addButtonText = '+ Add engagement',
-  contactPlaceholder: _contactPlaceholder = 'Add priority contact',
-  objectivePlaceholder: _objectivePlaceholder = 'Describe the objective of this engagement',
+  title = 'Planned Activities',
+  helperText,
+  emptyText,
+  addButtonText,
+  compact = false,
+  contactPlaceholder = 'Add priority contact',
+  objectivePlaceholder = 'Describe the objective of this activity',
 }: {
   items: VirtualEngagementPlanItem[]
   onChange: (items: VirtualEngagementPlanItem[]) => void
@@ -829,9 +856,13 @@ function WeeklyPlanVirtualEngagementSection({
   helperText?: string
   emptyText?: string
   addButtonText?: string
+  compact?: boolean
   contactPlaceholder?: string
   objectivePlaceholder?: string
 }) {
+  const resolvedHelperText = helperText ?? `Plan your ${title.toLowerCase()} for the selected week.`
+  const resolvedEmptyText = emptyText ?? `No ${title.toLowerCase()} planned yet.`
+  const resolvedAddButtonText = addButtonText ?? `+ Add ${title.toLowerCase().replace(/s$/, '')}`
   const [contactDrafts, setContactDrafts] = useState<Record<string, string>>({})
 
   function updateItem(itemId: string, changes: Partial<VirtualEngagementPlanItem>) {
@@ -897,7 +928,7 @@ function WeeklyPlanVirtualEngagementSection({
         </div>
         <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
       </div>
-      <p className="weekly-plan-helper">{helperText}</p>
+      {!compact && <p className="weekly-plan-helper">{resolvedHelperText}</p>}
       {items.length > 0 ? (
         <div className="weekly-plan-card-stack">
           {items.map((item) => (
@@ -930,7 +961,7 @@ function WeeklyPlanVirtualEngagementSection({
                   <input
                     aria-label="Add priority contact"
                     value={contactDrafts[item.id] ?? ''}
-                    placeholder="Add customer contact"
+                          placeholder={contactPlaceholder}
                     onChange={(event) => setContactDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
                   />
                   <button type="button" onClick={() => addPriorityContact(item.id)}>Add</button>
@@ -940,18 +971,18 @@ function WeeklyPlanVirtualEngagementSection({
                 Objective
                 <textarea
                   value={item.objective}
-                  placeholder="Describe the objective of this maintenance task"
+                  placeholder={objectivePlaceholder}
                   onChange={(event) => updateItem(item.id, { objective: event.target.value })}
                 />
               </label>
             </div>
           ))}
         </div>
-      ) : (
-        <p className="weekly-plan-summary-empty">No preventive maintenance planned yet.</p>
-      )}
+      ) : !compact ? (
+        <p className="weekly-plan-summary-empty">{resolvedEmptyText}</p>
+      ) : null}
       <div className="weekly-plan-summary-form">
-        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add maintenance</button>
+        <button type="button" className="primary-inline-button" onClick={addItem}>{resolvedAddButtonText}</button>
       </div>
     </section>
   )
@@ -960,10 +991,11 @@ function WeeklyPlanVirtualEngagementSection({
 function WeeklyPlanAccountObjectiveSection({
   items,
   onChange,
-  title = 'Key Account-Specific Objectives',
-  helperText = 'Capture the specific account goals and the actions required for each key account.',
-  emptyText = 'No account-specific objectives captured yet.',
-  addButtonText = '+ Add account',
+  title = 'Work Area Objectives',
+  helperText,
+  emptyText,
+  addButtonText,
+  compact = false,
   accountPlaceholder = 'Account',
   objectivePlaceholder = 'Add objective',
 }: {
@@ -973,9 +1005,13 @@ function WeeklyPlanAccountObjectiveSection({
   helperText?: string
   emptyText?: string
   addButtonText?: string
+  compact?: boolean
   accountPlaceholder?: string
   objectivePlaceholder?: string
 }) {
+  const resolvedHelperText = helperText ?? `Capture ${title.toLowerCase()} for the selected week.`
+  const resolvedEmptyText = emptyText ?? `No ${title.toLowerCase()} captured yet.`
+  const resolvedAddButtonText = addButtonText ?? `+ Add ${title.toLowerCase().replace(/s$/, '')}`
   const [objectiveDrafts, setObjectiveDrafts] = useState<Record<string, string>>({})
   const [newItemId, setNewItemId] = useState<string | null>(null)
 
@@ -1030,7 +1066,7 @@ function WeeklyPlanAccountObjectiveSection({
         </div>
         <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
       </div>
-      <p className="weekly-plan-helper">{helperText}</p>
+      {!compact && <p className="weekly-plan-helper">{resolvedHelperText}</p>}
       {items.length > 0 ? (
         <div className="weekly-plan-card-stack">
           {items.map((item) => (
@@ -1070,11 +1106,11 @@ function WeeklyPlanAccountObjectiveSection({
             </div>
           ))}
         </div>
-      ) : (
-        <p className="weekly-plan-summary-empty">{emptyText}</p>
-      )}
+      ) : !compact ? (
+        <p className="weekly-plan-summary-empty">{resolvedEmptyText}</p>
+      ) : null}
       <div className="weekly-plan-summary-form">
-        <button type="button" className="primary-inline-button" onClick={addAccount}>{addButtonText}</button>
+        <button type="button" className="primary-inline-button" onClick={addAccount}>{resolvedAddButtonText}</button>
       </div>
     </section>
   )
@@ -1083,14 +1119,18 @@ function WeeklyPlanAccountObjectiveSection({
 function WeeklyPlanCommercialPrioritySection({
   items,
   onChange,
-  title = 'Commercial Priorities',
-  helperText = 'Capture the priorities that should keep projects moving this week.',
+  title = 'Priorities',
+  helperText,
+  compact = false,
 }: {
   items: CommercialPriority[]
   onChange: (items: CommercialPriority[]) => void
   title?: string
   helperText?: string
+  compact?: boolean
 }) {
+  const resolvedHelperText = helperText ?? `Capture the ${title.toLowerCase()} that matter this week.`
+  const resolvedAddButtonText = `+ Add ${title.toLowerCase().replace(/ies$/, 'y').replace(/s$/, '')}`
   function updateItem(itemId: string, updates: Partial<CommercialPriority>) {
     onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
   }
@@ -1122,7 +1162,7 @@ function WeeklyPlanCommercialPrioritySection({
         </div>
         <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
       </div>
-      <p className="weekly-plan-helper">{helperText}</p>
+      {!compact && <p className="weekly-plan-helper">{resolvedHelperText}</p>}
       {items.length > 0 ? (
         <div className="weekly-plan-card-stack">
           {items.map((item) => (
@@ -1159,11 +1199,11 @@ function WeeklyPlanCommercialPrioritySection({
             </div>
           ))}
         </div>
-      ) : (
+      ) : !compact ? (
         <p className="weekly-plan-summary-empty">No {title.toLowerCase()} captured yet.</p>
-      )}
+      ) : null}
       <div className="weekly-plan-summary-form">
-        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add issue</button>
+        <button type="button" className="primary-inline-button" onClick={addItem}>{resolvedAddButtonText}</button>
       </div>
     </section>
   )
@@ -1176,6 +1216,7 @@ function WeeklyPlanSuccessMeasureSection({
   helperText = 'Track the measurable indicators of success for the week, with optional target and category context.',
   emptyText = 'No success measures captured yet.',
   addButtonText = '+ Add measure',
+  compact = false,
 }: {
   items: SuccessMeasure[]
   onChange: (items: SuccessMeasure[]) => void
@@ -1183,6 +1224,7 @@ function WeeklyPlanSuccessMeasureSection({
   helperText?: string
   emptyText?: string
   addButtonText?: string
+  compact?: boolean
 }) {
   function updateItem(itemId: string, updates: Partial<SuccessMeasure>) {
     onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
@@ -1215,7 +1257,7 @@ function WeeklyPlanSuccessMeasureSection({
         </div>
         <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
       </div>
-      <p className="weekly-plan-helper">{helperText}</p>
+      {!compact && <p className="weekly-plan-helper">{helperText}</p>}
       {items.length > 0 ? (
         <div className="weekly-plan-card-stack">
           {items.map((item) => (
@@ -1261,9 +1303,9 @@ function WeeklyPlanSuccessMeasureSection({
             </div>
           ))}
         </div>
-      ) : (
+      ) : !compact ? (
         <p className="weekly-plan-summary-empty">{emptyText}</p>
-      )}
+      ) : null}
       <div className="weekly-plan-summary-form">
         <button type="button" className="primary-inline-button" onClick={addItem}>{addButtonText}</button>
       </div>
@@ -1273,9 +1315,19 @@ function WeeklyPlanSuccessMeasureSection({
 
 function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: WeekFlowTemplate }) {
   const terminology = getTemplateTerminology(template)
+  const planningCategories = getPlanningCategoryDescriptors(template)
+  const hasPlanningCategory = (category: PlanCategory) => planningCategories.some((descriptor) => descriptor.key === category)
+  const getPlanningCategoryLabel = (category: PlanCategory) => planningCategories.find((descriptor) => descriptor.key === category)?.label
   const [weekStart, setWeekStart] = useState(getSelectedWeekStart)
   const [plan, setPlan] = useState<WeeklyPlan>(() => loadWeeklyPlan(getSelectedWeekStart()))
   const [cloudStatus, setCloudStatus] = useState('')
+  const [expandedDayIds, setExpandedDayIds] = useState<DayId[]>([])
+  const hasPlanContent = plan.weeklyStrategicObjectives.some((item) => item.text.trim())
+    || plan.days.some((day) => Object.values(day.categories).some((items) => items.some((item) => item.text.trim())))
+    || plan.keyAccountObjectives.some((item) => item.account.trim() && item.objectives.some((objective) => objective.text.trim()))
+    || plan.commercialPriorities.some((item) => item.text.trim())
+    || plan.virtualEngagementPlan.some((item) => item.coverage.trim() || item.objective.trim() || item.priorityContacts.length > 0)
+    || plan.successMeasures.some((item) => item.text.trim())
   const planHydrated = useRef(false)
   const planIntelligence = useMemo(() => deriveWeeklyIntelligence({
     selectedWeek: weekStart,
@@ -1311,6 +1363,7 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     setSelectedWeekStart(nextWeekStart)
     setWeekStart(nextWeekStart)
     setPlan(loadWeeklyPlan(nextWeekStart))
+    setExpandedDayIds([])
     setCloudStatus('')
   }
 
@@ -1321,22 +1374,129 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     }))
   }
 
+  function toggleDay(dayId: DayId) {
+    setExpandedDayIds((current) => current.includes(dayId) ? current.filter((id) => id !== dayId) : [...current, dayId])
+  }
+
   return (
     <main className="weekly-plan-screen" id="weekly-plan">
       <div className="plan-page-heading">
         <div>
           <p className="eyebrow">Weekly Plan</p>
           <h1>Weekly Work Plan</h1>
-          <p className="plan-intro">Align weekly priorities, {terminology.accounts.toLowerCase()} and {terminology.activityPlural.toLowerCase()} for the selected week.</p>
-        </div>{cloudStatus && <span role="status">{cloudStatus}</span>}
+          <p className="plan-intro">{terminology.weeklyPlanIntro ?? `Plan your ${terminology.priorities.toLowerCase()}, ${terminology.accounts.toLowerCase()} and ${terminology.objectives.toLowerCase()} for the selected week.`}</p>
+          {!hasPlanContent && <p className="plan-first-run-guidance">Start by adding the priorities and work you want to move forward this week. Then use Daily Activity to record what actually happens.</p>}
+        </div>
         <div className="week-selector">
           <label htmlFor="reporting-week">Reporting week</label>
           <input id="reporting-week" type="week" value={toWeekInput(weekStart)} onChange={(event) => changeWeek(event.target.value)} />
-          <span>{formatWeekRange(weekStart)}</span>
+          <span role={cloudStatus ? 'status' : undefined}>{formatWeekRange(weekStart).replace(' - ', ' – ')}{cloudStatus ? ` · ${cloudStatus}` : ''}</span>
         </div>
       </div>
-      <section className="plan-coverage" aria-labelledby="plan-coverage-heading">
-        <div className="plan-coverage-heading"><div><p className="eyebrow">WeekFlow Intelligence</p><h2 id="plan-coverage-heading">Plan Coverage</h2></div><span>Derived from Daily Activity</span></div>
+      <div className="weekly-plan-top-level">
+        {hasPlanningCategory('primaryObjectives') && <WeeklyPlanTextListSection
+          title={template.id === 'project-management' ? 'Weekly Objectives' : terminology.objectives === 'Objectives' ? 'Weekly Strategic Objectives' : terminology.objectives}
+          summary={`${plan.weeklyStrategicObjectives.length} item${plan.weeklyStrategicObjectives.length === 1 ? '' : 's'}`}
+          items={plan.weeklyStrategicObjectives}
+          emptyText={template.id === 'project-management' ? 'No weekly objectives captured for this week yet.' : `No ${terminology.objectives.toLowerCase()} captured for this week yet.`}
+          placeholder={template.id === 'project-management' ? 'Add a weekly objective' : `Add ${terminology.objective.toLowerCase()}`}
+          compact
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, weeklyStrategicObjectives: items }))}
+        />}
+        {hasPlanningCategory('virtualEngagements') && template.id === 'field-service' && <WeeklyPlanVirtualEngagementSection
+          items={plan.virtualEngagementPlan}
+          title="Preventive Maintenance"
+          helperText="Plan preventive maintenance work, routine checks and scheduled service activity for the week."
+          emptyText="No preventive maintenance planned yet."
+          addButtonText="+ Add maintenance"
+          compact
+          contactPlaceholder="Add customer contact"
+          objectivePlaceholder="Describe the objective of this maintenance task"
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
+        />}
+        {hasPlanningCategory('accountObjectives') && template.id === 'field-service' && <WeeklyPlanAccountObjectiveSection
+          items={plan.keyAccountObjectives}
+          title="Work Orders / Jobs"
+          helperText="Capture the service jobs and work requests scheduled for the week."
+          emptyText="No service jobs captured yet."
+          addButtonText="+ Add job"
+          compact
+          accountPlaceholder="Site / service location"
+          objectivePlaceholder="Add service job"
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
+        />}
+        {hasPlanningCategory('virtualEngagements') && template.id === 'small-business' && <WeeklyPlanVirtualEngagementSection
+          items={plan.virtualEngagementPlan}
+          title="Leads / Opportunities"
+          helperText="Track potential customers, quotes, and sales opportunities that need attention this week."
+          emptyText="No leads or opportunities captured yet."
+          addButtonText="+ Add lead"
+          compact
+          contactPlaceholder="Add customer / client"
+          objectivePlaceholder="Describe the opportunity or follow-up needed"
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
+        />}
+        {hasPlanningCategory('accountObjectives') && template.id === 'small-business' && <WeeklyPlanAccountObjectiveSection
+          items={plan.keyAccountObjectives}
+          title="Orders / Sales"
+          helperText="Capture customers, commercial commitments, and sales work that needs attention this week."
+          emptyText="No orders or sales work captured yet."
+          addButtonText="+ Add order / sale"
+          compact
+          accountPlaceholder="Customer / client"
+          objectivePlaceholder="Add sales objective"
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
+        />}
+        {hasPlanningCategory('virtualEngagements') && template.id !== 'field-service' && template.id !== 'small-business' && <WeeklyPlanVirtualEngagementSection
+          items={plan.virtualEngagementPlan}
+          title={getPlanningCategoryLabel('virtualEngagements')}
+          helperText={template.id === 'project-management' ? 'Add the activities that matter this week.' : undefined}
+          emptyText={template.id === 'project-management' ? 'No key activities planned yet.' : undefined}
+          addButtonText={template.id === 'project-management' ? '+ Add key activity' : undefined}
+          compact
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
+        />}
+        {hasPlanningCategory('accountObjectives') && template.id !== 'field-service' && template.id !== 'small-business' && <WeeklyPlanAccountObjectiveSection
+          items={plan.keyAccountObjectives}
+          title={getPlanningCategoryLabel('accountObjectives')}
+          helperText={template.id === 'project-management' ? 'Add what needs to be delivered this week.' : undefined}
+          emptyText={template.id === 'project-management' ? 'No deliverables captured yet.' : undefined}
+          addButtonText={template.id === 'project-management' ? '+ Add deliverable' : undefined}
+          compact
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
+        />}
+        {hasPlanningCategory('commercialPriorities') && <WeeklyPlanCommercialPrioritySection
+          items={plan.commercialPriorities}
+          title={template.id === 'project-management' ? 'Priorities' : template.id === 'field-service' ? 'Priority Issues' : template.id === 'small-business' ? 'Business Priorities' : undefined}
+          helperText={template.id === 'project-management' ? 'Add the priorities that matter most.' : template.id === 'small-business' ? 'Capture the highest-priority business matters that need attention this week.' : template.id === 'field-service' ? 'Capture the service issues that need attention this week, with optional site and asset context.' : `Capture your ${terminology.priorities.toLowerCase()} for the selected week.`}
+          compact
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, commercialPriorities: items }))}
+        />}
+        {hasPlanningCategory('successMeasures') && <WeeklyPlanSuccessMeasureSection
+          items={plan.successMeasures}
+          title={template.id === 'field-service' ? 'Service Targets' : 'Success Measures'}
+          helperText={template.id === 'project-management' ? "Define how you'll measure progress this week." : template.id === 'field-service' ? 'Track the service goals and measurable targets for the week.' : 'Track the measurable indicators of success for the week, with optional target and category context.'}
+          emptyText={template.id === 'project-management' ? 'No success measures captured yet.' : template.id === 'field-service' ? 'No service targets captured yet.' : 'No success measures captured yet.'}
+          addButtonText={template.id === 'field-service' ? '+ Add target' : '+ Add measure'}
+          compact
+          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, successMeasures: items }))}
+        />}
+      </div>
+      <section className="daily-field-plan-section" aria-labelledby="daily-field-plan-heading">
+        <div className="weekly-plan-summary-header daily-plan-header">
+          <div>
+            <p className="eyebrow">Daily planning</p>
+            <h2 id="daily-field-plan-heading">Daily {terminology.activity} Plan</h2>
+          </div>
+          <span>Monday-Sunday</span>
+        </div>
+        <p className="weekly-plan-helper">{terminology.dailyPlanHelper ?? `Plan your ${terminology.priorities.toLowerCase()}, ${terminology.accounts.toLowerCase()} and ${terminology.objectives.toLowerCase()} for each day.`}</p>
+        <div className="days-list">
+          {plan.days.map((day) => <DayPlanSection day={day} key={day.id} expanded={expandedDayIds.includes(day.id)} onToggle={() => toggleDay(day.id)} onChange={updateDay} template={template} />)}
+        </div>
+      </section>
+      <details className="plan-coverage">
+        <summary className="plan-coverage-heading"><span><span className="eyebrow">Secondary review</span><strong id="plan-coverage-heading">Plan Coverage</strong></span><span>Derived from Daily Activity</span></summary>
         <div className="plan-coverage-days">{plan.days.map((day) => {
           const dayGaps = planIntelligence.planGaps.filter((gap) => gap.dayLabel === day.label)
           const plannedCount = day.categories.facilities.length + day.categories.virtualEngagements.length + day.categories.primaryObjectives.length + day.categories.accountObjectives.length + day.categories.commercialPriorities.length + day.categories.successMeasures.length
@@ -1344,103 +1504,9 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
           return <div className="plan-coverage-day" key={day.id}><div><strong>{day.label}</strong><span>{plannedCount === 0 ? 'No matchable plan items' : `${plannedCount} planned item${plannedCount === 1 ? '' : 's'}`}</span></div><em className={`coverage-status ${status.toLowerCase().replace(' ', '-')}`}>{status}</em></div>
         })}</div>
         {planIntelligence.planGaps.length > 0 && <ul className="plan-coverage-gaps">{planIntelligence.planGaps.filter((gap) => gap.status !== 'covered').slice(0, 5).map((gap) => <li key={`${gap.itemId}-${gap.dayLabel}`}><strong>{gap.item}</strong><span>{gap.status}</span><small>{gap.reason}</small></li>)}</ul>}
-      </section>
-      <div className="weekly-plan-top-level">
-        <WeeklyPlanTextListSection
-          title={template.id === 'project-management' ? 'Weekly Objectives' : terminology.objectives === 'Objectives' ? 'Weekly Strategic Objectives' : terminology.objectives}
-          summary={`${plan.weeklyStrategicObjectives.length} item${plan.weeklyStrategicObjectives.length === 1 ? '' : 's'}`}
-          items={plan.weeklyStrategicObjectives}
-          emptyText={template.id === 'project-management' ? 'No weekly objectives captured for this week yet.' : `No ${terminology.objectives.toLowerCase()} captured for this week yet.`}
-          placeholder={template.id === 'project-management' ? 'Add a weekly objective' : `Add ${terminology.objective.toLowerCase()}`}
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, weeklyStrategicObjectives: items }))}
-        />
-        {template.id === 'field-service' && <WeeklyPlanVirtualEngagementSection
-          items={plan.virtualEngagementPlan}
-          title="Preventive Maintenance"
-          helperText="Plan preventive maintenance work, routine checks and scheduled service activity for the week."
-          emptyText="No preventive maintenance planned yet."
-          addButtonText="+ Add maintenance"
-          contactPlaceholder="Add customer contact"
-          objectivePlaceholder="Describe the objective of this maintenance task"
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
-        />}
-        {template.id === 'field-service' && <WeeklyPlanAccountObjectiveSection
-          items={plan.keyAccountObjectives}
-          title="Work Orders / Jobs"
-          helperText="Capture the service jobs and work requests scheduled for the week."
-          emptyText="No service jobs captured yet."
-          addButtonText="+ Add job"
-          accountPlaceholder="Site / service location"
-          objectivePlaceholder="Add service job"
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
-        />}
-        {template.id === 'small-business' && <WeeklyPlanVirtualEngagementSection
-          items={plan.virtualEngagementPlan}
-          title="Leads / Opportunities"
-          helperText="Track potential customers, quotes, and sales opportunities that need attention this week."
-          emptyText="No leads or opportunities captured yet."
-          addButtonText="+ Add lead"
-          contactPlaceholder="Add customer / client"
-          objectivePlaceholder="Describe the opportunity or follow-up needed"
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
-        />}
-        {template.id === 'small-business' && <WeeklyPlanAccountObjectiveSection
-          items={plan.keyAccountObjectives}
-          title="Orders / Sales"
-          helperText="Capture customers, commercial commitments, and sales work that needs attention this week."
-          emptyText="No orders or sales work captured yet."
-          addButtonText="+ Add order / sale"
-          accountPlaceholder="Customer / client"
-          objectivePlaceholder="Add sales objective"
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
-        />}
-        {template.id !== 'field-service' && template.id !== 'project-management' && template.id !== 'small-business' && <WeeklyPlanVirtualEngagementSection
-          items={plan.virtualEngagementPlan}
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
-        />}
-        {template.id !== 'field-service' && template.id !== 'project-management' && template.id !== 'small-business' && <WeeklyPlanAccountObjectiveSection
-          items={plan.keyAccountObjectives}
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
-        />}
-        <WeeklyPlanCommercialPrioritySection
-          items={plan.commercialPriorities}
-          title={template.id === 'project-management' ? 'Priorities' : template.id === 'field-service' ? 'Priority Issues' : template.id === 'small-business' ? 'Business Priorities' : undefined}
-          helperText={template.id === 'small-business' ? 'Capture the highest-priority business matters that need attention this week.' : template.id === 'field-service' ? 'Capture the service issues that need attention this week, with optional site and asset context.' : 'Capture the priorities that should keep projects moving this week.'}
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, commercialPriorities: items }))}
-        />
-        <WeeklyPlanSuccessMeasureSection
-          items={plan.successMeasures}
-          title={template.id === 'field-service' ? 'Service Targets' : 'Success Measures'}
-          helperText={template.id === 'field-service' ? 'Track the service goals and measurable targets for the week.' : 'Track the measurable indicators of success for the week, with optional target and category context.'}
-          emptyText={template.id === 'field-service' ? 'No service targets captured yet.' : 'No success measures captured yet.'}
-          addButtonText={template.id === 'field-service' ? '+ Add target' : '+ Add measure'}
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, successMeasures: items }))}
-        />
-      </div>
-      <section className="daily-field-plan-section" aria-labelledby="daily-field-plan-heading">
-        <div className="weekly-plan-summary-header daily-plan-header">
-          <div>
-            <p className="eyebrow">Weekly Plan</p>
-            <h2 id="daily-field-plan-heading">Daily {terminology.activity} Plan</h2>
-          </div>
-          <span>Monday-Sunday</span>
-        </div>
-        <p className="weekly-plan-helper">Plan {terminology.accounts.toLowerCase()}, {terminology.people.toLowerCase()} and {terminology.objectives.toLowerCase()} for each working day.</p>
-        <div className="days-list">
-          {plan.days.map((day) => <DayPlanSection day={day} key={day.id} onChange={updateDay} template={template} />)}
-        </div>
-      </section>
+      </details>
     </main>
   )
-}
-
-function hasPlanData(plan: WeeklyPlan) {
-  return plan.days.some((day) => PLAN_CATEGORIES.some((category) => day.categories[category].length > 0))
-    || plan.weeklyStrategicObjectives.length > 0
-    || plan.virtualEngagementPlan.length > 0
-    || plan.keyAccountObjectives.length > 0
-    || plan.commercialPriorities.length > 0
-    || plan.successMeasures.length > 0
 }
 
 function getWeekYear(weekStart: string) {
@@ -1451,51 +1517,42 @@ function getWeekNumber(weekStart: string) {
   return toWeekInput(weekStart).split('-W')[1]
 }
 
-function ReportHistory({ selectedWeek, onSelectWeek, template = FIELD_SALES_TEMPLATE }: { selectedWeek: string; onSelectWeek: (weekStart: string) => void; template?: WeekFlowTemplate }) {
+function ReportHistory({ selectedWeek, onSelectWeek, onOpenReport, template = FIELD_SALES_TEMPLATE }: { selectedWeek: string; onSelectWeek: (weekStart: string) => void; onOpenReport: (report: ReportHistoryEntry) => void; template?: WeekFlowTemplate }) {
   const [exportingWeek, setExportingWeek] = useState<string | null>(null)
   const [exportMessage, setExportMessage] = useState('')
-  const reports = getStoredWeekStarts().map((weekStart) => {
-    const plan = loadWeeklyPlan(weekStart)
-    const activities = loadDailyActivities(weekStart)
-    const followUps = loadFollowUps(weekStart)
-    const intelligence = deriveWeeklyIntelligence({ selectedWeek: weekStart, plan, activities, followUps, template })
-    return {
-      weekStart,
-      plan,
-      activities,
-      followUps,
-      hasPlan: hasPlanData(plan),
-      hasActivities: activities.length > 0,
-      hasFollowUps: followUps.length > 0,
-      readiness: intelligence.reportReadiness,
-      completedFollowUps: followUps.filter((followUp) => followUp.status === 'completed').length,
-    }
-  }).filter((report) => report.hasPlan || report.hasActivities || report.hasFollowUps)
+  const currentWorkspaceId = getCurrentWorkspaceId()
+  const entries = loadReportHistoryEntries(currentWorkspaceId)
+
+  const historicalReports = entries
+    .filter((entry) => entry.weekKey !== selectedWeek)
+    .sort((left, right) => right.weekKey.localeCompare(left.weekKey))
+
   const currentWeek = getCurrentWeekStart()
-  const currentReport = reports.find((report) => report.weekStart === currentWeek)
-  const historicalReports = reports.filter((report) => report.weekStart !== currentWeek).sort((left, right) => right.weekStart.localeCompare(left.weekStart))
+  const currentReport = entries.find((entry) => entry.weekKey === currentWeek) ?? null
   const currentYear = new Date().getFullYear()
   const years = [...new Set([
-    ...historicalReports.map((report) => getWeekYear(report.weekStart)),
+    ...historicalReports.map((report) => getWeekYear(report.weekKey)),
     ...Array.from({ length: 11 }, (_, index) => currentYear - 5 + index),
   ])].sort((left, right) => right - left)
   const [selectedYear, setSelectedYear] = useState(getWeekYear(selectedWeek))
-  const filteredReports = historicalReports.filter((report) => getWeekYear(report.weekStart) === selectedYear)
+  const filteredReports = historicalReports.filter((report) => getWeekYear(report.weekKey) === selectedYear)
 
   function openWeek(weekStart: string) {
     onSelectWeek(weekStart)
     navigateTo('/weekly-plan')
   }
 
-  function readinessLabel(status: typeof reports[number]['readiness']['status']) {
+  function readinessLabel(status: 'ready' | 'review' | 'empty') {
     return status === 'ready' ? 'Ready to Review' : status === 'review' ? 'Needs Attention' : "Week Hasn't Started"
   }
 
-  function renderReport(report: typeof reports[number], current = false) {
-    return <article className={`report-history-item${current ? ' is-current' : ''}`} key={report.weekStart} role="listitem">
-      <div><strong>{current ? 'Current Week' : `Week ${getWeekNumber(report.weekStart)}`}</strong><span>{formatWeekRange(report.weekStart)}</span><small>{current ? 'Current reporting period' : 'Previous reporting period'}</small></div>
-      <div className="report-history-details"><span>{template.name}</span><strong className={`report-history-readiness is-${report.readiness.status}`}>{readinessLabel(report.readiness.status)}</strong><div className="report-history-status"><span>{report.activities.length} activit{report.activities.length === 1 ? 'y' : 'ies'}</span><span>{report.followUps.length} follow-ups</span><span>{report.completedFollowUps} completed</span></div></div>
-      <div className="report-history-actions"><button type="button" onClick={() => { onSelectWeek(report.weekStart); navigateTo('/report') }}>Open Report</button>{!current && <button type="button" onClick={() => openWeek(report.weekStart)}>Open Week</button>}<button type="button" onClick={() => exportHistoricalReport(report.weekStart)} disabled={exportingWeek !== null}>{exportingWeek === report.weekStart ? 'Exporting...' : 'Export Word'}</button></div>
+  function renderReport(report: typeof historicalReports[number], current = false) {
+    const readiness = deriveWeeklyIntelligence({ selectedWeek: report.weekKey, plan: report.plan, activities: report.activities, followUps: report.followUps, template }).reportReadiness
+    const statusLabel = readinessLabel(readiness.status)
+    return <article className={`report-history-item${current ? ' is-current' : ''}`} key={report.weekKey} role="listitem">
+      <div><strong>{current ? 'Current Week' : `Week ${getWeekNumber(report.weekKey)}`}</strong><span>{formatWeekRange(report.weekKey)}</span><small>{current ? 'Current reporting period' : `Generated ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(report.generatedAt))}`}</small></div>
+      <div className="report-history-details"><span>{report.template?.name ?? template.name}</span><strong className={`report-history-readiness is-${readiness.status}`}>{statusLabel}</strong><div className="report-history-status"><span>{report.activities.length} activit{report.activities.length === 1 ? 'y' : 'ies'}</span><span>{report.followUps.length} follow-ups</span><span>{report.followUps.filter((followUp) => followUp.status === 'completed').length} completed</span></div></div>
+      <div className="report-history-actions"><button type="button" onClick={() => { onSelectWeek(report.weekKey); onOpenReport(report) }}>Open Report</button>{!current && <button type="button" onClick={() => openWeek(report.weekKey)}>Open Week</button>}<button type="button" onClick={() => exportHistoricalReport(report.weekKey)} disabled={exportingWeek !== null}>{exportingWeek === report.weekKey ? 'Exporting...' : 'Export Word'}</button></div>
     </article>
   }
 
@@ -1503,16 +1560,9 @@ function ReportHistory({ selectedWeek, onSelectWeek, template = FIELD_SALES_TEMP
     setExportingWeek(weekStart)
     setExportMessage('')
     try {
-      const report = reports.find((item) => item.weekStart === weekStart)
-      if (!report) return
-      const result = await exportReportWord({
-        weekKey: weekStart,
-        weekLabel: getFixedReportWeekLabel(weekStart),
-        plan: report.plan,
-        activities: report.activities,
-        followUps: report.followUps,
-        template,
-      })
+      const snapshot = getReportHistoryEntry(weekStart, currentWorkspaceId)
+      if (!snapshot) return
+      const result = await exportReportWord(snapshot)
       setExportMessage(`Downloaded ${result.filename}`)
     } catch {
       setExportMessage('Word export could not be completed. Please try again.')
@@ -1521,6 +1571,8 @@ function ReportHistory({ selectedWeek, onSelectWeek, template = FIELD_SALES_TEMP
     }
   }
 
+  const hasHistory = currentReport || filteredReports.length > 0
+
   return (
     <section className="report-history" aria-labelledby="report-history-heading">
       <div className="section-heading">
@@ -1528,28 +1580,38 @@ function ReportHistory({ selectedWeek, onSelectWeek, template = FIELD_SALES_TEMP
           <p className="eyebrow">Report History</p>
           <h2 id="report-history-heading">Report History</h2>
         </div>
-        <p>Reopen a saved week or export its report again.</p>
+        <p>Review reports from previous weeks and keep track of your work over time.</p>
       </div>
-      <label className="history-year-selector" htmlFor="history-year">Year
+      {hasHistory && <label className="history-year-selector" htmlFor="history-year">Year
         <select id="history-year" value={selectedYear} onChange={(event) => setSelectedYear(Number(event.target.value))}>
           {years.map((year) => <option value={year} key={year}>{year}</option>)}
         </select>
-      </label>
-      {currentReport && <div className="report-history-current" aria-label="Current reporting week"><div className="report-history-list" role="list">{renderReport(currentReport, true)}</div></div>}
-      {filteredReports.length > 0 ? <div className="report-history-list" role="list">{filteredReports.map((report) => renderReport(report))}</div> : <p className="report-history-empty">No previous reports yet. Completed weekly activity will appear here.</p>}
+      </label>}
+      {currentReport ? <div className="report-history-current" aria-label="Current reporting week"><div className="report-history-list" role="list">{renderReport(currentReport, true)}</div></div> : null}
+      {filteredReports.length > 0 ? <div className="report-history-list" role="list">{filteredReports.map((report) => renderReport(report))}</div> : !hasHistory ? <div className="report-history-empty-state"><h3>No reports yet</h3><p>Generate your first weekly report and it will appear here.</p><button className="button button-primary" type="button" onClick={() => navigateTo('/report')}>Go to Generate Report</button></div> : <p className="report-history-empty">No previous reports yet. Completed weekly activity will appear here.</p>}
       {exportMessage && <p className="export-message" role="status">{exportMessage}</p>}
     </section>
   )
 }
 
-function ReportHistoryScreen({ selectedWeek, onSelectWeek, template = FIELD_SALES_TEMPLATE }: { selectedWeek: string; onSelectWeek: (weekStart: string) => void; template?: WeekFlowTemplate }) {
-  return <main className="report-history-screen"><ReportHistory selectedWeek={selectedWeek} onSelectWeek={onSelectWeek} template={template} /></main>
+function ReportHistoryScreen({ selectedWeek, onSelectWeek, onOpenReport, template = FIELD_SALES_TEMPLATE }: { selectedWeek: string; onSelectWeek: (weekStart: string) => void; onOpenReport: (report: ReportHistoryEntry) => void; template?: WeekFlowTemplate }) {
+  return <main className="report-history-screen"><ReportHistory selectedWeek={selectedWeek} onSelectWeek={onSelectWeek} onOpenReport={onOpenReport} template={template} /></main>
+}
+
+function getHistoricalReportWeek() {
+  const week = new URLSearchParams(window.location.search).get('historyWeek')
+  return week && /^\d{4}-\d{2}-\d{2}$/.test(week) ? week : null
 }
 
 function App() {
   const [accountState, setAccountState] = useState<AccountState>(() => isSupabaseConfigured ? { status: 'loading', user: null } : { status: 'local-demo', user: null })
   const accountStatusRef = useRef<AccountState['status']>(isSupabaseConfigured ? 'loading' : 'local-demo')
   const [activeScreen, setActiveScreen] = useState(getInitialScreen)
+  const [historicalReportWeek, setHistoricalReportWeek] = useState(getHistoricalReportWeek)
+  const [historicalReportSnapshot, setHistoricalReportSnapshot] = useState<ReportHistoryEntry | null>(() => {
+    const week = getHistoricalReportWeek()
+    return week ? getReportHistoryEntry(week, getCurrentWorkspaceId()) : null
+  })
   const [selectedWeek, setSelectedWeek] = useState(getSelectedWeekStart)
   const [selectedTemplate, setSelectedTemplate] = useState(getSelectedTemplate)
   const [currentWorkspace, setCurrentWorkspace] = useState(getCurrentWorkspace)
@@ -1563,10 +1625,12 @@ function App() {
   const [navigationOpen, setNavigationOpen] = useState(false)
   const [workspaceInitializationError, setWorkspaceInitializationError] = useState('')
   const [workspaceInitializationPending, setWorkspaceInitializationPending] = useState(false)
+  const [workspaceReadyOwnerId, setWorkspaceReadyOwnerId] = useState<string | null>(null)
   const initializedWorkspaceOwnersRef = useRef(new Map<string, Promise<void>>())
 
   async function initializeAuthenticatedWorkspace(user: UserProfile) {
     setWorkspaceInitializationPending(true)
+    setWorkspaceReadyOwnerId(null)
     const existingInitialization = initializedWorkspaceOwnersRef.current.get(user.id)
     if (existingInitialization) return existingInitialization
 
@@ -1578,12 +1642,14 @@ function App() {
       setCurrentWorkspace(provisionedWorkspace)
       setSelectedTemplate(getSelectedTemplate())
       setSelectedWeek(getSelectedWeekStart())
+      setWorkspaceReadyOwnerId(user.id)
     })().catch((error) => {
       initializedWorkspaceOwnersRef.current.delete(user.id)
       setWorkspaceInitializationError(error instanceof Error ? error.message : 'Workspace setup could not be completed. Your local workspace is still available.')
       setCurrentWorkspace(getCurrentWorkspace())
       setSelectedTemplate(getSelectedTemplate())
       setSelectedWeek(getSelectedWeekStart())
+      setWorkspaceReadyOwnerId(user.id)
     }).finally(() => {
       setWorkspaceInitializationPending(false)
     })
@@ -1597,6 +1663,8 @@ function App() {
     getCurrentUser()
       .then((user) => {
         if (active) {
+          setWorkspaceOwner(user?.id ?? null)
+          setWorkspaceReadyOwnerId(null)
           const nextState: AccountState = user ? { status: 'authenticated', user } : { status: 'unauthenticated', user: null }
           accountStatusRef.current = nextState.status
           setAccountState(nextState)
@@ -1605,6 +1673,8 @@ function App() {
       })
       .catch(() => {
         if (active) {
+          setWorkspaceOwner(null)
+          setWorkspaceReadyOwnerId(null)
           accountStatusRef.current = 'unauthenticated'
           setAccountState({ status: 'unauthenticated', user: null })
         }
@@ -1613,6 +1683,9 @@ function App() {
       if (!active) return
       const previousStatus = accountStatusRef.current
       accountStatusRef.current = state.status
+      if (state.status !== 'authenticated' || previousStatus !== 'authenticated') setWorkspaceReadyOwnerId(null)
+      if (state.status !== 'authenticated') setWorkspaceOwner(null)
+      else setWorkspaceOwner(state.user.id)
       setAccountState(state)
       if (state.status === 'authenticated' && previousStatus === 'unauthenticated') {
         if (window.location.pathname !== '/reset-password') {
@@ -1655,7 +1728,12 @@ function App() {
       handleOldHashRoutes()
     }
 
-    const handleLocationChange = () => setActiveScreen(getScreenFromPath())
+    const handleLocationChange = () => {
+      const historicalWeek = getHistoricalReportWeek()
+      setActiveScreen(getScreenFromPath())
+      setHistoricalReportWeek(historicalWeek)
+      setHistoricalReportSnapshot(historicalWeek ? getReportHistoryEntry(historicalWeek, getCurrentWorkspaceId()) : null)
+    }
     const handleTemplateChange = () => setSelectedTemplate(getSelectedTemplate())
     const handleWeekChange = (event: Event) => {
       const weekStart = (event as CustomEvent<string>).detail
@@ -1700,6 +1778,8 @@ function App() {
     setCurrentWorkspace(getCurrentWorkspace())
     setSelectedWeek(getSelectedWeekStart())
     setSelectedTemplate(getSelectedTemplate())
+    setHistoricalReportWeek(null)
+    setHistoricalReportSnapshot(null)
     setWorkspaceMenuOpen(false)
   }
 
@@ -1741,6 +1821,8 @@ function App() {
   async function handleSignOut() {
     try {
       await signOut()
+      setWorkspaceOwner(null)
+      setWorkspaceReadyOwnerId(null)
       setAccountState({ status: 'unauthenticated', user: null })
       navigateTo('/')
     } catch {
@@ -1750,7 +1832,7 @@ function App() {
 
   if (window.location.pathname === '/forgot-password') return <ForgotPasswordScreen />
   if (window.location.pathname === '/reset-password') return <ResetPasswordScreen />
-  if (accountState.status === 'loading' || workspaceInitializationPending) return <AuthLoadingScreen />
+  if (accountState.status === 'loading' || workspaceInitializationPending || (accountState.status === 'authenticated' && workspaceReadyOwnerId !== accountState.user.id)) return <AuthLoadingScreen />
   if (accountState.status === 'unauthenticated') {
     if (window.location.pathname === '/') return <PublicLandingScreen onSignIn={() => navigateTo('/sign-in')} onCreateAccount={() => navigateTo('/sign-up')} />
     return <AuthenticationScreen initialMode={window.location.pathname === '/sign-up' ? 'signup' : 'signin'} />
@@ -1804,13 +1886,13 @@ function App() {
       <div className="app-body">
         <AppNavigation activeScreen={activeScreen} templateName={selectedTemplate.name} onSwitchTemplate={openTemplateSelection} onNavigate={navigateTo} collapsed={navigationCollapsed} mobileOpen={navigationOpen} onToggleCollapse={() => setNavigationCollapsed((current) => !current)} onClose={() => setNavigationOpen(false)} />
         {navigationOpen && <button className="navigation-overlay" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />}
-        {activeScreen === 'profile' ? <ProfileSettingsScreen user={accountState.status === 'authenticated' ? accountState.user : { id: '', displayName: '', email: '', createdAt: '', updatedAt: '' }} workspaces={loadWorkspaces()} currentWorkspaceId={currentWorkspace.id} onProfileUpdated={(profile) => setAccountState((state) => state.status === 'authenticated' ? { ...state, user: profile } : state)} onWorkspaceSelected={selectWorkspace} /> : activeScreen === 'workspaces' ? <WorkspaceHomeScreen user={accountState.status === 'authenticated' ? accountState.user : null} currentWorkspaceId={currentWorkspace.id} onOpenWorkspace={(workspaceId) => { selectWorkspace(workspaceId); navigateTo('/') }} onCreateWorkspace={() => {
+        {activeScreen === 'profile' ? <ProfileSettingsScreen user={accountState.status === 'authenticated' ? accountState.user : { id: '', displayName: '', email: '', createdAt: '', updatedAt: '' }} workspaces={loadWorkspaces()} currentWorkspaceId={currentWorkspace.id} onProfileUpdated={(profile) => setAccountState((state) => state.status === 'authenticated' ? { ...state, user: profile } : state)} onWorkspaceSelected={selectWorkspace} onSignOut={handleSignOut} /> : activeScreen === 'workspaces' ? <WorkspaceHomeScreen user={accountState.status === 'authenticated' ? accountState.user : null} currentWorkspaceId={currentWorkspace.id} selectedWeek={selectedWeek} onOpenWorkspace={(workspaceId) => { selectWorkspace(workspaceId); navigateTo('/') }} onCreateWorkspace={() => {
           setWorkspaceCreateReturnPath('/workspaces')
           setWorkspaceCreateValidation('')
           setNewWorkspaceName('')
           setNewWorkspaceTemplateId('field-sales')
           setShowCreateWorkspace(true)
-        }} /> : activeScreen === 'template-selection' ? <TemplateSelectionScreen onSelect={completeTemplateSelection} /> : activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={`${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={`${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'report' ? <GenerateReportScreen key={`${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} template={selectedTemplate} /> : <OverviewScreen selectedWeek={selectedWeek} template={selectedTemplate} onNavigate={(screen) => { navigateTo(`/${screen === 'overview' ? '' : screen}`) }} />}
+        }} /> : activeScreen === 'template-selection' ? <TemplateSelectionScreen onSelect={completeTemplateSelection} /> : activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={`${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={`${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'report' ? historicalReportWeek && !historicalReportSnapshot ? <main className="generate-report-screen"><section className="report-readiness report-readiness-review" aria-label="Historical report unavailable"><h1>Historical report unavailable</h1><p>The saved report snapshot for this workspace and week could not be found.</p><a className="button button-secondary" href="/report-history" onClick={(event) => { event.preventDefault(); navigateTo('/report-history') }}>Back to Report History</a></section></main> : <GenerateReportScreen key={`${selectedWeek}-${selectedTemplate.id}-${historicalReportWeek ?? 'live'}`} template={historicalReportSnapshot?.template ?? selectedTemplate} historicalSnapshot={historicalReportSnapshot} /> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} onOpenReport={(report) => { setHistoricalReportWeek(report.weekKey); setHistoricalReportSnapshot(report); navigateTo(`/report?historyWeek=${encodeURIComponent(report.weekKey)}`) }} template={selectedTemplate} /> : <OverviewScreen selectedWeek={selectedWeek} template={selectedTemplate} workspaceName={currentWorkspace.name} onNavigate={(screen) => { navigateTo(`/${screen === 'overview' ? '' : screen}`) }} />}
       </div>
     </div>
   )

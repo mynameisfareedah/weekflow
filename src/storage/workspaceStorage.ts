@@ -9,6 +9,16 @@ export const DEFAULT_WORKSPACE_ID = 'default-workspace'
 export const DEFAULT_WORKSPACE_NAME = 'Default workspace'
 export const DEFAULT_ACCOUNT_ID = 'default-user'
 
+let activeWorkspaceOwnerId: string | null = null
+
+export function setWorkspaceOwner(ownerId: string | null) {
+  activeWorkspaceOwnerId = ownerId?.trim() || null
+}
+
+function getOwnerStorageKey(key: string) {
+  return activeWorkspaceOwnerId ? `${key}:${activeWorkspaceOwnerId}` : key
+}
+
 function createTimestamp() {
   return new Date().toISOString()
 }
@@ -61,7 +71,7 @@ export function isWorkspaceNameTaken(name: string, excludeWorkspaceId?: string) 
 
 export function saveWorkspaces(workspaces: Workspace[]) {
   try {
-    window.localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces))
+    window.localStorage.setItem(getOwnerStorageKey(WORKSPACES_STORAGE_KEY), JSON.stringify(workspaces))
   } catch {
     // Storage can be unavailable in private browsing or restricted environments.
   }
@@ -69,7 +79,7 @@ export function saveWorkspaces(workspaces: Workspace[]) {
 
 export function loadWorkspaces(): Workspace[] {
   try {
-    const saved = window.localStorage.getItem(WORKSPACES_STORAGE_KEY)
+    const saved = window.localStorage.getItem(getOwnerStorageKey(WORKSPACES_STORAGE_KEY))
     if (!saved) {
       const defaultWorkspace = createDefaultWorkspace()
       saveWorkspaces([defaultWorkspace])
@@ -112,7 +122,7 @@ export function getWorkspaceById(workspaceId: string | null | undefined) {
 }
 
 export function getCurrentWorkspaceId() {
-  const storedId = window.localStorage.getItem(CURRENT_WORKSPACE_STORAGE_KEY)
+  const storedId = window.localStorage.getItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY))
   const workspaces = loadWorkspaces()
   const selectedWorkspace = storedId ? workspaces.find((workspace) => workspace.id === storedId) : undefined
   const fallbackWorkspace = selectedWorkspace ?? workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID) ?? workspaces[0]
@@ -120,12 +130,12 @@ export function getCurrentWorkspaceId() {
   if (!fallbackWorkspace) {
     const defaultWorkspace = createDefaultWorkspace()
     saveWorkspaces([defaultWorkspace])
-    window.localStorage.setItem(CURRENT_WORKSPACE_STORAGE_KEY, defaultWorkspace.id)
+    window.localStorage.setItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY), defaultWorkspace.id)
     return defaultWorkspace.id
   }
 
   if (storedId !== fallbackWorkspace.id) {
-    window.localStorage.setItem(CURRENT_WORKSPACE_STORAGE_KEY, fallbackWorkspace.id)
+    window.localStorage.setItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY), fallbackWorkspace.id)
   }
 
   return fallbackWorkspace.id
@@ -135,7 +145,7 @@ export function setCurrentWorkspaceId(workspaceId: string) {
   const workspace = getWorkspaceById(workspaceId)
   if (!workspace) return false
   try {
-    window.localStorage.setItem(CURRENT_WORKSPACE_STORAGE_KEY, workspace.id)
+    window.localStorage.setItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY), workspace.id)
     window.dispatchEvent(new CustomEvent('weekflow-workspace-change', { detail: workspace.id }))
     return true
   } catch {
@@ -199,8 +209,9 @@ export async function ensureFirstWorkspaceForOwner(ownerId: string, defaultName 
   const preserveCurrentWorkspace = currentWorkspace.ownerId === ownerId && !currentWorkspace.archived
   const existingOwnedWorkspace = workspaces.find((workspace) => workspace.ownerId === ownerId)
   if (existingOwnedWorkspace?.cloudId) {
-    if (!preserveCurrentWorkspace) setCurrentWorkspaceId(existingOwnedWorkspace.id)
-    return existingOwnedWorkspace
+    const workspaceToUse = preserveCurrentWorkspace ? currentWorkspace : existingOwnedWorkspace
+    if (!preserveCurrentWorkspace) setCurrentWorkspaceId(workspaceToUse.id)
+    return workspaceToUse
   }
 
   if (supabase) {
@@ -233,8 +244,9 @@ export async function ensureFirstWorkspaceForOwner(ownerId: string, defaultName 
   }
 
   if (existingOwnedWorkspace) {
-    if (!preserveCurrentWorkspace) setCurrentWorkspaceId(existingOwnedWorkspace.id)
-    return existingOwnedWorkspace
+    const workspaceToUse = preserveCurrentWorkspace ? currentWorkspace : existingOwnedWorkspace
+    if (!preserveCurrentWorkspace) setCurrentWorkspaceId(workspaceToUse.id)
+    return workspaceToUse
   }
 
   const localDefaultWorkspace = workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID && workspace.ownerId === DEFAULT_ACCOUNT_ID)
