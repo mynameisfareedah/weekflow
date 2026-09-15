@@ -15,6 +15,35 @@ export function setWorkspaceOwner(ownerId: string | null) {
   activeWorkspaceOwnerId = ownerId?.trim() || null
 }
 
+export function clearWorkspaceOwnerLocalData(ownerId: string) {
+  const ownerKey = (key: string) => `${key}:${ownerId}`
+  let workspaceIds: string[] = []
+  try {
+    const stored = window.localStorage.getItem(ownerKey(WORKSPACES_STORAGE_KEY))
+    const parsed: unknown = stored ? JSON.parse(stored) : []
+    if (Array.isArray(parsed)) workspaceIds = parsed.flatMap((workspace) => typeof workspace?.id === 'string' ? [workspace.id] : [])
+  } catch {
+    // Continue removing the owner-scoped registry even if its contents are invalid.
+  }
+
+  const workspacePrefixes = workspaceIds.flatMap((workspaceId) => [
+    `weekflow-weekly-plan:${workspaceId}:`,
+    `weekflow-daily-activities:${workspaceId}:`,
+    `weekflow-follow-ups:${workspaceId}:`,
+    `weekflow-smart-start:${workspaceId}:`,
+    `weekflow-report-history:${workspaceId}`,
+    `weekflow-template:${workspaceId}`,
+    `weekflow-selected-week:${workspaceId}`,
+    `weekflow-week-selection-source:${workspaceId}`,
+  ])
+  for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+    const key = window.localStorage.key(index)
+    if (key && (key === ownerKey(WORKSPACES_STORAGE_KEY) || key === ownerKey(CURRENT_WORKSPACE_STORAGE_KEY) || workspacePrefixes.some((prefix) => key.startsWith(prefix)))) {
+      window.localStorage.removeItem(key)
+    }
+  }
+}
+
 function getOwnerStorageKey(key: string) {
   return activeWorkspaceOwnerId ? `${key}:${activeWorkspaceOwnerId}` : key
 }
@@ -94,14 +123,10 @@ export function loadWorkspaces(): Workspace[] {
     }
 
     const workspaces = parsed.map(normalizeWorkspace).filter((workspace): workspace is Workspace => workspace !== null)
-    if (workspaces.length === 0) {
-      const defaultWorkspace = createDefaultWorkspace()
-      saveWorkspaces([defaultWorkspace])
-      return [defaultWorkspace]
-    }
+    if (workspaces.length === 0) return []
 
     const hasDefaultWorkspace = workspaces.some((workspace) => workspace.id === DEFAULT_WORKSPACE_ID)
-    if (!hasDefaultWorkspace) {
+    if (!hasDefaultWorkspace && !activeWorkspaceOwnerId) {
       const defaultWorkspace = createDefaultWorkspace(workspaces[0]?.templateId ?? 'field-sales')
       const nextWorkspaces = [defaultWorkspace, ...workspaces]
       saveWorkspaces(nextWorkspaces)
@@ -124,15 +149,12 @@ export function getWorkspaceById(workspaceId: string | null | undefined) {
 export function getCurrentWorkspaceId() {
   const storedId = window.localStorage.getItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY))
   const workspaces = loadWorkspaces()
+  if (workspaces.length === 0) {
+    window.localStorage.removeItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY))
+    return null
+  }
   const selectedWorkspace = storedId ? workspaces.find((workspace) => workspace.id === storedId) : undefined
   const fallbackWorkspace = selectedWorkspace ?? workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID) ?? workspaces[0]
-
-  if (!fallbackWorkspace) {
-    const defaultWorkspace = createDefaultWorkspace()
-    saveWorkspaces([defaultWorkspace])
-    window.localStorage.setItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY), defaultWorkspace.id)
-    return defaultWorkspace.id
-  }
 
   if (storedId !== fallbackWorkspace.id) {
     window.localStorage.setItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY), fallbackWorkspace.id)
@@ -153,8 +175,89 @@ export function setCurrentWorkspaceId(workspaceId: string) {
   }
 }
 
+function removeWorkspaceLocalData(workspaceIds: string[]) {
+  const localPrefixes = workspaceIds.flatMap((workspaceId) => [
+    `weekflow-weekly-plan:${workspaceId}:`,
+    `weekflow-daily-activities:${workspaceId}:`,
+    `weekflow-follow-ups:${workspaceId}:`,
+    `weekflow-smart-start:${workspaceId}:`,
+    `weekflow-report-history:${workspaceId}`,
+    `weekflow-template:${workspaceId}`,
+    `weekflow-selected-week:${workspaceId}`,
+  ])
+
+  for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+    const key = window.localStorage.key(index)
+    if (key && localPrefixes.some((prefix) => key.startsWith(prefix))) window.localStorage.removeItem(key)
+  }
+
+  for (const workspaceId of workspaceIds) {
+    const carryForwardKey = `weekflow-carry-forward-selection:${workspaceId}`
+    window.sessionStorage.removeItem(carryForwardKey)
+  }
+
+  const pendingFollowUp = window.sessionStorage.getItem('weekflow-pending-follow-up')
+  if (pendingFollowUp) {
+    try {
+      const parsed = JSON.parse(pendingFollowUp) as { workspaceId?: unknown }
+      if (workspaceIds.includes(typeof parsed.workspaceId === 'string' ? parsed.workspaceId : '')) window.sessionStorage.removeItem('weekflow-pending-follow-up')
+    } catch {
+      // Leave an unrelated pending action untouched if its payload is invalid.
+    }
+  }
+
+  if (workspaceIds.includes(DEFAULT_WORKSPACE_ID)) {
+    const legacyPrefixes = ['weekflow-weekly-plan:', 'weekflow-daily-activities:', 'weekflow-follow-ups:', 'weekflow-smart-start:']
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.localStorage.key(index)
+      if (key === 'weekflow-template' || key === 'weekflow-selected-week' || legacyPrefixes.some((prefix) => key?.startsWith(prefix) && !key.includes(':default-workspace:'))) {
+        window.localStorage.removeItem(key as string)
+      }
+    }
+  }
+}
+
+export async function deleteWorkspace(workspaceId: string) {
+  const workspaces = loadWorkspaces()
+  const workspace = workspaces.find((candidate) => candidate.id === workspaceId && !candidate.archived)
+  if (!workspace) throw new Error('Workspace not found.')
+
+  if (supabase) {
+    const user = await getCurrentUser()
+    if (!user || workspace.ownerId !== user.id) throw new Error('You can only delete a workspace you own.')
+
+    if (workspace.cloudId) {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .delete()
+        .eq('id', workspace.cloudId)
+        .eq('owner_id', user.id)
+        .select('id')
+
+      if (error) throw error
+      if (!data?.some((row) => row.id === workspace.cloudId)) throw new Error('The workspace could not be deleted from the account.')
+    }
+  }
+
+  const remainingWorkspaces = workspaces.filter((candidate) => candidate.id !== workspace.id)
+  const wasCurrent = getCurrentWorkspaceId() === workspace.id
+  const nextWorkspace = wasCurrent ? remainingWorkspaces.find((candidate) => !candidate.archived) ?? remainingWorkspaces[0] ?? null : getCurrentWorkspace()
+  saveWorkspaces(remainingWorkspaces)
+  removeWorkspaceLocalData([workspace.id, ...(workspace.cloudId && workspace.cloudId !== workspace.id ? [workspace.cloudId] : [])])
+
+  if (wasCurrent && nextWorkspace) {
+    setCurrentWorkspaceId(nextWorkspace.id)
+  } else if (wasCurrent) {
+    window.localStorage.removeItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY))
+    window.dispatchEvent(new CustomEvent('weekflow-workspace-change', { detail: null }))
+  }
+
+  return { deletedWorkspaceId: workspace.id, currentWorkspace: nextWorkspace }
+}
+
 export function getCurrentWorkspace() {
-  return getWorkspaceById(getCurrentWorkspaceId()) ?? createDefaultWorkspace()
+  const workspaceId = getCurrentWorkspaceId()
+  return workspaceId ? getWorkspaceById(workspaceId) ?? null : null
 }
 
 export async function getCurrentCloudWorkspaceId() {
@@ -163,6 +266,7 @@ export async function getCurrentCloudWorkspaceId() {
   if (!user) return null
 
   const workspace = getCurrentWorkspace()
+  if (!workspace) return null
   if (!workspace.cloudId) return null
   const { data, error } = await supabase
     .from('workspaces')
@@ -182,6 +286,50 @@ export function upsertWorkspace(workspace: Workspace) {
 
   saveWorkspaces(nextWorkspaces)
   return workspace
+}
+
+export async function renameWorkspace(workspaceId: string, name: string) {
+  const normalizedName = normalizeWorkspaceName(name)
+  if (!normalizedName) throw new Error('Workspace name is required.')
+
+  const workspace = loadWorkspaces().find((candidate) => candidate.id === workspaceId && !candidate.archived)
+  if (!workspace) throw new Error('Workspace not found.')
+  if (isWorkspaceNameTaken(normalizedName, workspace.id)) throw new Error('A workspace with this name already exists.')
+
+  const updatedAt = createTimestamp()
+  let nextWorkspace = { ...workspace, name: normalizedName, updatedAt }
+
+  if (supabase) {
+    const user = await getCurrentUser()
+    if (!user || workspace.ownerId !== user.id) throw new Error('You can only rename a workspace you own.')
+
+    if (workspace.cloudId) {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .update({ name: normalizedName, updated_at: updatedAt })
+        .eq('id', workspace.cloudId)
+        .eq('owner_id', user.id)
+        .select('id, name, template_id, created_at, updated_at, archived')
+        .maybeSingle()
+
+      if (error) throw error
+      if (!data) throw new Error('The workspace could not be renamed in the account.')
+      nextWorkspace = {
+        ...workspace,
+        cloudId: data.id,
+        ownerId: user.id,
+        name: data.name,
+        templateId: data.template_id,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+        archived: data.archived,
+      }
+    }
+  }
+
+  upsertWorkspace(nextWorkspace)
+  window.dispatchEvent(new CustomEvent('weekflow-workspace-rename', { detail: nextWorkspace.id }))
+  return nextWorkspace
 }
 
 export function createWorkspace(name: string, templateId: string, ownerId: string = DEFAULT_ACCOUNT_ID) {
@@ -205,14 +353,6 @@ export async function ensureFirstWorkspaceForOwner(ownerId: string, defaultName 
   if (!ownerId || !ownerId.trim()) return null
 
   const workspaces = loadWorkspaces().filter((workspace) => !workspace.archived)
-  const currentWorkspace = getCurrentWorkspace()
-  const preserveCurrentWorkspace = currentWorkspace.ownerId === ownerId && !currentWorkspace.archived
-  const existingOwnedWorkspace = workspaces.find((workspace) => workspace.ownerId === ownerId)
-  if (existingOwnedWorkspace?.cloudId) {
-    const workspaceToUse = preserveCurrentWorkspace ? currentWorkspace : existingOwnedWorkspace
-    if (!preserveCurrentWorkspace) setCurrentWorkspaceId(workspaceToUse.id)
-    return workspaceToUse
-  }
 
   if (supabase) {
     const existingCloud = await supabase
@@ -221,28 +361,39 @@ export async function ensureFirstWorkspaceForOwner(ownerId: string, defaultName 
       .eq('owner_id', ownerId)
       .eq('archived', false)
       .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle()
+      .then(({ data, error }) => ({ data: data ?? [], error }))
 
     if (existingCloud.error) throw existingCloud.error
-    if (existingCloud.data) {
-      const localWorkspace = existingOwnedWorkspace ?? workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID && workspace.ownerId === DEFAULT_ACCOUNT_ID)
-      const existingWorkspace: Workspace = {
-        id: localWorkspace?.id ?? existingCloud.data.id,
-        cloudId: existingCloud.data.id,
-        ownerId,
-        name: existingCloud.data.name,
-        templateId: existingCloud.data.template_id,
-        createdAt: existingCloud.data.created_at,
-        updatedAt: existingCloud.data.updated_at,
-        archived: existingCloud.data.archived,
-      }
-      upsertWorkspace(existingWorkspace)
-      if (!preserveCurrentWorkspace) setCurrentWorkspaceId(existingWorkspace.id)
-      return existingWorkspace
+    if (existingCloud.data.length > 0) {
+      const storedCurrentId = window.localStorage.getItem(getOwnerStorageKey(CURRENT_WORKSPACE_STORAGE_KEY))
+      const localByCloudId = new Map(workspaces.filter((workspace) => workspace.cloudId).map((workspace) => [workspace.cloudId, workspace]))
+      const localCurrentWorkspace = workspaces.find((workspace) => workspace.id === storedCurrentId)
+      const reconciledWorkspaces = existingCloud.data.map((cloudWorkspace) => {
+        const localWorkspace = localByCloudId.get(cloudWorkspace.id)
+        return {
+          id: localWorkspace?.id ?? cloudWorkspace.id,
+          cloudId: cloudWorkspace.id,
+          ownerId,
+          name: cloudWorkspace.name,
+          templateId: cloudWorkspace.template_id,
+          createdAt: cloudWorkspace.created_at,
+          updatedAt: cloudWorkspace.updated_at,
+          archived: cloudWorkspace.archived,
+        }
+      })
+      saveWorkspaces(reconciledWorkspaces)
+
+      const selectedWorkspace = reconciledWorkspaces.find((workspace) => workspace.id === storedCurrentId)
+        ?? (localCurrentWorkspace?.cloudId ? reconciledWorkspaces.find((workspace) => workspace.cloudId === localCurrentWorkspace.cloudId) : undefined)
+        ?? reconciledWorkspaces[0]
+      if (selectedWorkspace) setCurrentWorkspaceId(selectedWorkspace.id)
+      return selectedWorkspace ?? reconciledWorkspaces[0]
     }
   }
 
+  const currentWorkspace = getCurrentWorkspace()
+  const preserveCurrentWorkspace = currentWorkspace?.ownerId === ownerId && !currentWorkspace.archived
+  const existingOwnedWorkspace = workspaces.find((workspace) => workspace.ownerId === ownerId)
   if (existingOwnedWorkspace) {
     const workspaceToUse = preserveCurrentWorkspace ? currentWorkspace : existingOwnedWorkspace
     if (!preserveCurrentWorkspace) setCurrentWorkspaceId(workspaceToUse.id)
@@ -263,8 +414,7 @@ export async function ensureFirstWorkspaceForOwner(ownerId: string, defaultName 
     return firstWorkspace
   }
 
-  const workspace = createWorkspace(defaultName, templateId, ownerId)
-  return workspace
+  return null
 }
 
 export async function provisionWorkspaceInCloud(workspace: Workspace): Promise<Workspace> {

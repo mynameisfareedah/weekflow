@@ -21,6 +21,8 @@ import type { DayPlan, WeeklyPlan } from '../types/weeklyPlan.ts'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from '../config/templates.ts'
 import { getReportSectionDescriptors } from '../report/reportTemplateAdapter.ts'
 import { mapReportSections, type MappedReportSection } from '../report/reportDataMapper.ts'
+import { buildNarrativeReport } from '../report/reportNarrative.ts'
+import type { ProjectPerformance } from '../report/projectPerformance.ts'
 
 export interface ReportSnapshot {
   weekKey: string
@@ -28,6 +30,7 @@ export interface ReportSnapshot {
   plan: WeeklyPlan
   activities: DailyActivity[]
   followUps: FollowUp[]
+  performance?: ProjectPerformance
   template?: WeekFlowTemplate
 }
 
@@ -326,22 +329,23 @@ function buildProjectManagementDocument(snapshot: ReportSnapshot) {
   const plannedPriorities = unique(priorities.map((item) => item.text ?? '').filter(Boolean))
   const openFollowUps = followUps.filter((followUp) => followUp.status === 'open')
   const completedFollowUps = followUps.filter((followUp) => followUp.status === 'completed')
+  const performance = snapshot.performance
   const children: (Paragraph | Table)[] = [
     new Paragraph({ children: [new TextRun({ text: 'WEEKFLOW PROJECT REPORTING', bold: true, color: 'A55F39', size: 17 })], spacing: { after: 120 } }),
     new Paragraph({ children: [new TextRun({ text: 'Weekly Project Management Report', bold: true, size: 30, color: '2B2D2B' })], spacing: { after: 120 } }),
     new Paragraph({ children: [new TextRun({ text: `Reporting Week: ${snapshot.weekLabel}`, bold: true, size: 20 })], spacing: { after: 200 } }),
     pmSectionHeading(sections, 'weekly-summary', 'Weekly Summary', '1'),
-    ...((activities.length > 0 ? [`${activities.length} project activit${activities.length === 1 ? 'y' : 'ies'} captured across ${unique(activities.map((activity) => activity.account)).length} project/workstream${unique(activities.map((activity) => activity.account)).length === 1 ? '' : 's'}.`] : ['No project activity has been captured for this week yet.']).map((line) => buildBulletParagraph(line))),
+    ...((performance ? [performance.summary, `${performance.completedTasks} of ${performance.plannedTasks} planned tasks completed.`, performance.plannedHours !== null && performance.actualHours !== null ? `Recorded effort: ${performance.actualHours} hours actual against ${performance.plannedHours} planned.` : ''] : [activities.length > 0 ? `${activities.length} project activit${activities.length === 1 ? 'y' : 'ies'} captured across ${unique(activities.map((activity) => activity.account)).length} project/workstream${unique(activities.map((activity) => activity.account)).length === 1 ? '' : 's'}.` : 'No project activity has been captured for this week yet.']).filter(Boolean).map((line) => buildBulletParagraph(line))),
     pmSectionHeading(sections, 'daily-activity-breakdown', 'Daily Activity Breakdown', '2'),
     buildProjectManagementDailyTable(snapshot, sections),
     pmSectionHeading(sections, 'project-workstream-progress', 'Project / Workstream Progress', '3'),
-    ...(unsupportedSectionText(progressSection) ? [buildTextParagraph(unsupportedSectionText(progressSection) as string)] : activities.length > 0 ? unique(activities.map((activity) => activity.account)).flatMap((account) => [buildTextParagraph(account, true), ...activities.filter((activity) => activity.account === account).map((activity) => buildBulletParagraph([activity.outcome, activity.nextAction].filter(Boolean).join(' | ') || 'Progress not recorded.'))]) : [buildTextParagraph('No project progress recorded.')]),
+    ...(performance ? performance.objectives.map((objective) => buildBulletParagraph(`${objective.title}: ${objective.status.replace(/-/g, ' ')}${objective.evidence ? ` - ${objective.evidence}` : ''}`)) : unsupportedSectionText(progressSection) ? [buildTextParagraph(unsupportedSectionText(progressSection) as string)] : activities.length > 0 ? unique(activities.map((activity) => activity.account)).flatMap((account) => [buildTextParagraph(account, true), ...activities.filter((activity) => activity.account === account).map((activity) => buildBulletParagraph([activity.outcome, activity.nextAction].filter(Boolean).join(' | ') || 'Progress not recorded.'))]) : [buildTextParagraph('No project progress recorded.')]),
     pmSectionHeading(sections, 'key-deliverables', 'Key Deliverables', '4'),
     ...(unsupportedSectionText(deliverablesSection)
       ? [buildTextParagraph(unsupportedSectionText(deliverablesSection) as string)]
       : [buildTextParagraph('Planned deliverables:', true), ...(plannedDeliverables.length > 0 ? plannedDeliverables.map((item) => buildBulletParagraph(item)) : [buildTextParagraph('No planned deliverables recorded.')])]),
     pmSectionHeading(sections, 'risks-blockers-decisions', 'Risks, Blockers & Decisions', '5'),
-    ...(unsupportedSectionText(risksSection) ? [buildTextParagraph(unsupportedSectionText(risksSection) as string)] : [buildTextParagraph('No risks, blockers, or decisions recorded.')]),
+    ...(performance ? [buildTextParagraph(`Issues identified: ${performance.issuesIdentified}; open: ${performance.issuesOpen}.`), buildTextParagraph(`Active risks: ${performance.activeRisks}. Active dependencies: ${performance.activeDependencies}. Blocked work: ${performance.blockedWork}. Delayed work: ${performance.delayedWork}.`)] : unsupportedSectionText(risksSection) ? [buildTextParagraph(unsupportedSectionText(risksSection) as string)] : [buildTextParagraph('No risks, blockers, or decisions recorded.')]),
     pmSectionHeading(sections, 'stakeholder-client-updates', 'Stakeholder / Client Updates', '6'),
     ...(unsupportedSectionText(stakeholdersSection) ? [buildTextParagraph(unsupportedSectionText(stakeholdersSection) as string)] : [buildTextParagraph('No stakeholder updates recorded.')]),
     pmSectionHeading(sections, 'priorities-coming-week', 'Priorities for Coming Week', '7'),
@@ -470,66 +474,29 @@ function buildFieldSalesDocument(snapshot: ReportSnapshot) {
 }
 
 function buildSchemaDocument(snapshot: ReportSnapshot) {
-  const sections = mapReportSections(snapshot, getReportSectionDescriptors(snapshot.template), snapshot.template)
+  const narrative = buildNarrativeReport(snapshot)
   const children: (Paragraph | Table)[] = [
-    new Paragraph({ children: [new TextRun({ text: `WEEKFLOW ${snapshot.template?.name.toUpperCase() ?? 'REPORT'} REPORTING`, bold: true, color: 'A55F39', size: 17 })], spacing: { after: 120 } }),
-    new Paragraph({ children: [new TextRun({ text: snapshot.template?.report.title ?? 'Weekly Report', bold: true, size: 30, color: '2B2D2B' })], spacing: { after: 120 } }),
-    new Paragraph({ children: [new TextRun({ text: `Reporting Week: ${snapshot.weekLabel}`, bold: true, size: 20 })], spacing: { after: 200 } }),
+    new Paragraph({ children: [new TextRun({ text: snapshot.template?.name.toUpperCase() ?? 'REPORT', bold: true, color: 'A55F39', size: 17 })], spacing: { after: 120 } }),
+    new Paragraph({ children: [new TextRun({ text: narrative.title, bold: true, size: 30, color: '2B2D2B' })], spacing: { after: 120 } }),
+    new Paragraph({ children: [new TextRun({ text: `Reporting Week: ${narrative.weekLabel}`, bold: true, size: 20 })], spacing: { after: 200 } }),
   ]
 
-  for (const section of sections) {
+  for (const section of narrative.sections) {
     children.push(buildSectionHeading(`${section.order}. ${section.title}`))
-    const unsupported = unsupportedSectionText(section)
-    if (unsupported) {
-      children.push(buildTextParagraph(unsupported))
+    if (section.items.length === 0) {
+      children.push(buildTextParagraph(section.emptyText))
       continue
     }
-    if (snapshot.template?.id === 'small-business' && section.sectionId === 'business-summary') {
-      summaryLines(snapshot, sections).forEach((line) => children.push(buildBulletParagraph(line)))
-      continue
-    }
-    if (snapshot.template?.id === 'small-business' && section.sectionId === 'daily-business-activity') {
-      children.push(buildDailyTable(snapshot, sections))
-      continue
-    }
-    if (snapshot.template?.id === 'small-business' && ['sales-opportunity-progress', 'customer-client-outcomes', 'orders-payments'].includes(section.sectionId)) {
-      const allowed = section.sectionId === 'sales-opportunity-progress' ? ['Sale / Order Won', 'Lead Qualified'] : section.sectionId === 'customer-client-outcomes' ? ['Customer Retained', 'Follow-up Required'] : ['Payment Received']
-      const outcomes = groupValue<DailyActivity['structuredOutcomes'][number]>(sections, section.sectionId, 'outcomes').filter((outcome) => allowed.includes(outcome.type))
-      if (outcomes.length === 0) children.push(buildTextParagraph(section.presentation.emptyState))
-      outcomes.forEach((outcome) => {
-        const account = snapshot.activities.find((activity) => activity.structuredOutcomes.some((candidate) => candidate.id === outcome.id))?.account ?? ''
-        children.push(buildBulletParagraph(`${outcome.type}${account ? ` (${account})` : ''}: ${outcome.details || 'Details not recorded.'}`))
-      })
-      continue
-    }
-    if (snapshot.template?.id === 'small-business' && section.sectionId === 'supplier-operational-intelligence') {
-      const intelligence = groupValue<{ account: string; type: string; details: string }>(sections, section.sectionId, 'intelligence')
-      if (intelligence.length === 0) children.push(buildTextParagraph(section.presentation.emptyState))
-      intelligence.forEach((item) => children.push(buildBulletParagraph(`${item.type}${item.account ? ` (${item.account})` : ''}: ${item.details}`)))
-      continue
-    }
-    if (snapshot.template?.id === 'small-business' && section.sectionId === 'priorities-coming-week') {
-      const priorities = groupValue<{ text?: string }>(sections, section.sectionId, 'priorities').map((item) => item.text ?? '').filter(Boolean)
-      const followUps = groupValue<FollowUp>(sections, section.sectionId, 'followUps').filter((followUp) => followUp.status === 'open')
-      if (priorities.length === 0 && followUps.length === 0) children.push(buildTextParagraph(section.presentation.emptyState))
-      priorities.forEach((priority) => children.push(buildBulletParagraph(priority)))
-      followUps.forEach((followUp) => children.push(buildBulletParagraph(`${followUp.task}${followUp.facility ? ` (${followUp.facility})` : ''}`)))
-      continue
-    }
-    if (snapshot.template?.id === 'small-business' && section.sectionId === 'completed-follow-ups') {
-      const followUps = groupValue<FollowUp>(sections, section.sectionId, 'followUps').filter((followUp) => followUp.status === 'completed')
-      if (followUps.length === 0) children.push(buildTextParagraph(section.presentation.emptyState))
-      followUps.forEach((followUp) => children.push(buildBulletParagraph(followUp.task)))
-      continue
-    }
-    const values = Object.entries(section.groups)
-      .map(([group, value]) => `${group}: ${Array.isArray(value) ? value.length : 1} item${Array.isArray(value) && value.length === 1 ? '' : 's'}`)
-    children.push(...(values.length > 0 ? values.map((value) => buildBulletParagraph(value)) : [buildTextParagraph('No report data recorded.')]))
+    section.items.forEach((item) => {
+      children.push(buildTextParagraph(item.title, true))
+      children.push(buildTextParagraph(item.summary))
+      if (item.detail) children.push(buildTextParagraph(item.detail))
+    })
   }
 
   return new Document({
     creator: 'WeekFlow',
-    title: snapshot.template?.report.title ?? 'Weekly Report',
+    title: narrative.title,
     description: 'Report generated by WeekFlow',
     sections: [{
       properties: { page: { margin: { top: MARGIN_TWIPS, right: MARGIN_TWIPS, bottom: MARGIN_TWIPS, left: MARGIN_TWIPS }, size: { width: PAGE_WIDTH_TWIPS, height: PAGE_HEIGHT_TWIPS } } },

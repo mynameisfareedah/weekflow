@@ -1,30 +1,33 @@
 :root {
-  /* WeekFlow design tokens. Premium dark SaaS palette for the full product experience. */
-  --color-primary: #122033;
-  --color-primary-hover: #18314d;
-  --color-primary-soft: #101b2d;
-  --color-accent: #69a9ff;
-  --color-accent-hover: #7bb8ff;
-  --color-accent-soft: rgba(105, 169, 255, 0.14);
-  --color-page: #09131d;
-  --color-surface: #111d2b;
-  --color-surface-strong: #162536;
-  --color-surface-muted: #0f1b2a;
-  --color-border: rgba(148, 163, 184, 0.22);
-  --color-border-strong: rgba(148, 163, 184, 0.36);
-  --color-text-primary: #edf4ff;
-  --color-text-secondary: #d1d9ea;
-  --color-text-muted: #9aa9c2;
-  --color-text-subtle: #7e8ea6;
-  --color-text-inverse: #071018;
-  --color-success: #85d7a2;
-  --color-success-soft: rgba(133, 215, 162, 0.15);
-  --color-warning: #f0bf70;
-  --color-warning-soft: rgba(240, 191, 112, 0.14);
-  --color-danger: #f08a8a;
-  --color-danger-soft: rgba(240, 138, 138, 0.13);
-  --color-info: #7ab7ff;
-  --color-info-soft: rgba(122, 183, 255, 0.13);
+  /* WeekFlow design tokens. Light is the resolved System default baseline. */
+  --color-primary: #f5f6f1;
+  --color-primary-hover: #e9ece4;
+  --color-primary-soft: #eef1eb;
+  --color-accent: #a95f39;
+  --color-accent-hover: #8f4d2f;
+  --color-accent-soft: rgba(169, 95, 57, 0.12);
+  --color-page: #f5f6f1;
+  --color-surface: #ffffff;
+  --color-surface-strong: #fbfcf9;
+  --color-surface-muted: #eef1eb;
+  --color-border: rgba(37, 45, 37, 0.14);
+  --color-border-strong: rgba(37, 45, 37, 0.28);
+  --color-text-primary: #252d25;
+  --color-text-secondary: #3f4b41;
+  --color-text-muted: #58655d;
+  --color-text-subtle: #6f7d73;
+  --color-text-inverse: #ffffff;
+  --color-hero-text-primary: #252d25;
+  --color-hero-text-secondary: #3f4b41;
+  --color-hero-text-accent: #8f4d2f;
+  --color-success: #397947;
+  --color-success-soft: rgba(76, 126, 86, 0.12);
+  --color-warning: #9a671d;
+  --color-warning-soft: rgba(196, 151, 45, 0.14);
+  --color-danger: #b04a45;
+  --color-danger-soft: rgba(176, 74, 69, 0.1);
+  --color-info: #4778a8;
+  --color-info-soft: rgba(71, 120, 168, 0.12);
 
   --motion-micro: 90ms;
   --motion-fast: 120ms;
@@ -89,6 +92,37 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+:root[data-theme='dark'] {
+  --color-primary: #122033;
+  --color-primary-hover: #18314d;
+  --color-primary-soft: #101b2d;
+  --color-accent: #69a9ff;
+  --color-accent-hover: #7bb8ff;
+  --color-accent-soft: rgba(105, 169, 255, 0.14);
+  --color-page: #09131d;
+  --color-surface: #111d2b;
+  --color-surface-strong: #162536;
+  --color-surface-muted: #0f1b2a;
+  --color-border: rgba(148, 163, 184, 0.22);
+  --color-border-strong: rgba(148, 163, 184, 0.36);
+  --color-text-primary: #edf4ff;
+  --color-text-secondary: #d1d9ea;
+  --color-text-muted: #9aa9c2;
+  --color-text-subtle: #7e8ea6;
+  --color-text-inverse: #071018;
+  --color-hero-text-primary: #edf4ff;
+  --color-hero-text-secondary: #d1d9ea;
+  --color-hero-text-accent: #a9cbff;
+  --color-success: #85d7a2;
+  --color-success-soft: rgba(133, 215, 162, 0.15);
+  --color-warning: #f0bf70;
+  --color-warning-soft: rgba(240, 191, 112, 0.14);
+  --color-danger: #f08a8a;
+  --color-danger-soft: rgba(240, 138, 138, 0.13);
+  --color-info: #7ab7ff;
+  --color-info-soft: rgba(122, 183, 255, 0.13);
 }
 
 body {

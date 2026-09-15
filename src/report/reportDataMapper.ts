@@ -1,6 +1,6 @@
-import type { ReportSectionPresentation, ReportSectionSchema } from '../config/templateSchema'
-import type { WeekFlowTemplate } from '../config/templates'
-import type { ReportSnapshot } from '../utils/reportDocx'
+import type { ReportSectionPresentation, ReportSectionSchema } from '../config/templateSchema.ts'
+import type { WeekFlowTemplate } from '../config/templates.ts'
+import type { ReportSnapshot } from '../utils/reportDocx.ts'
 
 export type ReportDataGroupValue = unknown
 
@@ -39,6 +39,20 @@ function getSupportedGroup(snapshot: ReportSnapshot, group: string): ReportDataG
         ...activity.structuredOutcomes.map((outcome) => ({ account: activity.account, type: outcome.type, details: outcome.details })),
         ...(activity.intelligence.trim() ? [{ account: activity.account, type: 'Business Notes', details: activity.intelligence }] : []),
       ])
+    case 'projectPerformance':
+      return snapshot.performance
+    case 'projectProgress':
+      return snapshot.performance ? snapshot.performance.objectives : undefined
+    case 'deliverables':
+      return snapshot.performance ? snapshot.performance.objectives.filter((objective) => objective.status === 'completed') : undefined
+    case 'risks':
+      return snapshot.performance ? snapshot.performance.activeRisks : undefined
+    case 'blockers':
+      return snapshot.performance ? snapshot.performance.blockedWork : undefined
+    case 'decisions':
+      return snapshot.performance ? snapshot.activities.filter((activity) => activity.decision?.trim()) : undefined
+    case 'stakeholders':
+      return snapshot.performance ? snapshot.activities.filter((activity) => activity.hcpNames.length > 0) : undefined
     default:
       return undefined
   }

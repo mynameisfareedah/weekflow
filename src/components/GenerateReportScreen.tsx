@@ -10,9 +10,11 @@ import { exportWeeklyPlanWord } from '../utils/weeklyPlanDocx'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from '../config/templates'
 import { getReportSectionDescriptors } from '../report/reportTemplateAdapter'
 import { mapReportSectionData, type ReportDataMappingResult } from '../report/reportDataMapper'
-import type { DailyActivity, StructuredOutcome } from '../types/dailyActivity'
+import { buildNarrativeReport } from '../report/reportNarrative'
+import { deriveProjectPerformance } from '../report/projectPerformance'
+import type { DailyActivity } from '../types/dailyActivity'
 import type { FollowUp } from '../types/followUp'
-import type { DayPlan, WeeklyPlan } from '../types/weeklyPlan'
+import type { WeeklyPlan } from '../types/weeklyPlan'
 import type { ReportSnapshot } from '../utils/reportDocx'
 import { navigateTo } from '../utils/navigation'
 import { upsertReportHistoryEntry } from '../storage/reportHistoryStorage'
@@ -33,50 +35,6 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00`))
 }
 
-function unique(values: string[]) {
-  return [...new Set(values.filter(Boolean))]
-}
-
-function getDayActivities(day: DayPlan, activities: DailyActivity[]) {
-  return activities.filter((activity) => activity.date === day.date)
-}
-
-function getSummaryLines(activities: DailyActivity[], followUps: FollowUp[], template: WeekFlowTemplate, plan: WeeklyPlan) {
-  const lines: string[] = []
-  if (template.id === 'project-management') {
-    lines.push(...plan.weeklyStrategicObjectives.map((objective) => objective.text).filter(Boolean))
-    const projects = unique(activities.map((activity) => activity.account))
-    if (projects.length > 0) lines.push(`Project work was recorded across ${projects.length} workstream${projects.length === 1 ? '' : 's'}: ${projects.join(', ')}.`)
-    if (activities.length > 0) lines.push(`${activities.length} project activit${activities.length === 1 ? 'y' : 'ies'} captured.`)
-    if (followUps.length > 0) lines.push(`${followUps.length} open follow-up${followUps.length === 1 ? '' : 's'} remain for the coming week.`)
-    return lines
-  }
-  if (template.id !== 'field-sales') {
-    if (template.id === 'small-business') {
-      const accounts = unique(activities.map((activity) => activity.account))
-      if (activities.length > 0) lines.push(`${activities.length} business activit${activities.length === 1 ? 'y' : 'ies'} recorded across ${accounts.length} business record${accounts.length === 1 ? '' : 's'}.`)
-      const outcomes = unique(activities.flatMap((activity) => activity.structuredOutcomes.map((outcome) => outcome.type)))
-      if (outcomes.length > 0) lines.push(`Business outcomes included ${outcomes.join(', ')}.`)
-      if (followUps.length > 0) lines.push(`${followUps.length} follow-up${followUps.length === 1 ? '' : 's'} remain for the coming week.`)
-      return lines
-    }
-    if (activities.length > 0) lines.push(`${activities.length} ${template.terminology.activityPlural.toLowerCase()} recorded across ${unique(activities.map((activity) => activity.account)).length} ${template.terminology.accounts.toLowerCase()}.`)
-    if (followUps.length > 0) lines.push(`${followUps.length} open ${template.terminology.followUps.toLowerCase()} remain for the coming week.`)
-    return lines
-  }
-  const physicalVisits = activities.filter((activity) => activity.activityType === 'Physical Visit').length
-  const virtualEngagements = activities.filter((activity) => activity.activityType === 'Virtual Engagement').length
-  const facilities = unique(activities.map((activity) => activity.account))
-  const structuredTypes = unique(activities.flatMap((activity) => activity.structuredOutcomes.map((outcome) => outcome.type.toLowerCase())))
-
-  if (facilities.length > 0) lines.push(`Field coverage recorded across ${facilities.length} account${facilities.length === 1 ? '' : 's'}: ${facilities.join(', ')}.`)
-  if (physicalVisits > 0) lines.push(`${physicalVisits} physical visit${physicalVisits === 1 ? '' : 's'} captured.`)
-  if (virtualEngagements > 0) lines.push(`${virtualEngagements} virtual engagement${virtualEngagements === 1 ? '' : 's'} captured.`)
-  if (structuredTypes.length > 0) lines.push(`Structured outcomes included ${structuredTypes.join(', ')}.`)
-  if (followUps.length > 0) lines.push(`${followUps.length} open follow-up${followUps.length === 1 ? '' : 's'} remain for the coming week.`)
-  return lines
-}
-
 function ReportHeader({ weekKey, template }: { weekKey: string; template: WeekFlowTemplate }) {
   return (
     <header className="report-document-header">
@@ -84,112 +42,6 @@ function ReportHeader({ weekKey, template }: { weekKey: string; template: WeekFl
       <p className="report-document-meta">{formatCompactWeekRange(weekKey)} · {template.name}</p>
     </header>
   )
-}
-
-function DailyBreakdown({ plan, template, sectionData }: { plan: WeeklyPlan; template: WeekFlowTemplate; sectionData: ReportDataMappingResult }) {
-  const mappedActivities = (sectionData.groups.dailyActivities as DailyActivity[] | undefined) ?? []
-  const isFieldSales = template.id === 'field-sales'
-  const hasAnyActivity = mappedActivities.length > 0
-
-  if (!hasAnyActivity) {
-    return (
-      <section className="report-section" aria-labelledby="daily-breakdown-heading">
-        <h3 id="daily-breakdown-heading" className="report-section-title"><span>02</span> {sectionData.title}</h3>
-        <div className="daily-activity-empty">
-          {plan.days.map((day) => <div key={day.id} className="daily-empty-row"><span className="daily-empty-label">{day.label} · {formatDate(day.date)}</span><span className="daily-empty-value">No activity captured</span></div>)}
-        </div>
-      </section>
-    )
-  }
-
-  return (
-    <section className="report-section" aria-labelledby="daily-breakdown-heading">
-      <h3 id="daily-breakdown-heading" className="report-section-title"><span>02</span> {sectionData.title}</h3>
-      <div className="daily-report-table" role="table" aria-label="Daily activity breakdown">
-        <div className="daily-report-row daily-report-header" role="row"><span>Day</span><span>{template.terminology.account}{isFieldSales ? 's Visited' : ''}</span><span>{template.terminology.people}{isFieldSales ? ' Engaged' : ''}</span><span>{template.terminology.outcome}</span><span>{template.terminology.notes} / {template.terminology.nextAction}</span></div>
-        {plan.days.map((day) => {
-          const dayActivities = getDayActivities(day, mappedActivities)
-          return <div className="daily-report-row" role="row" key={day.id}><strong>{day.label}<small>{formatDate(day.date)}</small></strong><span>{dayActivities.length > 0 ? unique(dayActivities.map((activity) => activity.account)).join(', ') : 'No activity captured'}</span><span>{dayActivities.length > 0 ? unique(dayActivities.flatMap((activity) => activity.hcpNames)).join(', ') || 'Not recorded' : 'Not recorded'}</span><span>{dayActivities.length > 0 ? dayActivities.map((activity) => activity.outcome).filter(Boolean).join(' ') || 'Not recorded' : 'Not recorded'}</span><span>{dayActivities.length > 0 ? dayActivities.flatMap((activity) => [activity.intelligence, activity.nextAction]).filter(Boolean).join(' ') || 'Not recorded' : 'Not recorded'}</span></div>
-        })}
-      </div>
-    </section>
-  )
-}
-
-function VirtualEngagements({ template, sectionData }: { template: WeekFlowTemplate; sectionData: ReportDataMappingResult }) {
-  const virtualActivities = (sectionData.groups.virtualEngagements as DailyActivity[] | undefined) ?? []
-
-  return (
-    <section className="report-section" aria-labelledby="virtual-engagements-heading">
-      {renderSectionTitle({ order: 3, title: sectionData.title, id: 'virtual-engagements-heading' })}
-      {sectionData.unsupportedGroups.length > 0 ? <p className="report-muted">{sectionData.presentation.emptyState}</p> : virtualActivities.length > 0 ? <div className="report-detail-list">{virtualActivities.map((activity) => <article className="report-detail-item" key={activity.id}><strong>{activity.account}</strong><dl><div><dt>{template.terminology.people}</dt><dd>{activity.hcpNames.join(', ') || 'Not recorded'}</dd></div><div><dt>{template.terminology.outcome}</dt><dd>{activity.outcome || 'Not recorded'}</dd></div><div><dt>{template.terminology.nextAction}</dt><dd>{activity.nextAction || 'Not recorded'}</dd></div></dl></article>)}</div> : <p className="report-muted">{sectionData.presentation.emptyState}</p>}
-    </section>
-  )
-}
-
-function StructuredOutcomes({ activities, sectionData }: { activities: DailyActivity[]; sectionData: ReportDataMappingResult }) {
-  const toReportOutcomes = (values: StructuredOutcome[]) => values.map((outcome) => ({ ...outcome, account: activities.find((activity) => activity.structuredOutcomes.some((candidate) => candidate.id === outcome.id))?.account ?? '' }))
-  const mappedOutcomes = [
-    ...toReportOutcomes((sectionData.groups.commercialOutcomes as StructuredOutcome[] | undefined) ?? []),
-    ...toReportOutcomes((sectionData.groups.patientJourney as StructuredOutcome[] | undefined) ?? []),
-  ]
-  const outcomes = mappedOutcomes.length > 0
-    ? mappedOutcomes
-    : toReportOutcomes((sectionData.groups.outcomes as StructuredOutcome[] | undefined) ?? [])
-
-  return (
-    <section className="report-section" aria-labelledby="commercial-outcomes-heading">
-      {renderSectionTitle({ order: 4, title: sectionData.title, id: 'commercial-outcomes-heading' })}
-      {sectionData.unsupportedGroups.length > 0 ? <p className="report-muted">{sectionData.presentation.emptyState}</p> : outcomes.length > 0 ? <div className="outcome-report-grid">{outcomes.map((outcome) => <article className="outcome-report-item" key={outcome.id}><strong>{outcome.type}</strong><span>{outcome.account}</span><p>{[outcome.product, outcome.quantity ? `Quantity: ${outcome.quantity}` : '', outcome.stockStatus, outcome.details].filter(Boolean).join(' - ') || 'Details not recorded.'}</p></article>)}</div> : <p className="report-muted">{sectionData.presentation.emptyState}</p>}
-    </section>
-  )
-}
-
-function StrategicIntelligence({ activities, plan, sectionData }: { activities: DailyActivity[]; plan: WeeklyPlan; sectionData: ReportDataMappingResult }) {
-  const intelligence = activities.flatMap((activity) => activity.intelligence ? [`${activity.account}: ${activity.intelligence}`] : [])
-  const plannedPriorities = plan.days.flatMap((day) => day.categories.commercialPriorities.map((item) => item.text))
-  if (sectionData.unsupportedGroups.length > 0) return <section className="report-section" aria-labelledby="strategic-intelligence-heading">{renderSectionTitle({ order: 5, title: sectionData.title, id: 'strategic-intelligence-heading' })}<p className="report-muted">{sectionData.presentation.emptyState}</p></section>
-  const items = unique([...intelligence, ...plannedPriorities])
-
-  return (
-    <section className="report-section" aria-labelledby="strategic-intelligence-heading">
-      {renderSectionTitle({ order: 5, title: sectionData.title, id: 'strategic-intelligence-heading' })}
-      {items.length > 0 ? <ul className="report-bullet-list">{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="report-muted">{sectionData.presentation.emptyState}</p>}
-    </section>
-  )
-}
-
-function StakeholderUpdates({ activities, sectionData }: { activities: DailyActivity[]; sectionData: ReportDataMappingResult }) {
-  if (sectionData.unsupportedGroups.length > 0) return <section className="report-section" aria-labelledby="stakeholder-updates-heading">{renderSectionTitle({ order: 6, title: sectionData.title, id: 'stakeholder-updates-heading' })}<p className="report-muted">{sectionData.presentation.emptyState}</p></section>
-  const updates = unique(activities.flatMap((activity) => activity.hcpNames.map((stakeholder) => `${stakeholder}: ${activity.outcome || activity.intelligence || 'Update not recorded.'}`)))
-  return <section className="report-section" aria-labelledby="stakeholder-updates-heading">{renderSectionTitle({ order: 6, title: sectionData.title, id: 'stakeholder-updates-heading' })}{updates.length > 0 ? <ul className="report-bullet-list">{updates.map((update) => <li key={update}>{update}</li>)}</ul> : <p className="report-muted">{sectionData.presentation.emptyState}</p>}</section>
-}
-
-function FollowUpReport({ followUps, sectionData, showCompleted = true }: { followUps: FollowUp[]; sectionData: ReportDataMappingResult; showCompleted?: boolean }) {
-  const mappedFollowUps = (sectionData.groups.followUps as FollowUp[] | undefined) ?? followUps
-  const openFollowUps = mappedFollowUps.filter((followUp) => followUp.status === 'open')
-  const completedFollowUps = mappedFollowUps.filter((followUp) => followUp.status === 'completed')
-
-  return (
-    <section className="report-section" aria-labelledby="priorities-heading">
-      {renderSectionTitle({ order: sectionData.order, title: sectionData.title, id: 'priorities-heading' })}
-      <div className="priority-report-columns">
-        <div>{openFollowUps.length > 0 ? <ul className="report-bullet-list">{openFollowUps.map((followUp) => <li className={followUp.priority === 'high' ? 'is-high-priority' : ''} key={followUp.id}><strong>{followUp.task}</strong>{(followUp.facility || followUp.hcpName || followUp.dueDate) && <small>{[followUp.facility, followUp.hcpName, followUp.dueDate ? `Due ${formatDate(followUp.dueDate)}` : ''].filter(Boolean).join(' | ')}</small>}</li>)}</ul> : <p className="report-muted">No priorities or follow-ups recorded.</p>}</div>
-        {showCompleted && <div>{completedFollowUps.length > 0 ? <ul className="report-bullet-list">{completedFollowUps.map((followUp) => <li key={followUp.id}>{followUp.task}</li>)}</ul> : <p className="report-muted"></p>}</div>}
-      </div>
-    </section>
-  )
-}
-
-function SmallBusinessOutcomeSection({ activities, sectionData, types }: { activities: DailyActivity[]; sectionData: ReportDataMappingResult; types: string[] }) {
-  const outcomes = (sectionData.groups.outcomes as StructuredOutcome[] | undefined)?.filter((outcome) => types.includes(outcome.type)) ?? []
-  const accountByOutcome = new Map(activities.flatMap((activity) => activity.structuredOutcomes.map((outcome) => [outcome.id, activity.account] as const)))
-  return <section className="report-section" aria-labelledby={`${sectionData.sectionId}-heading`}>{renderSectionTitle({ order: sectionData.order, title: sectionData.title, id: `${sectionData.sectionId}-heading` })}{outcomes.length > 0 ? <div className="outcome-report-grid">{outcomes.map((outcome) => <article className="outcome-report-item" key={outcome.id}><strong>{outcome.type}</strong><span>{accountByOutcome.get(outcome.id) ?? ''}</span><p>{outcome.details || 'Details not recorded.'}</p></article>)}</div> : <p className="report-muted">{sectionData.presentation.emptyState}</p>}</section>
-}
-
-function SmallBusinessIntelligenceSection({ sectionData }: { sectionData: ReportDataMappingResult }) {
-  const items = sectionData.groups.intelligence as Array<{ account: string; type: string; details: string }> | undefined
-  return <section className="report-section" aria-labelledby={`${sectionData.sectionId}-heading`}>{renderSectionTitle({ order: sectionData.order, title: sectionData.title, id: `${sectionData.sectionId}-heading` })}{items && items.length > 0 ? <ul className="report-bullet-list">{items.map((item, index) => <li key={`${item.account}-${item.type}-${index}`}><strong>{item.type}</strong><small>{item.account}: {item.details}</small></li>)}</ul> : <p className="report-muted">{sectionData.presentation.emptyState}</p>}</section>
 }
 
 function renderSectionTitle({ order, title, id }: { order: number; title: string; id: string }) {
@@ -207,9 +59,9 @@ function getTemplateEmptyCopy(template: WeekFlowTemplate, section: ReportDataMap
 
   if (template.id === 'project-management') {
     if (sectionId === 'weekly-summary' || sectionId === 'daily-activity-breakdown' || sectionId === 'project-workstream-progress') return 'No project activity recorded yet.'
-    if (sectionId === 'key-deliverables') return 'No deliverables recorded yet.'
-    if (sectionId === 'risks-blockers-decisions') return 'No risks, blockers, or decisions recorded yet.'
-    if (sectionId === 'priorities-coming-week') return 'No priorities recorded yet.'
+    if (sectionId === 'key-deliverables') return 'No accomplishments recorded yet.'
+    if (sectionId === 'risks-blockers-decisions') return 'No issues, risks, or decisions recorded yet.'
+    if (sectionId === 'priorities-coming-week') return 'No next-week priorities recorded yet.'
   }
 
   if (template.id === 'field-service') {
@@ -243,29 +95,6 @@ function getRenderableEmptySections(template: WeekFlowTemplate, sections: Report
       if (template.id === 'field-sales' && section.sectionId === 'strategic-account-intelligence') return false
       return true
     })
-}
-
-function SmallBusinessReportPreview({ plan, activities, followUps, template, sections }: { plan: WeeklyPlan; activities: DailyActivity[]; followUps: FollowUp[]; template: WeekFlowTemplate; sections: ReportDataMappingResult[] }) {
-  const byId = (id: string) => sections.find((section) => section.sectionId === id)
-  const summary = byId('business-summary')
-  const daily = byId('daily-business-activity')
-  const sales = byId('sales-opportunity-progress')
-  const customer = byId('customer-client-outcomes')
-  const orders = byId('orders-payments')
-  const operations = byId('supplier-operational-intelligence')
-  const priorities = byId('priorities-coming-week')
-  const completed = byId('completed-follow-ups')
-  if (!summary || !daily || !sales || !customer || !orders || !operations || !priorities || !completed) return null
-  const summaryLines = getSummaryLines(activities, followUps, template, plan)
-  return <>
-    <section className="report-section report-summary-section" aria-labelledby="business-summary-heading">{renderSectionTitle({ order: 1, title: summary.title, id: 'business-summary-heading' })}{summaryLines.length > 0 ? <ul className="report-bullet-list">{summaryLines.map((line) => <li key={line}>{line}</li>)}</ul> : <p className="report-muted">{summary.presentation.emptyState}</p>}</section>
-    <DailyBreakdown plan={plan} template={template} sectionData={daily} />
-    <SmallBusinessOutcomeSection activities={activities} sectionData={sales} types={['Sale / Order Won', 'Lead Qualified']} />
-    <SmallBusinessOutcomeSection activities={activities} sectionData={customer} types={['Customer Retained', 'Follow-up Required']} />
-    <SmallBusinessOutcomeSection activities={activities} sectionData={orders} types={['Payment Received']} />
-    <SmallBusinessIntelligenceSection sectionData={operations} />
-    <FollowUpReport followUps={followUps} sectionData={priorities} showCompleted={false} />
-  </>
 }
 
 function EmptyReportDocument({ plan, template, sections }: { plan: WeeklyPlan; template: WeekFlowTemplate; sections: ReportDataMappingResult[] }) {
@@ -315,21 +144,18 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
   const activities = useMemo(() => historicalSnapshot?.activities ?? loadDailyActivities(weekKey), [historicalSnapshot, weekKey])
   const followUps = useMemo(() => historicalSnapshot?.followUps ?? loadFollowUps(weekKey), [historicalSnapshot, weekKey])
   const intelligence = useMemo<WeeklyIntelligence>(() => deriveWeeklyIntelligence({ selectedWeek: weekKey, plan, activities, followUps, template }), [weekKey, plan, activities, followUps, template])
-  const reportSnapshot = useMemo<ReportSnapshot>(() => historicalSnapshot ?? ({ weekKey, weekLabel: getFixedReportWeekLabel(weekKey), plan, activities, followUps, template }), [historicalSnapshot, weekKey, plan, activities, followUps, template])
+  const performance = useMemo(() => historicalSnapshot?.performance ?? (template.id === 'project-management' ? deriveProjectPerformance(plan, activities, followUps, intelligence) : undefined), [historicalSnapshot, template, plan, activities, followUps, intelligence])
+  const reportSnapshot = useMemo<ReportSnapshot>(() => historicalSnapshot ?? ({ weekKey, weekLabel: getFixedReportWeekLabel(weekKey), plan, activities, followUps, performance, template }), [historicalSnapshot, weekKey, plan, activities, followUps, performance, template])
   const reportSections = useMemo(() => getReportSectionDescriptors(template).filter((section) => section.enabled).sort((left, right) => left.order - right.order), [template])
   const mappedReportSections = useMemo(() => reportSections.map((section) => mapReportSectionData(reportSnapshot, section, template)), [reportSections, reportSnapshot, template])
+  const narrativeReport = useMemo(() => buildNarrativeReport(reportSnapshot), [reportSnapshot])
   const getSectionDataByGroup = (...groups: string[]) => mappedReportSections.find((section) => groups.some((group) => section.groups[group] !== undefined || section.unsupportedGroups.includes(group)))
-  const getSectionDataByPresentation = (...displayTypes: ReportDataMappingResult['presentation']['displayType'][]) => mappedReportSections.find((section) => displayTypes.includes(section.presentation.displayType))
   const summarySection = mappedReportSections[0]
-  const dailyBreakdownSection = getSectionDataByPresentation('activity-table')
-  const activityOutcomeSection = getSectionDataByPresentation('activity-list') ?? getSectionDataByGroup('projectProgress')
-  const structuredOutcomeSection = getSectionDataByPresentation('outcomes') ?? getSectionDataByGroup('deliverables')
-  const intelligenceSection = getSectionDataByPresentation('intelligence') ?? getSectionDataByGroup('strategicAccounts', 'risks', 'blockers', 'decisions')
-  const stakeholderSection = getSectionDataByGroup('stakeholders')
   const followUpSection = getSectionDataByGroup('priorities', 'followUps')
   const summaryActivities = (summarySection?.groups.dailyActivities as DailyActivity[] | undefined) ?? []
   const summaryFollowUps = (followUpSection?.groups.followUps as FollowUp[] | undefined) ?? []
-  const summaryLines = getSummaryLines(summaryActivities, summaryFollowUps, template, plan)
+  void summaryActivities
+  void summaryFollowUps
   const readiness = intelligence.reportReadiness
   const isEmptyReport = readiness.status === 'empty'
   const primaryReportAction = !readiness.hasMeaningfulPlan
@@ -348,6 +174,7 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
         plan,
         activities,
         followUps,
+        performance,
         template,
       }
       if (!isHistorical) await upsertReportHistoryEntry(snapshot, getCurrentWorkspaceId())
@@ -377,7 +204,7 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
     setIsExportingPdf(true)
     setPdfExportMessage('')
     try {
-      const snapshot = { weekKey, weekLabel: getFixedReportWeekLabel(weekKey), plan, activities, followUps, template }
+      const snapshot = { weekKey, weekLabel: getFixedReportWeekLabel(weekKey), plan, activities, followUps, performance, template }
       if (!isHistorical) await upsertReportHistoryEntry(snapshot, getCurrentWorkspaceId())
       const result = exportReportPdf(snapshot)
       setPdfExportMessage(`Downloaded ${result.filename}`)
@@ -390,6 +217,13 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
 
   function carryForwardKey(title: string, account?: string) {
     return `${title}-${account ?? ''}`
+  }
+
+  function reviewSelectedInWeeklyPlan() {
+    if (template.id === 'project-management' && selectedCarryForward.length > 0) {
+      window.sessionStorage.setItem(`weekflow-carry-forward-selection:${getCurrentWorkspaceId()}`, JSON.stringify(selectedCarryForward))
+    }
+    navigateTo('/weekly-plan')
   }
 
   return (
@@ -412,7 +246,8 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
         <a className="button button-secondary" href={primaryReportAction.href} onClick={primaryReportAction.onClick}>Plan your week <AppIcon name="arrow-right" /></a>
       </section>}
       {!isEmptyReport && intelligence.dataQualityWarnings.length > 0 && <section className="report-review-items" aria-labelledby="report-review-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Before export</p><h2 id="report-review-heading">Review Before Export</h2></div><span>{intelligence.dataQualityWarnings.length}</span></div><ul>{intelligence.dataQualityWarnings.slice(0, 5).map((warning) => <li key={`${warning.title}-${warning.sourceActivityId ?? ''}`}><div><strong>{warning.title}</strong><p>{warning.reason}</p></div><a href={`${warning.sourceActivityId ? '/daily-activity' : '/follow-ups'}`}>Review <AppIcon name="arrow-right" /></a></li>)}</ul></section>}
-      {!isEmptyReport && intelligence.carryForwardCandidates.length > 0 && <section className="report-carry-forward" aria-labelledby="carry-forward-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Next week planning</p><h2 id="carry-forward-heading">Suggested Carry-Forward</h2><p>These unfinished items may be relevant to next week. Selecting one does not copy it automatically.</p></div><span>{intelligence.carryForwardCandidates.length}</span></div><ul>{intelligence.carryForwardCandidates.slice(0, 6).map((candidate) => { const key = carryForwardKey(candidate.title, candidate.account); return <li key={key}><label><input type="checkbox" checked={selectedCarryForward.includes(key)} onChange={(event) => setSelectedCarryForward((current) => event.target.checked ? [...current, key] : current.filter((item) => item !== key))} /><span><strong>{candidate.title}</strong><small>{candidate.reason}</small></span></label></li> })}</ul><button className="button button-secondary" type="button" disabled={selectedCarryForward.length === 0} onClick={() => { window.history.pushState(null, '', '/weekly-plan'); window.dispatchEvent(new PopStateEvent('popstate')) }}>Review Selected in Weekly Plan</button></section>}
+      {!isEmptyReport && intelligence.carryForwardCandidates.length > 0 && <section className="report-carry-forward" aria-labelledby="carry-forward-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Next week planning</p><h2 id="carry-forward-heading">Suggested Carry-Forward</h2><p>These unfinished items may be relevant to next week. Selecting one does not copy it automatically.</p></div><span>{intelligence.carryForwardCandidates.length}</span></div><ul>{intelligence.carryForwardCandidates.slice(0, 6).map((candidate) => { const key = carryForwardKey(candidate.title, candidate.account); return <li key={key}><label><input type="checkbox" checked={selectedCarryForward.includes(key)} onChange={(event) => setSelectedCarryForward((current) => event.target.checked ? [...current, key] : current.filter((item) => item !== key))} /><span><strong>{candidate.title}</strong><small>{candidate.reason}</small></span></label></li> })}</ul><button className="button button-secondary" type="button" disabled={selectedCarryForward.length === 0} onClick={reviewSelectedInWeeklyPlan}>Review Selected in Weekly Plan</button></section>}
+      {template.id === 'project-management' && performance && <section className="report-project-performance" aria-labelledby="project-performance-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Project Performance</p><h2 id="project-performance-heading">How the project week performed</h2></div><strong>{performance.overallStatus}</strong></div><div className="report-performance-metrics"><div><span>Tasks completed</span><strong>{performance.completedTasks} / {performance.plannedTasks}</strong></div><div><span>Completion</span><strong>{performance.completionRate === null ? 'Not available' : `${performance.completionRate.toFixed(1)}%`}</strong></div><div><span>Actual vs planned</span><strong>{performance.actualHours === null || performance.plannedHours === null ? 'Not available' : `${performance.actualHours}h / ${performance.plannedHours}h`}</strong></div><div><span>Outstanding follow-ups</span><strong>{performance.followUpsOutstanding}</strong></div></div><p className="report-performance-summary">{performance.summary}</p></section>}
       <section className={`report-export-actions${isEmptyReport ? ' report-export-actions-empty' : ''}`} aria-label="Export options">
         <button className="button button-primary" type="button" onClick={handleExportWord} disabled={isExporting} aria-busy={isExporting}>{isExporting ? 'Generating...' : 'Export Word Document'} {!isExporting && <AppIcon name="arrow-right" />}</button>
         <button className="button button-secondary" type="button" onClick={handleExportPdf} disabled={isExportingPdf} aria-busy={isExportingPdf}>{isExportingPdf ? 'Generating...' : 'Export PDF'} {!isExportingPdf && <AppIcon name="arrow-right" />}</button>
@@ -425,14 +260,24 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
       {!isEmptyReport && isHistorical && <div className="report-actions-historical"><a className="report-quiet-link" href="/report-history" onClick={(event) => { event.preventDefault(); navigateTo('/report-history') }}>Back to Report History</a></div>}
       <article className="report-preview">
         {!isEmptyReport && <ReportHeader weekKey={weekKey} template={template} />}
-        {isEmptyReport ? <EmptyReportDocument plan={plan} template={template} sections={mappedReportSections} /> : template.id === 'small-business' ? <SmallBusinessReportPreview plan={plan} activities={activities} followUps={followUps} template={template} sections={mappedReportSections} /> : <>
-          {summarySection && <section className="report-section report-summary-section motion-fade-up" style={{ animationDelay: '140ms' }} aria-labelledby="activities-summary-heading">{renderSectionTitle({ order: 1, title: summarySection.title, id: 'activities-summary-heading' })}{summaryLines.length > 0 ? <ul className="report-bullet-list">{summaryLines.map((line) => <li key={line}>{line}</li>)}</ul> : <p className="report-muted">{summarySection.presentation.emptyState}</p>}</section>}
-          {dailyBreakdownSection && <div className="motion-fade-up" style={{ animationDelay: '200ms' }}><DailyBreakdown plan={plan} template={template} sectionData={dailyBreakdownSection} /></div>}
-          {activityOutcomeSection && <div className="motion-fade-up" style={{ animationDelay: '260ms' }}><VirtualEngagements template={template} sectionData={activityOutcomeSection} /></div>}
-          {structuredOutcomeSection && <div className="motion-fade-up" style={{ animationDelay: '320ms' }}><StructuredOutcomes activities={activities} sectionData={structuredOutcomeSection} /></div>}
-          {intelligenceSection && <div className="motion-fade-up" style={{ animationDelay: '380ms' }}><StrategicIntelligence activities={activities} plan={plan} sectionData={intelligenceSection} /></div>}
-          {stakeholderSection && <div className="motion-fade-up" style={{ animationDelay: '440ms' }}><StakeholderUpdates activities={activities} sectionData={stakeholderSection} /></div>}
-          {followUpSection && <div className="motion-fade-up" style={{ animationDelay: '500ms' }}><FollowUpReport followUps={followUps} sectionData={followUpSection} /></div>}
+        {isEmptyReport ? <EmptyReportDocument plan={plan} template={template} sections={mappedReportSections} /> : <>
+          <section className="report-section report-summary-section motion-fade-up" style={{ animationDelay: '140ms' }} aria-labelledby="report-preview-heading">
+            <h3 id="report-preview-heading" className="report-section-title"><span className="report-section-number">01</span><span className="report-section-separator" aria-hidden="true">—</span><span className="report-section-heading-text">{narrativeReport.sections[0]?.title ?? summarySection?.title ?? 'Weekly Summary'}</span></h3>
+            <p className="report-muted" style={{ marginBottom: '12px' }}>{narrativeReport.summaryText}</p>
+            {narrativeReport.sections[0]?.items.slice(0, 6).map((item) => <div key={`${item.title}-${item.summary}`} style={{ marginBottom: '14px' }}><strong style={{ display: 'block', marginBottom: '4px', color: 'var(--color-text-primary)' }}>{item.title}</strong><p className="report-muted" style={{ margin: 0 }}>{item.summary}</p></div>)}
+          </section>
+          {narrativeReport.sections.slice(1).map((section) => (
+            <section key={section.id} className="report-section motion-fade-up" style={{ animationDelay: '200ms' }} aria-labelledby={`${section.id}-heading`}>
+              <h3 id={`${section.id}-heading`} className="report-section-title"><span className="report-section-number">{String(section.order).padStart(2, '0')}</span><span className="report-section-separator" aria-hidden="true">—</span><span className="report-section-heading-text">{section.title}</span></h3>
+              {section.items.length > 0 ? section.items.map((item) => (
+                <div key={`${section.id}-${item.title}-${item.summary}`} style={{ marginBottom: '18px' }}>
+                  <strong style={{ display: 'block', marginBottom: '6px', color: 'var(--color-text-primary)' }}>{item.title}</strong>
+                  <p className="report-muted" style={{ margin: 0 }}>{item.summary}</p>
+                  {item.detail && <p className="report-muted" style={{ marginTop: '8px' }}>{item.detail}</p>}
+                </div>
+              )) : <p className="report-muted">{section.emptyText}</p>}
+            </section>
+          ))}
         </>}
       </article>
     </main>

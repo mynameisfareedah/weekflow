@@ -1,22 +1,24 @@
 import { getTemplateById, getWorkflowTemplateById } from '../config/templates.ts'
-import { DEFAULT_WORKSPACE_ID, ensureDefaultWorkspace, getCurrentWorkspaceId, getLegacyCompatibleWorkspaceId, getWorkspaceById, upsertWorkspace } from './workspaceStorage'
+import { getCurrentWorkspaceId, getWorkspaceById } from './workspaceStorage'
 
 export const TEMPLATE_STORAGE_KEY = 'weekflow-template'
 export const DEFAULT_TEMPLATE_ID = 'field-sales'
 
 function getWorkspaceTemplateStorageKey(workspaceId = getCurrentWorkspaceId()) {
-  return `${TEMPLATE_STORAGE_KEY}:${workspaceId}`
+  return workspaceId ? `${TEMPLATE_STORAGE_KEY}:${workspaceId}` : null
 }
 
 export function getSelectedTemplateId() {
   const workspaceId = getCurrentWorkspaceId()
+  if (!workspaceId) return DEFAULT_TEMPLATE_ID
   const currentWorkspace = getWorkspaceById(workspaceId)
   const workspaceScopedValue = currentWorkspace && getTemplateById(currentWorkspace.templateId)?.id
   if (workspaceScopedValue) {
     return workspaceScopedValue
   }
 
-  const workspaceSpecificValue = window.localStorage.getItem(getWorkspaceTemplateStorageKey(workspaceId))
+  const workspaceKey = getWorkspaceTemplateStorageKey(workspaceId)
+  const workspaceSpecificValue = workspaceKey ? window.localStorage.getItem(workspaceKey) : null
   if (workspaceSpecificValue && getTemplateById(workspaceSpecificValue)) {
     return workspaceSpecificValue
   }
@@ -27,28 +29,6 @@ export function getSelectedTemplateId() {
   }
 
   return DEFAULT_TEMPLATE_ID
-}
-
-export function saveSelectedTemplateId(templateId: string) {
-  const template = getTemplateById(templateId)
-  if (!template) return false
-
-  const workspaceId = getCurrentWorkspaceId()
-  const workspace = getWorkspaceById(workspaceId) ?? ensureDefaultWorkspace(template.id)
-  const nextWorkspace = {
-    ...workspace,
-    templateId: template.id,
-    updatedAt: new Date().toISOString(),
-  }
-
-  upsertWorkspace(nextWorkspace)
-  window.localStorage.setItem(getWorkspaceTemplateStorageKey(workspaceId), template.id)
-
-  if (workspaceId === getLegacyCompatibleWorkspaceId() || workspaceId === DEFAULT_WORKSPACE_ID) {
-    window.localStorage.setItem(TEMPLATE_STORAGE_KEY, template.id)
-  }
-
-  return true
 }
 
 export function getSelectedTemplate() {

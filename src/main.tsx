@@ -1,7 +1,10 @@
-import { StrictMode } from 'react'
+import { StrictMode, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import App from './App.tsx'
+import { applyTheme, getStoredThemePreference } from './theme'
+import { App, LandingApp } from './lazyRoutes'
+
+applyTheme(getStoredThemePreference())
 
 const canonicalLink = document.createElement('link')
 canonicalLink.rel = 'canonical'
@@ -16,6 +19,8 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <Suspense fallback={null}>
+      {window.location.pathname === '/' ? <LandingApp /> : <App />}
+    </Suspense>
   </StrictMode>,
 )

@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "validate:intelligence": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/validate-intelligence.ts",
     "validate:report-mapping": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/validate-report-mapping.ts",
+    "validate:narrative": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/validate-report-narrative.ts",
     "preview": "vite preview"
   },
   "dependencies": {

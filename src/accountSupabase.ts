@@ -91,6 +91,27 @@ export const supabaseAccountProvider: AccountProvider = {
     const { error } = await getConfiguredSupabase().auth.updateUser({ password })
     if (error) throw error
   },
+  async deleteAccount() {
+    const { data, error } = await getConfiguredSupabase().auth.getSession()
+    if (error) throw error
+    const accessToken = data.session?.access_token
+    if (!accessToken) throw new Error('Your session has expired. Sign in again before deleting your account.')
+
+    const response = await fetch('/.netlify/functions/delete-account', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    if (!response.ok) {
+      let message = 'Your account could not be deleted. Please try again.'
+      try {
+        const body = await response.json() as { error?: unknown }
+        if (typeof body.error === 'string' && body.error.trim()) message = body.error
+      } catch {
+        // Keep the safe fallback when the function response is not JSON.
+      }
+      throw new Error(message)
+    }
+  },
   async signOut() {
     const { error } = await getConfiguredSupabase().auth.signOut()
     if (error) throw error
@@ -101,7 +122,7 @@ export const supabaseAccountProvider: AccountProvider = {
       password: input.password,
       options: {
         data: { displayName: input.displayName },
-        emailRedirectTo: new URL('/', window.location.origin).toString(),
+        emailRedirectTo: new URL('/auth/callback', window.location.origin).toString(),
       },
     })
     if (error || !data.user) throw error ?? new Error('Supabase account creation did not return a user.')

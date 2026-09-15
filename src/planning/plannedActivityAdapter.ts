@@ -1,7 +1,7 @@
 import type { ActivityType } from '../types/dailyActivity'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from '../config/templates'
 import { getActivityTypeOptions } from '../activity/activityTypeAdapter'
-import type { DayPlan } from '../types/weeklyPlan'
+import type { DayPlan, WeeklyPlan } from '../types/weeklyPlan'
 
 export interface PlannedActivity {
   id: string
@@ -9,10 +9,25 @@ export interface PlannedActivity {
   account: string
   focus: string
   activityType: ActivityType
+  programmeArea?: string
+  location?: string
 }
 
-export function getExecutablePlannedActivities(day: DayPlan, template: WeekFlowTemplate = FIELD_SALES_TEMPLATE): PlannedActivity[] {
+export function getExecutablePlannedActivities(day: DayPlan, template: WeekFlowTemplate = FIELD_SALES_TEMPLATE, weeklyPlan?: WeeklyPlan): PlannedActivity[] {
   const activityTypes = getActivityTypeOptions(template).map((option) => option.value as ActivityType)
+  if (template.id === 'ngo-community') {
+    return (weeklyPlan?.programmeActivities ?? [])
+      .filter((item) => !item.plannedDate || item.plannedDate.toLowerCase() === day.label.toLowerCase() || item.plannedDate === day.date)
+      .map((item) => ({
+        id: `programme:${item.id}`,
+        label: item.activity,
+        account: item.activity,
+        focus: [item.programmeArea, item.location, item.owner, item.target ? `Target: ${item.target}` : '', item.status].filter(Boolean).join(' | '),
+        activityType: 'Programme Activity' as ActivityType,
+        programmeArea: item.programmeArea,
+        location: item.location,
+      }))
+  }
   if (template.id === 'project-management') {
     const projectWork = day.categories.facilities.map((item) => ({ id: `project:${item.id}`, label: item.text, account: item.text, focus: [...day.categories.primaryObjectives, ...day.categories.commercialPriorities].map((focus) => focus.text).join(' | '), activityType: 'Project Work' as ActivityType }))
     const deliverables = day.categories.accountObjectives.map((item) => ({ id: `deliverable:${item.id}`, label: item.text, account: item.text, focus: item.text, activityType: 'Review / Approval' as ActivityType }))

@@ -6,7 +6,7 @@ export type SmartStartCompletion = 'started' | 'fresh'
 const STORAGE_PREFIX = 'weekflow-smart-start:'
 
 function getWorkspaceStorageKey(weekStart: string, workspaceId = getCurrentWorkspaceId()) {
-  return getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekStart, workspaceId)
+  return workspaceId ? getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekStart, workspaceId) : null
 }
 
 function getLegacyCompatibleStorageValue(weekStart: string, workspaceId = getCurrentWorkspaceId()) {
@@ -17,7 +17,8 @@ function getLegacyCompatibleStorageValue(weekStart: string, workspaceId = getCur
 function loadSmartStartCompletionLocal(weekStart: string): SmartStartCompletion | null {
   try {
     const workspaceId = getCurrentWorkspaceId()
-    const value = window.localStorage.getItem(getWorkspaceStorageKey(weekStart, workspaceId)) ?? getLegacyCompatibleStorageValue(weekStart, workspaceId)
+    const key = getWorkspaceStorageKey(weekStart, workspaceId)
+    const value = (key ? window.localStorage.getItem(key) : null) ?? getLegacyCompatibleStorageValue(weekStart, workspaceId)
     return value === 'started' || value === 'fresh' ? value : null
   } catch {
     return null
@@ -28,6 +29,7 @@ function saveSmartStartCompletionLocal(weekStart: string, completion: SmartStart
   try {
     const workspaceId = getCurrentWorkspaceId()
     const workspaceKey = getWorkspaceStorageKey(weekStart, workspaceId)
+    if (!workspaceId || !workspaceKey) return
     window.localStorage.setItem(workspaceKey, completion)
     if (workspaceId === getLegacyCompatibleWorkspaceId()) {
       window.localStorage.setItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart), completion)

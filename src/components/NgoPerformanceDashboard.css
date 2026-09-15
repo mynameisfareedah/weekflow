@@ -1,0 +1,133 @@
+.ngo-performance-dashboard {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  border: 1px solid var(--line, #d9ded8);
+  background: var(--surface, #fff);
+}
+
+.ngo-performance-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.ngo-performance-heading h2 {
+  margin: 0.2rem 0 0;
+}
+
+.ngo-performance-heading p:not(.eyebrow) {
+  margin: 0.45rem 0 0;
+  color: var(--muted, #667067);
+}
+
+.ngo-performance-status {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid currentColor;
+  color: #7b4d12;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.ngo-performance-status.is-progress-evidenced {
+  color: #2c6b4f;
+}
+
+.ngo-performance-status.is-attention-required {
+  color: #9a3f2f;
+}
+
+.ngo-performance-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line, #d9ded8);
+  background: var(--line, #d9ded8);
+}
+
+.ngo-performance-section {
+  min-width: 0;
+  padding: 1rem;
+  background: var(--surface, #fff);
+}
+
+.ngo-performance-section h3 {
+  margin: 0 0 0.8rem;
+  font-size: 0.9rem;
+}
+
+.ngo-performance-stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.ngo-performance-stat-row div {
+  min-width: 0;
+}
+
+.ngo-performance-stat-row span {
+  display: block;
+  color: var(--muted, #667067);
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
+
+.ngo-performance-stat-row strong {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--ink, #1f2a22);
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.ngo-performance-attention {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  grid-column: 1 / -1;
+}
+
+.ngo-performance-attention ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--muted, #667067);
+}
+
+.ngo-performance-attention li + li {
+  margin-top: 0.3rem;
+}
+
+.ngo-performance-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+@media (max-width: 720px) {
+  .ngo-performance-dashboard {
+    padding: 1rem;
+  }
+
+  .ngo-performance-heading,
+  .ngo-performance-empty,
+  .ngo-performance-attention {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ngo-performance-sections {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ngo-performance-stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

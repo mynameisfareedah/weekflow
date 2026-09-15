@@ -1,37 +1,50 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import logoImage from './assets/weekflow-logo.png'
 import DailyActivityScreen from './components/DailyActivityScreen'
 import FollowUpsScreen from './components/FollowUpsScreen'
-import GenerateReportScreen from './components/GenerateReportScreen'
 import OverviewScreen from './components/OverviewScreen'
-import TemplateSelectionScreen from './components/TemplateSelectionScreen'
 import ProfileSettingsScreen from './components/ProfileSettingsScreen'
 import TemplateIcon, { AppIcon } from './components/TemplateIcon'
 import { loadDailyActivities } from './storage/dailyActivityStorage'
-import { loadFollowUps } from './storage/followUpsStorage'
+import { loadFollowUps, saveFollowUpsAsync } from './storage/followUpsStorage'
 import { deriveWeeklyIntelligence } from './intelligence/intelligenceEngine'
+import { getSmartStartCandidateKeysFromCarryForwardSelection, getSmartStartCandidates, mergeSmartStartSelections, type SmartStartCandidate } from './intelligence/smartStart'
+import { loadSmartStartCompletion, saveSmartStartCompletion, type SmartStartCompletion } from './storage/smartStartStorage'
 import {
   getCurrentWeekStart,
+  getPlanningWeekStart,
+  getPreviousWeekStart,
   getSelectedWeekStart,
+  getWeekSelectionSource,
   getWeekStartFromInput,
   loadWeeklyPlan,
   loadWeeklyPlanAsync,
+  saveWeeklyPlan,
   saveWeeklyPlanAsync,
   setSelectedWeekStart,
   toWeekInput,
 } from './storage/weeklyPlanStorage'
 import {
   type AccountObjective,
+  type CommunicationPlanItem,
+  type CommunityEngagementItem,
   type CommercialPriority,
   type DayId,
   type DayPlan,
+  type DocumentationPlanItem,
+  type MonitoringImpactTarget,
   type PlanCategory,
   type PlanItem,
+  type ProgrammeActivity,
+  type ResourceLogisticsItem,
+  type StakeholderPlanItem,
   type SuccessMeasure,
   type VirtualEngagementPlanItem,
+  type VolunteerPlanItem,
+  type WeeklyObjective,
   type WeeklyPlan,
+  type WeeklyProgrammeContext,
 } from './types/weeklyPlan'
-import { exportReportWord } from './utils/reportDocx'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from './config/templates'
 import { getReportHistoryEntry, loadReportHistoryEntries, type ReportHistoryEntry } from './storage/reportHistoryStorage'
 import { getSelectedTemplate } from './storage/templateStorage'
@@ -39,13 +52,16 @@ import { getPlanningCategoryDescriptors, getPlanningCategoryItems, type Planning
 import { getTemplateTerminology } from './config/templateTerminology'
 import { WEEK_DAY_IDS } from './utils/week'
 import { navigateTo } from './utils/navigation'
-import { createWorkspace, DEFAULT_ACCOUNT_ID, ensureFirstWorkspaceForOwner, getCurrentWorkspace, getCurrentWorkspaceId, isWorkspaceNameTaken, loadWorkspaces, normalizeWorkspaceName, provisionWorkspaceInCloud, setCurrentWorkspaceId, setWorkspaceOwner } from './storage/workspaceStorage'
+import { clearWorkspaceOwnerLocalData, createWorkspace, DEFAULT_ACCOUNT_ID, deleteWorkspace, ensureFirstWorkspaceForOwner, getCurrentWorkspace, getCurrentWorkspaceId, isWorkspaceNameTaken, loadWorkspaces, normalizeWorkspaceName, provisionWorkspaceInCloud, renameWorkspace, setCurrentWorkspaceId, setWorkspaceOwner } from './storage/workspaceStorage'
 import { getAvailableTemplates } from './config/templates'
 import { accountProvider, type AccountState, createAccount, getCurrentUser, requestPasswordReset, signIn, signOut, updatePassword } from './account'
 import { isSupabaseConfigured } from './lib/supabase'
 import type { UserProfile } from './types/workspace'
+import { applyTheme, getStoredThemePreference } from './theme'
 import './App.css'
 import './landing.css'
+
+const GenerateReportScreen = lazy(() => import('./components/GenerateReportScreen'))
 
 const navigationItems = [
   { label: 'Overview', path: '/', icon: 'overview' as const },
@@ -54,25 +70,33 @@ const navigationItems = [
   { label: 'Follow-ups', path: '/follow-ups', icon: 'follow-ups' as const },
   { label: 'Generate Report', path: '/report', icon: 'report' as const },
   { label: 'Report History', path: '/report-history', icon: 'report-history' as const },
-  { label: 'Template', path: '/template-selection', icon: 'workflow' as const },
+  { label: 'Workspaces', path: '/workspaces', icon: 'workspaces' as const },
 ]
 
 const navigationGroups = [
-  { label: 'Your Workflows', items: [{ label: 'Your Workflows', path: '/workspaces', icon: 'workspaces' as const }] },
-  { label: 'Workspace', items: navigationItems.slice(0, 5) },
-  { label: 'History', items: navigationItems.slice(5, 6) },
-  { label: 'Configuration', items: navigationItems.slice(6) },
-]
+  { id: 'workspace', label: 'Workspace', items: navigationItems.slice(0, 5) },
+  { id: 'history', label: 'History', items: navigationItems.slice(5, 6) },
+  { id: 'configuration', label: 'Configuration', items: navigationItems.slice(6) },
+] as const
+
+const getSectionIdForScreen = (screen: string): string | null => {
+  if (['overview', 'weekly-plan', 'daily-activity', 'follow-ups', 'report'].includes(screen)) return 'workspace'
+  if (screen === 'report-history') return 'history'
+  if (screen === 'workspaces') return 'configuration'
+  return null
+}
+
+const maximumUsernameLength = 80
 
 function getScreenFromPath(): string {
   const pathname = window.location.pathname
+  if (pathname === '/auth/callback') return 'auth-callback'
   if (pathname === '/sign-in') return 'sign-in'
   if (pathname === '/sign-up') return 'sign-up'
   if (pathname === '/forgot-password') return 'forgot-password'
   if (pathname === '/reset-password') return 'reset-password'
   if (pathname === '/profile') return 'profile'
   if (pathname === '/workspaces') return 'workspaces'
-  if (pathname === '/template-selection') return 'template-selection'
   if (pathname === '/weekly-plan') return 'weekly-plan'
   if (pathname === '/daily-activity') return 'daily-activity'
   if (pathname === '/follow-ups') return 'follow-ups'
@@ -131,6 +155,7 @@ const landingWorkflowDemos = [
   { id: 'field-service', name: 'Field Operations', status: 'On track', planned: 11, activities: 15, followUps: 6, plan: ['Site visits', 'Inspections', 'Service jobs', 'Equipment checks'], activity: ['Site visit', 'Inspection', 'Service job'], followThrough: '6 actions remain visible' },
   { id: 'ngo-community', name: 'NGO & Community Work', status: 'Making progress', planned: 8, activities: 13, followUps: 4, plan: ['Community outreach', 'Beneficiary engagement', 'Partner coordination', 'Programme activities'], activity: ['Community visit', 'Beneficiary engagement', 'Partner meeting'], followThrough: '4 actions remain visible' },
   { id: 'education', name: 'Education', status: 'On track', planned: 9, activities: 14, followUps: 3, plan: ['Lesson planning', 'Student activities', 'Assessment', 'Academic priorities'], activity: ['Lesson preparation', 'Student session', 'Assessment review'], followThrough: '3 actions remain visible' },
+  { id: 'custom', name: 'Custom', status: 'Ready to shape', planned: 6, activities: 9, followUps: 2, plan: ['Custom priorities', 'Key outcomes', 'Important work'], activity: ['Work session', 'Progress update', 'Next action'], followThrough: '2 actions remain visible' },
 ] as const
 
 function AnimatedLandingPreview() {
@@ -144,7 +169,7 @@ function AnimatedLandingPreview() {
   }, [])
 
   return <div className="landing-preview-wrap landing-preview-carousel" aria-label={`${demo.name} WeekFlow product preview`}>
-    <div className="landing-demo-selector"><span>WORKFLOW</span><div className="landing-demo-options">{landingWorkflowDemos.map((item, index) => <button type="button" className={index === activeIndex ? 'is-active' : ''} onClick={() => setActiveIndex(index)} key={item.id} aria-label={`Show ${item.name}`}><TemplateIcon templateId={item.id} /><span>{item.name}</span></button>)}</div></div>
+    <div className="landing-demo-selector"><span>TEMPLATES</span><div className="landing-demo-options">{landingWorkflowDemos.map((item, index) => <button type="button" className={index === activeIndex ? 'is-active' : ''} onClick={() => setActiveIndex(index)} key={item.id} aria-label={`Show ${item.name}`}><TemplateIcon templateId={item.id} /><span>{item.name}</span></button>)}</div></div>
     <div className="landing-product-preview landing-product-preview-live" key={demo.id}><div className="preview-window-bar"><span className="preview-dots"><i /><i /><i /></span><span>WeekFlow</span><span className="preview-week">Week of Aug 10 - Aug 16</span></div><div className="preview-body"><aside><strong>WeekFlow</strong><span className="preview-active">Overview</span><span>Weekly Plan</span><span>Daily Activity</span><span>Follow-ups</span><span>Report</span></aside><div className="preview-main"><div className="preview-heading"><div><small>{demo.name}</small><h2>Your week at a glance.</h2></div><b>{demo.status}</b></div><div className="preview-metrics"><div><small>Planned</small><strong>{demo.planned}</strong></div><div><small>Activities</small><strong>{demo.activities}</strong></div><div><small>Follow-ups</small><strong>{demo.followUps}</strong></div></div><div className="preview-content-grid"><div className="preview-plan"><small>Weekly Plan</small>{demo.plan.map((item) => <strong key={item}>{item}</strong>)}</div><div className="preview-followups"><small>Daily Activity</small>{demo.activity.map((item) => <strong key={item}>{item}</strong>)}<span className="preview-pill">{demo.followThrough}</span></div></div></div></div></div>
   </div>
 }
@@ -182,7 +207,7 @@ function PublicLandingScreen({ onSignIn, onCreateAccount }: { onSignIn: () => vo
   ]
   const templates = getAvailableTemplates()
   const templateById = new Map(templates.map((template) => [template.id, template]))
-  const workflow = [
+  const weekRhythm = [
     ['01', 'PLAN', 'Weekly Plan', 'Set objectives and organise the work ahead.'],
     ['02', 'ACTIVITY', 'Daily Activity', 'Capture what actually happened during the week.'],
     ['03', 'FOLLOW-UP', 'Follow-ups', 'Keep unresolved actions visible until they are done.'],
@@ -193,7 +218,7 @@ function PublicLandingScreen({ onSignIn, onCreateAccount }: { onSignIn: () => vo
     <AnimatedLandingPreview />
     <nav className="landing-nav"><a className="landing-brand" href="/" aria-label="WeekFlow home"><img src={logoImage} alt="WeekFlow mark" /><span className="landing-wordmark">WeekFlow</span></a><div className="landing-nav-actions"><button type="button" className="landing-sign-in" onClick={onSignIn}>Sign In</button><button type="button" className="button button-primary landing-nav-cta" onClick={onCreateAccount}>Create a free account</button></div></nav>
     <section className="landing-hero"><div className="landing-hero-copy"><p className="landing-eyebrow">Your week, working better</p><h1>Plan your week.<br /><em>Stay on top of the work.</em></h1><p className="landing-hero-text">WeekFlow brings your weekly plans, daily activity, follow-ups, review, and reporting into one simple workspace.</p><div className="landing-hero-actions"><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create a free account <AppIcon name="arrow-right" /></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div></div><div className="landing-preview-wrap"><span className="preview-float preview-float-week">Week of Aug 10-16</span><span className="preview-float preview-float-followups">5 follow-ups</span><div className="landing-product-preview" aria-label="WeekFlow product preview"><div className="preview-window-bar"><span className="preview-dots"><i /><i /><i /></span><span>WeekFlow</span><span className="preview-week">Aug 10 - Aug 16</span></div><div className="preview-body"><aside><strong>WeekFlow</strong><span className="preview-active">Overview</span><span>Weekly Plan</span><span>Daily Activity</span><span>Follow-ups</span><span>Report</span></aside><div className="preview-main"><div className="preview-heading"><div><small>Current work week</small><h2>Your week at a glance.</h2></div><b>Ready to review</b></div><div className="preview-metrics"><div><small>Planned</small><strong>12</strong></div><div><small>Activities</small><strong>18</strong></div><div><small>Follow-ups</small><strong>5</strong></div></div><div className="preview-content-grid"><div className="preview-plan"><small>Weekly Plan</small><strong>Priority accounts and next actions</strong><span className="preview-line" /><span className="preview-line short" /><span className="preview-line" /></div><div className="preview-followups"><small>Follow-through</small><strong>5 actions remain visible</strong><span className="preview-pill">On track</span></div></div></div></div></div></div></section>
-    <section className="landing-section landing-workflow" id="workflow"><div className="landing-section-heading"><p className="landing-eyebrow">The WeekFlow rhythm</p><h2>One week. One clear rhythm.</h2><p>Plan. Work. Follow through. Review. Report.</p></div><div className="landing-orbit-window" aria-label="WeekFlow rhythm stages"><div className="landing-orbit-ring" aria-hidden="true" />{workflow.map(([number, label, title, description], index) => <article className="landing-orbit-card" style={{ ['--orbit-delay' as string]: `${index * -4}s` }} key={number}><span>{number}</span><small>{label}</small><h3>{title}</h3><p>{description}</p></article>)}</div></section>
+    <section className="landing-section landing-workflow" id="week-rhythm"><div className="landing-section-heading"><p className="landing-eyebrow">The WeekFlow rhythm</p><h2>One week. One clear rhythm.</h2><p>Plan. Work. Follow through. Review. Report.</p></div><div className="landing-orbit-window" aria-label="WeekFlow rhythm stages"><div className="landing-orbit-ring" aria-hidden="true" />{weekRhythm.map(([number, label, title, description], index) => <article className="landing-orbit-card" style={{ ['--orbit-delay' as string]: `${index * -4}s` }} key={number}><span>{number}</span><small>{label}</small><h3>{title}</h3><p>{description}</p></article>)}</div></section>
         <section className="landing-story landing-story-activity landing-reveal"><div className="landing-story-visual landing-activity-visual"><div className="story-window-label">Planned work <span>Actual activity</span></div><div className="story-flow-step"><b>Weekly Plan</b><span>Planned priorities</span></div><div className="story-flow-arrow"><AppIcon name="arrow-down" /></div><div className="story-flow-step is-active"><b>Daily Activity</b><span>What actually happened</span></div><div className="story-outcome-row"><span>Outcome</span><span>Intelligence</span><span>Next Action</span></div></div><div className="landing-story-copy"><p className="landing-eyebrow">Product in action</p><h2>Turn the plan into real work.</h2><p>Start the week knowing what matters. Capture what actually happens as the work unfolds.</p></div></section>
     <section className="landing-story landing-story-followups landing-reveal"><div className="landing-story-copy"><p className="landing-eyebrow">Follow-ups</p><h2>Don't let important work disappear.</h2><p>Keep unresolved actions visible until they're complete.</p></div><div className="landing-story-visual landing-followups-visual"><div className="story-window-label">Follow-ups <span>Open work</span></div><div className="story-followup-row"><span className="story-dot is-open" /><strong>Confirm account next action</strong><small>Priority</small></div><div className="story-followup-row"><span className="story-dot is-open" /><strong>Share outcome with team</strong><small>Due this week</small></div><div className="story-followup-row is-complete"><span className="story-dot is-done"><AppIcon name="check" /></span><strong>Complete follow-up</strong><small>Completed</small></div></div></section>
     <section className="landing-feature-band landing-reveal"><div><p className="landing-eyebrow">Smart Start</p><h2>Start the next week with less work to rebuild.</h2><p>Carry forward the unfinished work that still matters. Leave completed work behind.</p></div><div className="landing-smart-visual"><div><small>Last week</small><span>[done] Completed work</span><span>[done] Completed follow-ups</span><b>-&gt; Unfinished priorities</b></div><div className="smart-start-bridge"><span>Smart Start</span><b>select what still matters</b></div><div><small>New week</small><b>-&gt; Carry forward what still matters</b></div></div></section>
@@ -227,8 +252,13 @@ function AuthenticationScreen({ initialMode = 'welcome' }: { initialMode?: 'welc
       setErrorMessage('Enter your email and password to continue.')
       return
     }
-    if (mode === 'signup' && !displayName.trim()) {
-      setErrorMessage('Enter your full name to create an account.')
+    const trimmedUsername = displayName.trim()
+    if (mode === 'signup' && !trimmedUsername) {
+      setErrorMessage('Enter a username to create an account.')
+      return
+    }
+    if (mode === 'signup' && trimmedUsername.length > maximumUsernameLength) {
+      setErrorMessage(`Keep your username to ${maximumUsernameLength} characters or fewer.`)
       return
     }
     if (mode === 'signup' && password !== confirmPassword) {
@@ -241,7 +271,7 @@ function AuthenticationScreen({ initialMode = 'welcome' }: { initialMode?: 'welc
       if (mode === 'signin') {
         await signIn({ email: email.trim(), password })
       } else {
-        const result = await createAccount({ displayName: displayName.trim(), email: email.trim(), password })
+        const result = await createAccount({ displayName: trimmedUsername, email: email.trim(), password })
         if (!result.authenticated) {
           setSuccessMessage('Account created. Please check your email to confirm your account before signing in.')
           setMode('signin')
@@ -257,11 +287,11 @@ function AuthenticationScreen({ initialMode = 'welcome' }: { initialMode?: 'welc
   }
 
   if (mode === 'welcome') {
-    return <main className="auth-screen"><div className="auth-panel auth-welcome-panel"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Weekly workflow</p><h1>Plan your week. Track what happens. Stay on top of what comes next.</h1><p className="auth-intro">A focused workspace for turning plans, activity, and follow-through into a clearer week.</p><div className="auth-actions"><button type="button" className="button button-primary" onClick={() => { resetMessages(); setMode('signin') }}>Sign In</button><button type="button" className="button button-secondary" onClick={() => { resetMessages(); setMode('signup') }}>Create Account</button></div></div></main>
+    return <main className="auth-screen"><div className="auth-panel auth-welcome-panel"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Weekly planning</p><h1>Plan your week. Track what happens. Stay on top of what comes next.</h1><p className="auth-intro">A focused workspace for turning plans, activity, and follow-through into a clearer week.</p><div className="auth-actions"><button type="button" className="button button-primary" onClick={() => { resetMessages(); setMode('signin') }}>Sign In</button><button type="button" className="button button-secondary" onClick={() => { resetMessages(); setMode('signup') }}>Create Account</button></div></div></main>
   }
 
-  return <main className="auth-screen"><section className="auth-panel" aria-labelledby="auth-title"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Account</p><h1 id="auth-title">{mode === 'signin' ? 'Welcome back' : 'Create your account'}</h1><p className="auth-intro">{mode === 'signin' ? 'Sign in to return to your workflows.' : 'Start building a calmer, more useful weekly rhythm.'}</p><form className="auth-form" onSubmit={submit} noValidate>
-    {mode === 'signup' && <label className="auth-field"><span>Full Name</span><input autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>}
+  return <main className="auth-screen"><section className="auth-panel" aria-labelledby="auth-title"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Account</p><h1 id="auth-title">{mode === 'signin' ? 'Welcome back' : 'Create your account'}</h1><p className="auth-intro">{mode === 'signin' ? 'Sign in to return to your workspaces.' : 'Start building a calmer, more useful weekly rhythm.'}</p><form className="auth-form" onSubmit={submit} noValidate>
+    {mode === 'signup' && <label className="auth-field"><span>Username</span><input autoComplete="name" maxLength={maximumUsernameLength} placeholder="Enter your preferred name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /><small>This is how WeekFlow will address you in your workspace.</small></label>}
     <label className="auth-field"><span>Email</span><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
     <label className="auth-field"><span>Password</span><input type="password" autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
     {mode === 'signin' && <button className="auth-inline-link" type="button" onClick={() => navigateTo('/forgot-password')}>Forgot password?</button>}
@@ -269,7 +299,11 @@ function AuthenticationScreen({ initialMode = 'welcome' }: { initialMode?: 'welc
     {errorMessage && <p className="auth-message auth-error" role="alert">{errorMessage}</p>}
     {successMessage && <p className="auth-message auth-success" role="status">{successMessage}</p>}
     <button className="button button-primary auth-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Working...' : mode === 'signin' ? 'Sign In' : 'Create Account'}</button>
-  </form><button className="auth-switch" type="button" onClick={() => { resetMessages(); setMode(mode === 'signin' ? 'signup' : 'signin') }}>{mode === 'signin' ? 'Need an account? Create Account' : 'Already have an account? Sign In'}</button><button className="auth-back" type="button" onClick={() => { resetMessages(); setMode('welcome') }}>Back to WeekFlow</button></section></main>
+  </form><button className="auth-switch" type="button" onClick={() => { resetMessages(); setMode(mode === 'signin' ? 'signup' : 'signin') }}>{mode === 'signin' ? 'Need an account? Create Account' : 'Already have an account? Sign In'}</button><button className="auth-back" type="button" onClick={() => { resetMessages(); if (mode === 'signup') { navigateTo('/') } else { setMode('welcome') } }}>Back to WeekFlow</button></section></main>
+}
+
+function AuthCallbackScreen() {
+  return <main className="auth-screen"><section className="auth-panel" aria-labelledby="auth-callback-title"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p className="eyebrow">Account confirmation</p><h1 id="auth-callback-title">Email confirmation could not be completed</h1><p className="auth-intro">The confirmation link may have expired or is no longer valid. Start again from Sign In or Create Account.</p><div className="auth-actions"><button type="button" className="button button-primary" onClick={() => navigateTo('/sign-in')}>Sign In</button><button type="button" className="button button-secondary" onClick={() => navigateTo('/sign-up')}>Create Account</button></div></section></main>
 }
 
 function humanizeResetError(error: unknown, isPasswordUpdate = false) {
@@ -356,13 +390,20 @@ function ResetPasswordScreen() {
 }
 
 function AuthLoadingScreen() {
-  return <main className="auth-screen"><div className="auth-panel auth-loading"><img className="auth-logo" src={logoImage} alt="WeekFlow" /><p>Restoring your session...</p></div></main>
+  return <main className="auth-screen" aria-busy="true"><div className="auth-panel auth-loading"><img className="auth-logo" src={logoImage} alt="WeekFlow" /></div></main>
 }
 
 function getUserInitials(user: UserProfile | null) {
   const source = user?.displayName?.trim() || user?.email?.trim() || ''
   const words = source.split(/\s+/).filter(Boolean)
   return words.length > 1 ? `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase() : (words[0]?.slice(0, 2) || 'WF').toUpperCase()
+}
+
+function getTimeAwareGreeting(name: string) {
+  const hour = new Date().getHours()
+  const displayName = name.trim() || 'there'
+  const greeting = hour >= 5 && hour < 12 ? 'Good morning' : hour >= 12 && hour < 18 ? 'Good afternoon' : 'Good evening'
+  return `${greeting}, ${displayName}`
 }
 
 function Header({
@@ -373,7 +414,6 @@ function Header({
   onToggleWorkspaceMenu,
   onOpenNavigation,
   onSelectWorkspace,
-  onOpenCreateWorkspace,
   onOpenProfile,
   user,
   onSignOut,
@@ -385,7 +425,6 @@ function Header({
   onToggleWorkspaceMenu: () => void
   onOpenNavigation: () => void
   onSelectWorkspace: (workspaceId: string) => void
-  onOpenCreateWorkspace: () => void
   onOpenProfile: () => void
   user: UserProfile | null
   onSignOut: () => void
@@ -424,14 +463,14 @@ function Header({
       </div>
       <div className="workspace-switcher-wrap">
         <button className="workspace-switcher-trigger" type="button" onClick={onToggleWorkspaceMenu} aria-expanded={workspaceMenuOpen} aria-label="Workspace switcher">
-          <span className="workspace-switcher-name">{currentWorkspace.name}</span>
-          <span className="workspace-switcher-template">{currentTemplate.name}</span>
+          <span className="workspace-switcher-name">{currentWorkspace?.name ?? 'No workspace selected'}</span>
+          {currentWorkspace && <span className="workspace-switcher-template">{currentTemplate.name}</span>}
         </button>
         {workspaceMenuOpen && (
           <div className="workspace-switcher-menu" role="menu" aria-label="Workspace switcher menu">
             <div className="workspace-switcher-header">Your workspaces</div>
             {workspaces.map((workspace) => {
-              const isCurrent = workspace.id === currentWorkspace.id
+              const isCurrent = workspace.id === currentWorkspace?.id
               const templateName = getAvailableTemplates().find((template) => template.id === workspace.templateId)?.name ?? currentTemplate.name
               return (
                 <button type="button" className={`workspace-switcher-item${isCurrent ? ' is-current' : ''}`} key={workspace.id} onClick={() => onSelectWorkspace(workspace.id)} role="menuitemradio" aria-checked={isCurrent}>
@@ -440,7 +479,6 @@ function Header({
                 </button>
               )
             })}
-            <button type="button" className="workspace-switcher-create" onClick={onOpenCreateWorkspace}>+ Create New Workspace</button>
           </div>
         )}
       </div>
@@ -527,45 +565,148 @@ function WorkspaceCreateDialog({
   )
 }
 
+function WorkspaceDeleteDialog({ workspace, isDeleting, errorMessage, onClose, onConfirm }: {
+  workspace: ReturnType<typeof getCurrentWorkspace> | null
+  isDeleting: boolean
+  errorMessage: string
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  if (!workspace) return null
+
+  return (
+    <div className="workspace-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-workspace-title">
+      <div className="workspace-modal workspace-delete-modal">
+        <div className="workspace-modal-header">
+          <div>
+            <p className="eyebrow">Permanent action</p>
+            <h2 id="delete-workspace-title">Delete &ldquo;{workspace.name}&rdquo;?</h2>
+          </div>
+          <button type="button" className="workspace-modal-close" onClick={onClose} disabled={isDeleting} aria-label="Close delete workspace dialog"><AppIcon name="close" /></button>
+        </div>
+        <p className="workspace-modal-intro">This permanently removes the workspace and its associated weekly plans, Daily Activity, Follow-ups, Smart Start data, and Report History.</p>
+        {errorMessage && <p className="workspace-field-error" role="alert">{errorMessage}</p>}
+        <div className="workspace-modal-actions">
+          <button type="button" className="button button-secondary" onClick={onClose} disabled={isDeleting}>Cancel</button>
+          <button type="button" className="button button-danger" onClick={onConfirm} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete Workspace'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function WorkspaceRenameDialog({ workspace, name, isSaving, errorMessage, onNameChange, onClose, onConfirm, onRequestDelete }: {
+  workspace: ReturnType<typeof getCurrentWorkspace> | null
+  name: string
+  isSaving: boolean
+  errorMessage: string
+  onNameChange: (name: string) => void
+  onClose: () => void
+  onConfirm: () => void
+  onRequestDelete: () => void
+}) {
+  if (!workspace) return null
+
+  return (
+    <div className="workspace-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="rename-workspace-title">
+      <div className="workspace-modal workspace-rename-modal">
+        <div className="workspace-modal-header">
+          <div>
+            <p className="eyebrow">Workspace</p>
+            <h2 id="rename-workspace-title">Rename workspace</h2>
+          </div>
+          <button type="button" className="workspace-modal-close" onClick={onClose} disabled={isSaving} aria-label="Close rename workspace dialog"><AppIcon name="close" /></button>
+        </div>
+        <p className="workspace-modal-intro">Rename this workspace without changing its template or any of its weekly data.</p>
+        <label className="workspace-field">
+          <span>Workspace name</span>
+          <input autoFocus value={name} onChange={(event) => onNameChange(event.target.value)} aria-invalid={Boolean(errorMessage)} />
+          {errorMessage && <span className="workspace-field-error" role="alert">{errorMessage}</span>}
+        </label>
+        <div className="workspace-modal-actions">
+          <button type="button" className="button button-secondary" onClick={onClose} disabled={isSaving}>Cancel</button>
+          <button type="button" className="button button-primary" onClick={onConfirm} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Name'}</button>
+        </div>
+        <div className="workspace-danger-zone">
+          <div>
+            <strong>Danger Zone</strong>
+            <span>Delete this workspace and its associated workspace data.</span>
+          </div>
+          <button type="button" className="button button-danger-ghost" onClick={onRequestDelete} disabled={isSaving}>Delete Workspace</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function AppNavigation({ activeScreen, templateName, onSwitchTemplate, onNavigate, collapsed, mobileOpen, onToggleCollapse, onClose }: { activeScreen: string; templateName: string; onSwitchTemplate: () => void; onNavigate: (path: string) => void; collapsed: boolean; mobileOpen: boolean; onToggleCollapse: () => void; onClose: () => void }) {
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    workspace: true,
+    history: false,
+    configuration: false,
+  })
+
+  useEffect(() => {
+    const matchingSection = getSectionIdForScreen(activeScreen)
+    if (!matchingSection) return
+    setExpandedSections((current) => current[matchingSection] ? current : { ...current, [matchingSection]: true })
+  }, [activeScreen])
+
+  function toggleSection(sectionId: string) {
+    setExpandedSections((current) => ({ ...current, [sectionId]: !current[sectionId] }))
+  }
+
   return (
     <nav className={`app-navigation${collapsed ? ' is-collapsed' : ''}${mobileOpen ? ' is-mobile-open' : ''}`} id="main-navigation" aria-label="Main navigation">
       <div className="navigation-brand"><img src={logoImage} alt="WeekFlow" /><span>WeekFlow</span></div>
       <button className="navigation-close-button" type="button" onClick={onClose} aria-label="Close navigation"><AppIcon name="close" /></button>
-      <div className="navigation-topline"><div className="navigation-template"><span className="navigation-template-label">Workflow</span><strong>{templateName}</strong><button type="button" onClick={onSwitchTemplate}>Switch workflow</button></div><button className="navigation-collapse-button" type="button" onClick={onToggleCollapse} aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!collapsed}><AppIcon name={collapsed ? 'expand' : 'collapse'} /></button></div>
+      <div className="navigation-topline"><div className="navigation-template"><span className="navigation-template-label">Template</span><strong>{templateName}</strong><button type="button" onClick={onSwitchTemplate}>Switch template</button></div><button className="navigation-collapse-button" type="button" onClick={onToggleCollapse} aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!collapsed}><AppIcon name={collapsed ? 'expand' : 'collapse'} /></button></div>
       <div className="navigation-groups">
-        {navigationGroups.map((group) => <div className="navigation-group" key={group.label}><span className="navigation-label">{group.label}</span><div className="navigation-links">{group.items.map((item) => {
-          const isItemActive = item.path === '/' ? activeScreen === 'overview' : item.path === '/workspaces' ? activeScreen === 'workspaces' : activeScreen === item.path.slice(1)
-          return <a className={`navigation-link${isItemActive ? ' is-active' : ''}`} href={item.path} key={item.path} aria-current={isItemActive ? 'page' : undefined} onClick={(event) => { event.preventDefault(); onNavigate(item.path); onClose() }} title={collapsed ? item.label : undefined}><span className="navigation-icon"><AppIcon name={item.icon} /></span><span className="navigation-link-label">{item.label}</span></a>
-        })}</div></div>)}
+        {navigationGroups.map((group) => {
+          const groupId = group.id
+          const isExpanded = !!expandedSections[groupId]
+          const groupControlId = `${groupId}-navigation-group`
+          return <div className="navigation-group" key={groupId}>
+            <button type="button" className="navigation-section-toggle" aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${group.label} section`} aria-expanded={isExpanded} aria-controls={groupControlId} onClick={() => toggleSection(groupId)}>
+              <span className="navigation-label">{group.label}</span>
+              <span className="navigation-section-chevron" aria-hidden="true"><AppIcon name={isExpanded ? 'chevron-down' : 'chevron-right'} /></span>
+            </button>
+            <div className="navigation-links" id={groupControlId} hidden={!isExpanded}>
+              {group.items.map((item) => {
+                const isItemActive = item.path === '/' ? activeScreen === 'overview' : item.path === '/workspaces' ? activeScreen === 'workspaces' : activeScreen === item.path.slice(1)
+                return <a className={`navigation-link${isItemActive ? ' is-active' : ''}`} href={item.path} key={item.path} aria-current={isItemActive ? 'page' : undefined} onClick={(event) => { event.preventDefault(); onNavigate(item.path); onClose() }} title={collapsed ? item.label : undefined}><span className="navigation-icon"><AppIcon name={item.icon} /></span><span className="navigation-link-label">{item.label}</span></a>
+              })}
+            </div>
+          </div>
+        })}
       </div>
-      <div className="navigation-footer"><span className="navigation-footer-label">Selected workflow</span><strong>{templateName}</strong></div>
+      <div className="navigation-footer"><span className="navigation-footer-label">Selected template</span><strong>{templateName}</strong></div>
     </nav>
   )
 }
 
 function WorkspaceHomeScreen({
   currentWorkspaceId,
-  selectedWeek,
   onOpenWorkspace,
   onCreateWorkspace,
+  onRequestRename,
   user,
 }: {
-  currentWorkspaceId: string
-  selectedWeek: string
+  currentWorkspaceId: string | null
   onOpenWorkspace: (workspaceId: string) => void
   onCreateWorkspace: () => void
+  onRequestRename: (workspaceId: string) => void
   user: UserProfile | null
 }) {
   const workspaces = loadWorkspaces().filter((workspace) => !workspace.archived)
-  const welcomeName = user?.displayName?.trim().toUpperCase() || 'there'
+  const welcomeName = user?.displayName?.trim() || 'there'
 
   if (workspaces.length === 0) {
     return (
       <main className="workspace-home-screen">
         <div className="workspace-home-empty">
-          <h1>Your first workspace starts here</h1>
-          <p>Create a workspace for the kind of work you want to organize.</p>
+          <h1>No workspaces yet</h1>
+          <p>Create a workspace to start planning, tracking, following up, and reporting your work.</p>
           <button type="button" className="button button-primary" onClick={onCreateWorkspace}>+ New Workspace</button>
         </div>
       </main>
@@ -575,12 +716,12 @@ function WorkspaceHomeScreen({
   return (
     <main className="workspace-home-screen">
       <div className="workspace-home-header">
-        <h1>Welcome back, {welcomeName}! 👋</h1>
-        <p>Your workspaces are ready. Choose one to continue, or create a new workspace for what’s next.</p>
+        <h1>{getTimeAwareGreeting(welcomeName)}</h1>
+        <p>Manage your workspaces. Create, rename, open, or remove the spaces you use in WeekFlow.</p>
       </div>
       <div className="workspace-home-section-heading">
         <h2>Workspaces</h2>
-        <button type="button" className="button button-secondary" onClick={onCreateWorkspace}>New Workspace</button>
+        <p>Manage the spaces where you organize your work.</p>
       </div>
       <div className="workspace-home-grid">
         {workspaces.map((workspace) => {
@@ -591,17 +732,33 @@ function WorkspaceHomeScreen({
             <article className={`workspace-home-card${isCurrent ? ' is-current' : ''}`} key={workspace.id}>
               <div className="workspace-home-card-top">
                 <span className="workspace-home-icon"><TemplateIcon templateId={workspace.templateId} /></span>
-                {isCurrent && <span className="workspace-home-state">Selected workspace</span>}
+                {isCurrent && <span className="workspace-home-state">Current workspace</span>}
               </div>
               <h3>{workspace.name}</h3>
               <p className="workspace-home-template">{template.name}</p>
-              <span className="workspace-home-week">Week of {formatHeaderWeek(selectedWeek)}</span>
-              <button type="button" className="button button-primary" onClick={() => onOpenWorkspace(workspace.id)}>
-                Open Workspace
-              </button>
+              <div className="workspace-home-card-actions">
+                <button type="button" className="button button-primary" onClick={() => onOpenWorkspace(workspace.id)}>Open Workspace</button>
+                <button type="button" className="button button-secondary" onClick={() => onRequestRename(workspace.id)}>Edit</button>
+              </div>
             </article>
           )
         })}
+      </div>
+      <div className="workspace-home-footer">
+        <button type="button" className="button button-secondary" onClick={onCreateWorkspace}>+ New Workspace</button>
+      </div>
+    </main>
+  )
+}
+
+function NoWorkspaceScreen({ onCreateWorkspace }: { onCreateWorkspace: () => void }) {
+  return (
+    <main className="workspace-home-screen" aria-labelledby="no-workspace-title">
+      <div className="workspace-home-empty">
+        <p className="eyebrow">Workspace</p>
+        <h1 id="no-workspace-title">No workspaces yet</h1>
+        <p>Create a workspace to start planning, tracking, following up, and reporting your work.</p>
+        <button type="button" className="button button-primary" onClick={onCreateWorkspace}>+ New Workspace</button>
       </div>
     </main>
   )
@@ -770,6 +927,7 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
   placeholder,
   compact = false,
   onChange,
+  renderItemExtras,
 }: {
   title: string
   summary: string
@@ -778,6 +936,7 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
   placeholder: string
   compact?: boolean
   onChange: (items: T[]) => void
+  renderItemExtras?: (item: T, updateItem: (itemId: string, updates: Partial<T>) => void) => React.ReactNode
 }) {
   const [draft, setDraft] = useState('')
   const [newItemId, setNewItemId] = useState<string | null>(null)
@@ -802,6 +961,10 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
     onChange(items.map((item) => item.id === itemId ? { ...item, text } : item))
   }
 
+  function updateItemDetails(itemId: string, updates: Partial<T>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
   function deleteItem(itemId: string) {
     onChange(items.filter((item) => item.id !== itemId))
   }
@@ -819,12 +982,15 @@ function WeeklyPlanTextListSection<T extends { id: string; text: string }>({
         <ul className="weekly-plan-summary-list">
           {items.map((item) => (
             <li className={`weekly-plan-summary-item${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
-              <input
-                aria-label={title}
-                value={item.text}
-                onChange={(event) => updateItem(item.id, event.target.value)}
-              />
-              <button type="button" aria-label={`Delete ${title}`} onClick={() => deleteItem(item.id)}>Remove</button>
+              <div className="weekly-plan-summary-item-main">
+                <input
+                  aria-label={title}
+                  value={item.text}
+                  onChange={(event) => updateItem(item.id, event.target.value)}
+                />
+                <button type="button" aria-label={`Delete ${title}`} onClick={() => deleteItem(item.id)}>Remove</button>
+              </div>
+              {renderItemExtras && <div className="weekly-plan-summary-item-meta">{renderItemExtras(item, updateItemDetails)}</div>}
             </li>
           ))}
         </ul>
@@ -849,6 +1015,7 @@ function WeeklyPlanVirtualEngagementSection({
   compact = false,
   contactPlaceholder = 'Add priority contact',
   objectivePlaceholder = 'Describe the objective of this activity',
+  template,
 }: {
   items: VirtualEngagementPlanItem[]
   onChange: (items: VirtualEngagementPlanItem[]) => void
@@ -859,6 +1026,7 @@ function WeeklyPlanVirtualEngagementSection({
   compact?: boolean
   contactPlaceholder?: string
   objectivePlaceholder?: string
+  template?: WeekFlowTemplate
 }) {
   const resolvedHelperText = helperText ?? `Plan your ${title.toLowerCase()} for the selected week.`
   const resolvedEmptyText = emptyText ?? `No ${title.toLowerCase()} planned yet.`
@@ -869,6 +1037,8 @@ function WeeklyPlanVirtualEngagementSection({
     onChange(items.map((item) => item.id === itemId ? { ...item, ...changes } : item))
   }
 
+  const priorityOptions = ['low', 'medium', 'high'] as const
+  const isPersonal = template?.id === 'personal'
   const [newItemId, setNewItemId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -948,7 +1118,7 @@ function WeeklyPlanVirtualEngagementSection({
                     {item.priorityContacts.map((contact) => (
                       <li key={contact.id}>
                         <input
-                          aria-label="Priority contact"
+                          aria-label={isPersonal ? 'Task context' : 'Priority contact'}
                           value={contact.text}
                           onChange={(event) => updatePriorityContact(item.id, contact.id, event.target.value)}
                         />
@@ -956,12 +1126,12 @@ function WeeklyPlanVirtualEngagementSection({
                       </li>
                     ))}
                   </ul>
-                ) : <p className="weekly-plan-list-empty">No customer contacts added yet.</p>}
+                ) : <p className="weekly-plan-list-empty">{isPersonal ? 'No personal context added yet.' : 'No customer contacts added yet.'}</p>}
                 <div className="weekly-plan-inline-input-row">
                   <input
-                    aria-label="Add priority contact"
+                    aria-label={isPersonal ? 'Add context' : 'Add priority contact'}
                     value={contactDrafts[item.id] ?? ''}
-                          placeholder={contactPlaceholder}
+                    placeholder={isPersonal ? 'Add a person or context' : contactPlaceholder}
                     onChange={(event) => setContactDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
                   />
                   <button type="button" onClick={() => addPriorityContact(item.id)}>Add</button>
@@ -975,6 +1145,65 @@ function WeeklyPlanVirtualEngagementSection({
                   onChange={(event) => updateItem(item.id, { objective: event.target.value })}
                 />
               </label>
+              {template?.id === 'project-management' && (
+                <div className="weekly-plan-two-column-grid">
+                  <input
+                    aria-label="Related objective"
+                    value={item.relatedObjective ?? ''}
+                    placeholder="Related objective"
+                    onChange={(event) => updateItem(item.id, { relatedObjective: event.target.value || undefined })}
+                  />
+                  <input
+                    aria-label="Owner"
+                    value={item.owner ?? ''}
+                    placeholder="Owner"
+                    onChange={(event) => updateItem(item.id, { owner: event.target.value || undefined })}
+                  />
+                  <select
+                    aria-label="Priority"
+                    value={item.priority ?? 'medium'}
+                    onChange={(event) => updateItem(item.id, { priority: event.target.value as any })}
+                  >
+                    {priorityOptions.map((option) => <option key={option} value={option}>{option.charAt(0).toUpperCase() + option.slice(1)}</option>)}
+                  </select>
+                  <input
+                    aria-label="Planned date"
+                    type="date"
+                    value={item.plannedDate ?? ''}
+                    onChange={(event) => updateItem(item.id, { plannedDate: event.target.value || undefined })}
+                  />
+                  <input
+                    aria-label="Start time"
+                    type="time"
+                    value={item.startTime ?? ''}
+                    onChange={(event) => updateItem(item.id, { startTime: event.target.value || undefined })}
+                  />
+                  <input
+                    aria-label="End time"
+                    type="time"
+                    value={item.endTime ?? ''}
+                    onChange={(event) => updateItem(item.id, { endTime: event.target.value || undefined })}
+                  />
+                  <input
+                    aria-label="Estimated hours"
+                    value={item.estimatedHours ?? ''}
+                    placeholder="Hours"
+                    onChange={(event) => updateItem(item.id, { estimatedHours: event.target.value || undefined })}
+                  />
+                  <input
+                    aria-label="Dependency"
+                    value={item.dependency ?? ''}
+                    placeholder="Dependency"
+                    onChange={(event) => updateItem(item.id, { dependency: event.target.value || undefined })}
+                  />
+                  <input
+                    aria-label="Status"
+                    value={item.status ?? ''}
+                    placeholder="Status"
+                    onChange={(event) => updateItem(item.id, { status: event.target.value || undefined })}
+                  />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1030,6 +1259,8 @@ function WeeklyPlanAccountObjectiveSection({
   function updateAccount(itemId: string, account: string) {
     onChange(items.map((item) => item.id === itemId ? { ...item, account } : item))
   }
+
+  const priorityOptions = ['low', 'medium', 'high'] as const
 
   function updateObjective(itemId: string, objectiveId: string, text: string) {
     onChange(items.map((item) => item.id === itemId ? {
@@ -1103,6 +1334,47 @@ function WeeklyPlanAccountObjectiveSection({
                 />
                 <button type="button" onClick={() => addObjective(item.id)}>Add</button>
               </div>
+              {title === 'Deliverables' && (
+                <div className="weekly-plan-two-column-grid">
+                  <input
+                    aria-label="Owner"
+                    value={item.owner ?? ''}
+                    placeholder="Owner"
+                    onChange={(event) => onChange(items.map((entry) => entry.id === item.id ? { ...entry, owner: event.target.value || undefined } : entry))}
+                  />
+                  <select
+                    aria-label="Priority"
+                    value={item.priority ?? 'medium'}
+                    onChange={(event) => onChange(items.map((entry) => entry.id === item.id ? { ...entry, priority: event.target.value as any } : entry))}
+                  >
+                    {priorityOptions.map((option) => <option key={option} value={option}>{option.charAt(0).toUpperCase() + option.slice(1)}</option>)}
+                  </select>
+                  <input
+                    aria-label="Planned date"
+                    type="date"
+                    value={item.plannedDate ?? ''}
+                    onChange={(event) => onChange(items.map((entry) => entry.id === item.id ? { ...entry, plannedDate: event.target.value || undefined } : entry))}
+                  />
+                  <input
+                    aria-label="Estimated hours"
+                    value={item.estimatedHours ?? ''}
+                    placeholder="Hours"
+                    onChange={(event) => onChange(items.map((entry) => entry.id === item.id ? { ...entry, estimatedHours: event.target.value || undefined } : entry))}
+                  />
+                  <input
+                    aria-label="Dependency"
+                    value={item.dependency ?? ''}
+                    placeholder="Dependency"
+                    onChange={(event) => onChange(items.map((entry) => entry.id === item.id ? { ...entry, dependency: event.target.value || undefined } : entry))}
+                  />
+                  <input
+                    aria-label="Status"
+                    value={item.status ?? ''}
+                    placeholder="Status"
+                    onChange={(event) => onChange(items.map((entry) => entry.id === item.id ? { ...entry, status: event.target.value || undefined } : entry))}
+                  />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1122,15 +1394,19 @@ function WeeklyPlanCommercialPrioritySection({
   title = 'Priorities',
   helperText,
   compact = false,
+  template,
 }: {
   items: CommercialPriority[]
   onChange: (items: CommercialPriority[]) => void
   title?: string
   helperText?: string
   compact?: boolean
+  template?: WeekFlowTemplate
 }) {
   const resolvedHelperText = helperText ?? `Capture the ${title.toLowerCase()} that matter this week.`
   const resolvedAddButtonText = `+ Add ${title.toLowerCase().replace(/ies$/, 'y').replace(/s$/, '')}`
+  const priorityOptions = ['low', 'medium', 'high'] as const
+  const isPersonal = template?.id === 'personal' || title === 'Big Three'
   function updateItem(itemId: string, updates: Partial<CommercialPriority>) {
     onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
   }
@@ -1167,7 +1443,7 @@ function WeeklyPlanCommercialPrioritySection({
         <div className="weekly-plan-card-stack">
           {items.map((item) => (
             <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
-              <div className="weekly-plan-card-header">
+              {!isPersonal && <div className="weekly-plan-card-header">
                 <input
                   aria-label="Commercial priority opportunity"
                   value={item.opportunity ?? ''}
@@ -1175,27 +1451,55 @@ function WeeklyPlanCommercialPrioritySection({
                   onChange={(event) => updateItem(item.id, { opportunity: event.target.value || undefined })}
                 />
                 <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
-              </div>
-              <div className="weekly-plan-two-column-grid">
-                <input
-                  aria-label="Commercial priority action"
-                  value={item.text}
-                  placeholder="Action"
-                  onChange={(event) => updateItem(item.id, { text: event.target.value })}
-                />
-                <input
-                  aria-label="Commercial priority account"
-                  value={item.account ?? ''}
-                  placeholder="Account (optional)"
-                  onChange={(event) => updateItem(item.id, { account: event.target.value || undefined })}
-                />
-                <input
-                  aria-label="Commercial priority product"
-                  value={item.product ?? ''}
-                  placeholder="Product (optional)"
-                  onChange={(event) => updateItem(item.id, { product: event.target.value || undefined })}
-                />
-              </div>
+              </div>}
+              {isPersonal ? (
+                <div className="weekly-plan-two-column-grid">
+                  <input
+                    aria-label="Personal priority or commitment"
+                    value={item.text}
+                    placeholder="Priority / commitment"
+                    onChange={(event) => updateItem(item.id, { text: event.target.value })}
+                  />
+                  <select
+                    aria-label="Priority level"
+                    value={item.priority ?? 'medium'}
+                    onChange={(event) => updateItem(item.id, { priority: event.target.value as any })}
+                  >
+                    {priorityOptions.map((option) => <option key={option} value={option}>{option.charAt(0).toUpperCase() + option.slice(1)}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <div className="weekly-plan-two-column-grid">
+                  <input
+                    aria-label="Commercial priority action"
+                    value={item.text}
+                    placeholder="Action"
+                    onChange={(event) => updateItem(item.id, { text: event.target.value })}
+                  />
+                  <input
+                    aria-label="Commercial priority account"
+                    value={item.account ?? ''}
+                    placeholder="Account (optional)"
+                    onChange={(event) => updateItem(item.id, { account: event.target.value || undefined })}
+                  />
+                  <input
+                    aria-label="Commercial priority product"
+                    value={item.product ?? ''}
+                    placeholder="Product (optional)"
+                    onChange={(event) => updateItem(item.id, { product: event.target.value || undefined })}
+                  />
+                  {title === 'Priorities' && (
+                    <select
+                      aria-label="Priority level"
+                      value={item.priority ?? 'medium'}
+                      onChange={(event) => updateItem(item.id, { priority: event.target.value as any })}
+                    >
+                      {priorityOptions.map((option) => <option key={option} value={option}>{option.charAt(0).toUpperCase() + option.slice(1)}</option>)}
+                    </select>
+                  )}
+                </div>
+              )}
+              {isPersonal && <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>}
             </div>
           ))}
         </div>
@@ -1313,6 +1617,680 @@ function WeeklyPlanSuccessMeasureSection({
   )
 }
 
+function ProgrammeContextSection({
+  context,
+  onChange,
+}: {
+  context?: WeeklyProgrammeContext
+  onChange: (context: WeeklyProgrammeContext) => void
+}) {
+  const value = context ?? {}
+  const update = (field: keyof WeeklyProgrammeContext, nextValue: string) => {
+    onChange({
+      ...value,
+      [field]: nextValue.trim() ? nextValue : undefined,
+    })
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Programme Context</h3>
+        </div>
+        <span>{Object.values(value).filter(Boolean).length} field{Object.values(value).filter(Boolean).length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="weekly-plan-two-column-grid">
+        <label className="weekly-plan-field-label">
+          Programme
+          <input
+            aria-label="Programme"
+            value={value.programme ?? ''}
+            placeholder="Programme"
+            onChange={(event) => update('programme', event.target.value)}
+          />
+        </label>
+        <label className="weekly-plan-field-label">
+          Organisation
+          <input
+            aria-label="Organisation"
+            value={value.organisation ?? ''}
+            placeholder="Organisation"
+            onChange={(event) => update('organisation', event.target.value)}
+          />
+        </label>
+        <label className="weekly-plan-field-label">
+          Weekly Theme
+          <input
+            aria-label="Weekly Theme"
+            value={value.weeklyTheme ?? ''}
+            placeholder="Weekly Theme"
+            onChange={(event) => update('weeklyTheme', event.target.value)}
+          />
+        </label>
+        <label className="weekly-plan-field-label">
+          Programme Lead
+          <input
+            aria-label="Programme Lead"
+            value={value.programmeLead ?? ''}
+            placeholder="Programme Lead"
+            onChange={(event) => update('programmeLead', event.target.value)}
+          />
+        </label>
+        <label className="weekly-plan-field-label">
+          Programme Status
+          <input
+            aria-label="Programme Status"
+            value={value.programmeStatus ?? ''}
+            placeholder="Programme Status"
+            onChange={(event) => update('programmeStatus', event.target.value)}
+          />
+        </label>
+      </div>
+    </section>
+  )
+}
+
+function NGOWeeklyFocusSection({
+  focusText,
+  onChange,
+}: {
+  focusText: string
+  onChange: (text: string) => void
+}) {
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Weekly Focus</h3>
+        </div>
+        <span>{focusText.trim() ? '1 item' : '0 items'}</span>
+      </div>
+      <p className="weekly-plan-helper">What is the main outcome we want to achieve this week?</p>
+      <label className="weekly-plan-field-label">
+        Weekly Focus
+        <textarea
+          aria-label="Weekly Focus"
+          value={focusText}
+          placeholder="Add the main focus for your week."
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </label>
+    </section>
+  )
+}
+
+function NGOWeeklyObjectivesSection({
+  items,
+  onChange,
+}: {
+  items: WeeklyObjective[]
+  onChange: (items: WeeklyObjective[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem() {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, text: '', successMeasure: '', priority: 'medium' }])
+    setNewItemId(itemId)
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  function updateItem(itemId: string, updates: Partial<WeeklyObjective>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Weekly Objectives</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Capture the planned programme objectives and how success will be measured.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input
+                  aria-label="Weekly objective"
+                  value={item.text}
+                  placeholder="Objective"
+                  onChange={(event) => updateItem(item.id, { text: event.target.value })}
+                />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input
+                  aria-label="Success measure"
+                  value={item.successMeasure ?? ''}
+                  placeholder="Success Measure"
+                  onChange={(event) => updateItem(item.id, { successMeasure: event.target.value || undefined })}
+                />
+                <select
+                  aria-label="Priority"
+                  value={item.priority ?? 'medium'}
+                  onChange={(event) => updateItem(item.id, { priority: event.target.value as WeeklyObjective['priority'] })}
+                >
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No weekly objectives captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add objective</button>
+      </div>
+    </section>
+  )
+}
+
+function NGOProgrammeActivitiesSection({
+  items,
+  onChange,
+}: {
+  items: ProgrammeActivity[]
+  onChange: (items: ProgrammeActivity[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem() {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, activity: '', programmeArea: '', location: '', owner: '', plannedDate: '', target: '', status: 'Planned' }])
+    setNewItemId(itemId)
+  }
+
+  function updateItem(itemId: string, updates: Partial<ProgrammeActivity>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Programme Activities</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Plan the activity, area, location, owner, target and status for the week.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input
+                  aria-label="Activity"
+                  value={item.activity}
+                  placeholder="Activity"
+                  onChange={(event) => updateItem(item.id, { activity: event.target.value })}
+                />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input aria-label="Programme Area" value={item.programmeArea ?? ''} placeholder="Programme Area" onChange={(event) => updateItem(item.id, { programmeArea: event.target.value || undefined })} />
+                <input aria-label="Location" value={item.location ?? ''} placeholder="Location" onChange={(event) => updateItem(item.id, { location: event.target.value || undefined })} />
+                <input aria-label="Owner" value={item.owner ?? ''} placeholder="Owner" onChange={(event) => updateItem(item.id, { owner: event.target.value || undefined })} />
+                <input aria-label="Planned Date" value={item.plannedDate ?? ''} placeholder="Planned Date" onChange={(event) => updateItem(item.id, { plannedDate: event.target.value || undefined })} />
+                <input aria-label="Target" value={item.target ?? ''} placeholder="Target" onChange={(event) => updateItem(item.id, { target: event.target.value || undefined })} />
+                <input aria-label="Status" value={item.status ?? ''} placeholder="Status" onChange={(event) => updateItem(item.id, { status: event.target.value || undefined })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No programme activities planned yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add activity</button>
+      </div>
+    </section>
+  )
+}
+
+function NGOCommunityEngagementSection({
+  items,
+  onChange,
+}: {
+  items: CommunityEngagementItem[]
+  onChange: (items: CommunityEngagementItem[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem() {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, communityGroup: '', engagementActivity: '', target: '', plannedDate: '', responsible: '' }])
+    setNewItemId(itemId)
+  }
+
+  function updateItem(itemId: string, updates: Partial<CommunityEngagementItem>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Beneficiary / Community Engagement</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Plan beneficiary and community engagement activity for the selected week.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input aria-label="Community Group" value={item.communityGroup} placeholder="Community Group" onChange={(event) => updateItem(item.id, { communityGroup: event.target.value })} />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input aria-label="Engagement Activity" value={item.engagementActivity} placeholder="Engagement Activity" onChange={(event) => updateItem(item.id, { engagementActivity: event.target.value })} />
+                <input aria-label="Target" value={item.target ?? ''} placeholder="Target" onChange={(event) => updateItem(item.id, { target: event.target.value || undefined })} />
+                <input aria-label="Planned Date" value={item.plannedDate ?? ''} placeholder="Planned Date" onChange={(event) => updateItem(item.id, { plannedDate: event.target.value || undefined })} />
+                <input aria-label="Responsible" value={item.responsible ?? ''} placeholder="Responsible" onChange={(event) => updateItem(item.id, { responsible: event.target.value || undefined })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No community engagement planned yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add engagement</button>
+      </div>
+    </section>
+  )
+}
+
+function NGOVolunteerPlanSection({
+  items,
+  onChange,
+}: {
+  items: VolunteerPlanItem[]
+  onChange: (items: VolunteerPlanItem[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem() {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, volunteer: '', role: '', activity: '', date: '', status: 'Confirmed' }])
+    setNewItemId(itemId)
+  }
+
+  function updateItem(itemId: string, updates: Partial<VolunteerPlanItem>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Volunteer Plan</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Capture volunteer support for the upcoming week.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input aria-label="Volunteer" value={item.volunteer} placeholder="Volunteer" onChange={(event) => updateItem(item.id, { volunteer: event.target.value })} />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input aria-label="Role" value={item.role} placeholder="Role" onChange={(event) => updateItem(item.id, { role: event.target.value })} />
+                <input aria-label="Activity" value={item.activity} placeholder="Activity" onChange={(event) => updateItem(item.id, { activity: event.target.value })} />
+                <input aria-label="Date" value={item.date ?? ''} placeholder="Date" onChange={(event) => updateItem(item.id, { date: event.target.value || undefined })} />
+                <input aria-label="Status" value={item.status ?? ''} placeholder="Status" onChange={(event) => updateItem(item.id, { status: event.target.value || undefined })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No volunteer plan captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add volunteer</button>
+      </div>
+    </section>
+  )
+}
+
+function NGOStakeholderPlanSection({
+  items,
+  onChange,
+}: {
+  items: StakeholderPlanItem[]
+  onChange: (items: StakeholderPlanItem[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem() {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, stakeholder: '', purpose: '', actionRequired: '', owner: '', due: '', status: 'Pending' }])
+    setNewItemId(itemId)
+  }
+
+  function updateItem(itemId: string, updates: Partial<StakeholderPlanItem>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Partnerships & Stakeholders</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Track stakeholders, purpose, action required, owner, due date and status.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input aria-label="Stakeholder" value={item.stakeholder} placeholder="Stakeholder" onChange={(event) => updateItem(item.id, { stakeholder: event.target.value })} />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input aria-label="Purpose" value={item.purpose} placeholder="Purpose" onChange={(event) => updateItem(item.id, { purpose: event.target.value })} />
+                <input aria-label="Action Required" value={item.actionRequired ?? ''} placeholder="Action Required" onChange={(event) => updateItem(item.id, { actionRequired: event.target.value || undefined })} />
+                <input aria-label="Owner" value={item.owner ?? ''} placeholder="Owner" onChange={(event) => updateItem(item.id, { owner: event.target.value || undefined })} />
+                <input aria-label="Due" value={item.due ?? ''} placeholder="Due" onChange={(event) => updateItem(item.id, { due: event.target.value || undefined })} />
+                <input aria-label="Status" value={item.status ?? ''} placeholder="Status" onChange={(event) => updateItem(item.id, { status: event.target.value || undefined })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No partnerships or stakeholders captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add stakeholder</button>
+      </div>
+    </section>
+  )
+}
+
+function NGOResourcesLogisticsSection({
+  items,
+  onChange,
+}: {
+  items: ResourceLogisticsItem[]
+  onChange: (items: ResourceLogisticsItem[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem() {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, resource: '', required: '', available: '', gap: '', action: '' }])
+    setNewItemId(itemId)
+  }
+
+  function updateItem(itemId: string, updates: Partial<ResourceLogisticsItem>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Resources & Logistics</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Track required resources, availability, gaps and the action needed.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input aria-label="Resource" value={item.resource} placeholder="Resource" onChange={(event) => updateItem(item.id, { resource: event.target.value })} />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input aria-label="Required" value={item.required ?? ''} placeholder="Required" onChange={(event) => updateItem(item.id, { required: event.target.value || undefined })} />
+                <input aria-label="Available" value={item.available ?? ''} placeholder="Available" onChange={(event) => updateItem(item.id, { available: event.target.value || undefined })} />
+                <input aria-label="Gap" value={item.gap ?? ''} placeholder="Gap" onChange={(event) => updateItem(item.id, { gap: event.target.value || undefined })} />
+                <input aria-label="Action" value={item.action ?? ''} placeholder="Action" onChange={(event) => updateItem(item.id, { action: event.target.value || undefined })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No resource or logistics items captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add resource</button>
+      </div>
+    </section>
+  )
+}
+
+function NGOCommunicationsPlanSection({
+  items,
+  onChange,
+}: {
+  items: CommunicationPlanItem[]
+  onChange: (items: CommunicationPlanItem[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem() {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, communication: '', audience: '', channel: '', date: '', status: 'Planned' }])
+    setNewItemId(itemId)
+  }
+
+  function updateItem(itemId: string, updates: Partial<CommunicationPlanItem>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Communications Plan</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Plan communication touchpoints for this week.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input aria-label="Communication" value={item.communication} placeholder="Communication" onChange={(event) => updateItem(item.id, { communication: event.target.value })} />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input aria-label="Audience" value={item.audience ?? ''} placeholder="Audience" onChange={(event) => updateItem(item.id, { audience: event.target.value || undefined })} />
+                <input aria-label="Channel" value={item.channel ?? ''} placeholder="Channel" onChange={(event) => updateItem(item.id, { channel: event.target.value || undefined })} />
+                <input aria-label="Date" value={item.date ?? ''} placeholder="Date" onChange={(event) => updateItem(item.id, { date: event.target.value || undefined })} />
+                <input aria-label="Status" value={item.status ?? ''} placeholder="Status" onChange={(event) => updateItem(item.id, { status: event.target.value || undefined })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No communications plan captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add communication</button>
+      </div>
+    </section>
+  )
+}
+
+function NGODocumentationPlanSection({
+  items,
+  onChange,
+}: {
+  items: DocumentationPlanItem[]
+  onChange: (items: DocumentationPlanItem[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem() {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, documentation: '', required: '', responsible: '', status: 'Pending' }])
+    setNewItemId(itemId)
+  }
+
+  function updateItem(itemId: string, updates: Partial<DocumentationPlanItem>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Documentation Plan</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Capture the documentation and evidence needed for the week.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input aria-label="Documentation" value={item.documentation} placeholder="Documentation" onChange={(event) => updateItem(item.id, { documentation: event.target.value })} />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <div className="weekly-plan-two-column-grid">
+                <input aria-label="Required" value={item.required ?? ''} placeholder="Required" onChange={(event) => updateItem(item.id, { required: event.target.value || undefined })} />
+                <input aria-label="Responsible" value={item.responsible ?? ''} placeholder="Responsible" onChange={(event) => updateItem(item.id, { responsible: event.target.value || undefined })} />
+                <input aria-label="Status" value={item.status ?? ''} placeholder="Status" onChange={(event) => updateItem(item.id, { status: event.target.value || undefined })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No documentation plan captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={addItem}>+ Add documentation</button>
+      </div>
+    </section>
+  )
+}
+
+function NGOMonitoringImpactTargetsSection({
+  items,
+  onChange,
+}: {
+  items: MonitoringImpactTarget[]
+  onChange: (items: MonitoringImpactTarget[]) => void
+}) {
+  const [newItemId, setNewItemId] = useState<string | null>(null)
+
+  function addItem(kind: MonitoringImpactTarget['kind']) {
+    const itemId = crypto.randomUUID()
+    onChange([...items, { id: itemId, kind, text: '' }])
+    setNewItemId(itemId)
+  }
+
+  function updateItem(itemId: string, updates: Partial<MonitoringImpactTarget>) {
+    onChange(items.map((item) => item.id === itemId ? { ...item, ...updates } : item))
+  }
+
+  function deleteItem(itemId: string) {
+    onChange(items.filter((item) => item.id !== itemId))
+  }
+
+  return (
+    <section className="weekly-plan-summary-section">
+      <div className="weekly-plan-summary-header">
+        <div>
+          <p className="eyebrow">Weekly Plan</p>
+          <h3>Monitoring & Impact Targets</h3>
+        </div>
+        <span>{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <p className="weekly-plan-helper">Capture outputs and intended outcomes separately so actual evidence is never confused with intended results.</p>
+      {items.length > 0 ? (
+        <div className="weekly-plan-card-stack">
+          {items.map((item) => (
+            <div className={`weekly-plan-card${newItemId === item.id ? ' is-new' : ''}`} key={item.id}>
+              <div className="weekly-plan-card-header">
+                <input aria-label="Target text" value={item.text} placeholder="Target text" onChange={(event) => updateItem(item.id, { text: event.target.value })} />
+                <button type="button" className="destructive-button" onClick={() => deleteItem(item.id)}>Delete</button>
+              </div>
+              <label className="weekly-plan-field-label">
+                Type
+                <select
+                  aria-label="Monitoring impact target type"
+                  value={item.kind}
+                  onChange={(event) => updateItem(item.id, { kind: event.target.value as MonitoringImpactTarget['kind'] })}
+                >
+                  <option value="outputs">Outputs</option>
+                  <option value="intended-outcomes">Intended Outcomes</option>
+                </select>
+              </label>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="weekly-plan-summary-empty">No monitoring or impact targets captured yet.</p>
+      )}
+      <div className="weekly-plan-summary-form">
+        <button type="button" className="primary-inline-button" onClick={() => addItem('outputs')}>+ Add output</button>
+        <button type="button" className="button button-secondary" onClick={() => addItem('intended-outcomes')}>+ Add intended outcome</button>
+      </div>
+    </section>
+  )
+}
+
 function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: WeekFlowTemplate }) {
   const terminology = getTemplateTerminology(template)
   const planningCategories = getPlanningCategoryDescriptors(template)
@@ -1322,12 +2300,73 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
   const [plan, setPlan] = useState<WeeklyPlan>(() => loadWeeklyPlan(getSelectedWeekStart()))
   const [cloudStatus, setCloudStatus] = useState('')
   const [expandedDayIds, setExpandedDayIds] = useState<DayId[]>([])
+  const previousWeekStart = useMemo(() => getPreviousWeekStart(weekStart), [weekStart])
+  const previousPlan = useMemo(() => loadWeeklyPlan(previousWeekStart), [previousWeekStart])
+  const previousFollowUps = useMemo(() => loadFollowUps(previousWeekStart), [previousWeekStart])
+  const smartStartCandidates = useMemo(() => getSmartStartCandidates(previousPlan, previousFollowUps, template.id), [previousPlan, previousFollowUps, template.id])
+  const carryForwardSelectionKeys = useMemo(() => {
+    if (template.id !== 'project-management') return []
+    const sessionKey = `weekflow-carry-forward-selection:${getCurrentWorkspaceId()}`
+    const raw = window.sessionStorage.getItem(sessionKey)
+    if (!raw) return []
+    try {
+      return JSON.parse(raw) as string[]
+    } catch {
+      return []
+    }
+  }, [template.id])
+  const carryForwardCandidateKeys = useMemo(() => getSmartStartCandidateKeysFromCarryForwardSelection(smartStartCandidates, carryForwardSelectionKeys), [smartStartCandidates, carryForwardSelectionKeys])
+  const hasPreviousWeekData = previousPlan.weeklyStrategicObjectives.some((item) => item.text.trim())
+    || previousPlan.days.some((day) => Object.values(day.categories).some((items) => items.some((item) => item.text.trim())))
+    || previousPlan.keyAccountObjectives.some((item) => item.account.trim() && item.objectives.some((objective) => objective.text.trim()))
+    || previousPlan.commercialPriorities.some((item) => item.text.trim())
+    || previousPlan.virtualEngagementPlan.some((item) => item.coverage.trim() || item.objective.trim() || item.priorityContacts.length > 0)
+    || previousPlan.successMeasures.some((item) => item.text.trim())
+    || (previousPlan.programmeActivities ?? []).some((item) => item.activity.trim() || item.programmeArea?.trim() || item.location?.trim() || item.owner?.trim() || item.plannedDate?.trim() || item.target?.trim() || item.status?.trim())
+    || (previousPlan.communityEngagement ?? []).some((item) => item.communityGroup.trim() || item.engagementActivity.trim() || item.target?.trim() || item.plannedDate?.trim() || item.responsible?.trim())
+    || (previousPlan.volunteerPlan ?? []).some((item) => item.volunteer.trim() || item.role.trim() || item.activity.trim() || item.date?.trim() || item.status?.trim())
+    || (previousPlan.stakeholderPlan ?? []).some((item) => item.stakeholder.trim() || item.purpose.trim() || item.actionRequired?.trim() || item.owner?.trim() || item.due?.trim() || item.status?.trim())
+    || (previousPlan.resourcesLogistics ?? []).some((item) => item.resource.trim() || item.required?.trim() || item.available?.trim() || item.gap?.trim() || item.action?.trim())
+    || (previousPlan.communicationsPlan ?? []).some((item) => item.communication.trim() || item.audience?.trim() || item.channel?.trim() || item.date?.trim() || item.status?.trim())
+    || (previousPlan.documentationPlan ?? []).some((item) => item.documentation.trim() || item.required?.trim() || item.responsible?.trim() || item.status?.trim())
+    || (previousPlan.monitoringImpactTargets ?? []).some((item) => item.text.trim())
+    || previousFollowUps.some((followUp) => followUp.task.trim())
+    || loadDailyActivities(previousWeekStart).length > 0
+  const [smartStartState, setSmartStartState] = useState<{ selected: string[]; showReview: boolean; completion: SmartStartCompletion | null; result: number | null }>({
+    selected: carryForwardCandidateKeys.length > 0 ? carryForwardCandidateKeys : smartStartCandidates.map((candidate) => candidate.key),
+    showReview: carryForwardCandidateKeys.length > 0,
+    completion: loadSmartStartCompletion(weekStart),
+    result: null,
+  })
+  const smartStartGroupLabels: Record<SmartStartCandidate['type'], string> = {
+    'weekly-objective': 'Weekly Objectives',
+    'open-follow-up': 'Open Follow-ups',
+    'account-objective': 'Account Objectives',
+    'commercial-priority': 'Commercial Priorities',
+    'ngo-programme-activity': 'Programme Activities',
+    'ngo-community-engagement': 'Community Engagement',
+    'ngo-volunteer': 'Volunteer Planning',
+    'ngo-stakeholder': 'Stakeholder Actions',
+    'ngo-resource': 'Resource Gaps',
+    'ngo-communication': 'Communications',
+    'ngo-documentation': 'Documentation',
+    'ngo-monitoring': 'Monitoring & Impact',
+  }
   const hasPlanContent = plan.weeklyStrategicObjectives.some((item) => item.text.trim())
     || plan.days.some((day) => Object.values(day.categories).some((items) => items.some((item) => item.text.trim())))
     || plan.keyAccountObjectives.some((item) => item.account.trim() && item.objectives.some((objective) => objective.text.trim()))
     || plan.commercialPriorities.some((item) => item.text.trim())
     || plan.virtualEngagementPlan.some((item) => item.coverage.trim() || item.objective.trim() || item.priorityContacts.length > 0)
     || plan.successMeasures.some((item) => item.text.trim())
+    || Object.values(plan.programmeContext ?? {}).some((value) => typeof value === 'string' && value.trim().length > 0)
+    || (plan.programmeActivities ?? []).some((item) => item.activity.trim() || item.programmeArea?.trim() || item.location?.trim() || item.owner?.trim() || item.plannedDate?.trim() || item.target?.trim() || item.status?.trim())
+    || (plan.communityEngagement ?? []).some((item) => item.communityGroup.trim() || item.engagementActivity.trim() || item.target?.trim() || item.plannedDate?.trim() || item.responsible?.trim())
+    || (plan.volunteerPlan ?? []).some((item) => item.volunteer.trim() || item.role.trim() || item.activity.trim() || item.date?.trim() || item.status?.trim())
+    || (plan.stakeholderPlan ?? []).some((item) => item.stakeholder.trim() || item.purpose.trim() || item.actionRequired?.trim() || item.owner?.trim() || item.due?.trim() || item.status?.trim())
+    || (plan.resourcesLogistics ?? []).some((item) => item.resource.trim() || item.required?.trim() || item.available?.trim() || item.gap?.trim() || item.action?.trim())
+    || (plan.communicationsPlan ?? []).some((item) => item.communication.trim() || item.audience?.trim() || item.channel?.trim() || item.date?.trim() || item.status?.trim())
+    || (plan.documentationPlan ?? []).some((item) => item.documentation.trim() || item.required?.trim() || item.responsible?.trim() || item.status?.trim())
+    || (plan.monitoringImpactTargets ?? []).some((item) => item.text.trim())
   const planHydrated = useRef(false)
   const planIntelligence = useMemo(() => deriveWeeklyIntelligence({
     selectedWeek: weekStart,
@@ -1358,13 +2397,37 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     return () => { active = false }
   }, [weekStart])
 
+  function markSmartStart(completion: SmartStartCompletion) {
+    saveSmartStartCompletion(weekStart, completion)
+    setSmartStartState((current) => ({ ...current, completion, showReview: false, result: completion === 'started' ? 0 : null }))
+  }
+
+  function startFromPreviousWeek() {
+    const result = mergeSmartStartSelections(plan, weekStart, loadFollowUps(weekStart), smartStartCandidates, smartStartState.selected)
+    setPlan(result.plan)
+    void saveFollowUpsAsync(weekStart, result.followUps)
+    saveSmartStartCompletion(weekStart, 'started')
+    setSmartStartState((current) => ({ ...current, completion: 'started', showReview: false, result: result.added }))
+  }
+
   function changeWeek(value: string) {
     const nextWeekStart = getWeekStartFromInput(value)
+    const nextCandidates = getSmartStartCandidates(loadWeeklyPlan(getPreviousWeekStart(nextWeekStart)), loadFollowUps(getPreviousWeekStart(nextWeekStart)), template.id)
+
+    // Persist the active week's plan before the week transition and let the selected-week effect
+    // load the destination week. This avoids the stale plan-overwrite race where the prior week's
+    // PM fields could be replaced by the target week's state before the correct week was restored.
+    saveWeeklyPlan(plan)
     setSelectedWeekStart(nextWeekStart)
     setWeekStart(nextWeekStart)
-    setPlan(loadWeeklyPlan(nextWeekStart))
     setExpandedDayIds([])
     setCloudStatus('')
+    setSmartStartState({
+      selected: nextCandidates.map((candidate) => candidate.key),
+      showReview: false,
+      completion: loadSmartStartCompletion(nextWeekStart),
+      result: null,
+    })
   }
 
   function updateDay(updatedDay: DayPlan) {
@@ -1393,94 +2456,243 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
           <span role={cloudStatus ? 'status' : undefined}>{formatWeekRange(weekStart).replace(' - ', ' – ')}{cloudStatus ? ` · ${cloudStatus}` : ''}</span>
         </div>
       </div>
+      {weekStart !== getCurrentWeekStart() && hasPreviousWeekData && smartStartState.completion === null && smartStartCandidates.length > 0 && (
+        <section className="smart-start-panel" aria-labelledby="weekly-plan-smart-start-heading">
+          <div className="smart-start-header">
+            <div>
+              <p className="eyebrow">Smart Start</p>
+              <h2 id="weekly-plan-smart-start-heading">Carry forward from last week</h2>
+            </div>
+            <span>{smartStartCandidates.length} item{smartStartCandidates.length === 1 ? '' : 's'}</span>
+          </div>
+          <p className="smart-start-intro">Review what still matters from the previous week before building this week’s plan.</p>
+          {!smartStartState.showReview ? (
+            <div className="smart-start-actions">
+              <button className="button button-primary" type="button" onClick={() => setSmartStartState((current) => ({ ...current, showReview: true }))}>Review &amp; Carry Forward</button>
+              <button className="button button-secondary" type="button" onClick={() => markSmartStart('fresh')}>Start fresh</button>
+            </div>
+          ) : (
+            <>
+              <div className="smart-start-toolbar">
+                <button type="button" className="link-button" onClick={() => setSmartStartState((current) => ({ ...current, selected: smartStartCandidates.map((candidate) => candidate.key) }))}>Select all</button>
+                <button type="button" className="link-button" onClick={() => setSmartStartState((current) => ({ ...current, selected: [] }))}>Clear all</button>
+                <span>{smartStartState.selected.length} selected</span>
+              </div>
+              <div className="smart-start-groups">
+                {(['weekly-objective', 'open-follow-up', 'account-objective', 'commercial-priority', 'ngo-programme-activity', 'ngo-community-engagement', 'ngo-volunteer', 'ngo-stakeholder', 'ngo-resource', 'ngo-communication', 'ngo-documentation', 'ngo-monitoring'] as SmartStartCandidate['type'][]).map((type) => {
+                  const group = smartStartCandidates.filter((candidate) => candidate.type === type)
+                  if (group.length === 0) return null
+                  return (
+                    <section className="smart-start-group" key={type} aria-labelledby={`smart-start-${type}`}>
+                      <h3 id={`smart-start-${type}`}>{smartStartGroupLabels[type]}</h3>
+                      <div className="smart-start-list">
+                        {group.map((candidate) => {
+                          const selected = smartStartState.selected.includes(candidate.key)
+                          return (
+                            <label className={`smart-start-item${selected ? ' is-selected' : ''}`} key={candidate.key}>
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={(event) => setSmartStartState((current) => ({
+                                  ...current,
+                                  selected: event.target.checked
+                                    ? [...current.selected, candidate.key]
+                                    : current.selected.filter((key) => key !== candidate.key),
+                                }))}
+                              />
+                              <span>
+                                <strong>{candidate.title}</strong>
+                                {candidate.detail && <small>{candidate.detail}</small>}
+                              </span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  )
+                })}
+              </div>
+              <div className="smart-start-actions">
+                <button className="button button-secondary" type="button" onClick={() => setSmartStartState((current) => ({ ...current, showReview: false }))}>Cancel</button>
+                <button className="button button-primary" type="button" disabled={smartStartState.selected.length === 0} onClick={startFromPreviousWeek}>Apply selected items</button>
+                <button className="button button-secondary" type="button" onClick={() => markSmartStart('fresh')}>Start fresh</button>
+              </div>
+              <small className="smart-start-safety-note">The previous week will not be changed. Daily activity and completed follow-ups are not copied.</small>
+            </>
+          )}
+        </section>
+      )}
       <div className="weekly-plan-top-level">
-        {hasPlanningCategory('primaryObjectives') && <WeeklyPlanTextListSection
-          title={template.id === 'project-management' ? 'Weekly Objectives' : terminology.objectives === 'Objectives' ? 'Weekly Strategic Objectives' : terminology.objectives}
-          summary={`${plan.weeklyStrategicObjectives.length} item${plan.weeklyStrategicObjectives.length === 1 ? '' : 's'}`}
-          items={plan.weeklyStrategicObjectives}
-          emptyText={template.id === 'project-management' ? 'No weekly objectives captured for this week yet.' : `No ${terminology.objectives.toLowerCase()} captured for this week yet.`}
-          placeholder={template.id === 'project-management' ? 'Add a weekly objective' : `Add ${terminology.objective.toLowerCase()}`}
-          compact
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, weeklyStrategicObjectives: items }))}
-        />}
-        {hasPlanningCategory('virtualEngagements') && template.id === 'field-service' && <WeeklyPlanVirtualEngagementSection
-          items={plan.virtualEngagementPlan}
-          title="Preventive Maintenance"
-          helperText="Plan preventive maintenance work, routine checks and scheduled service activity for the week."
-          emptyText="No preventive maintenance planned yet."
-          addButtonText="+ Add maintenance"
-          compact
-          contactPlaceholder="Add customer contact"
-          objectivePlaceholder="Describe the objective of this maintenance task"
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
-        />}
-        {hasPlanningCategory('accountObjectives') && template.id === 'field-service' && <WeeklyPlanAccountObjectiveSection
-          items={plan.keyAccountObjectives}
-          title="Work Orders / Jobs"
-          helperText="Capture the service jobs and work requests scheduled for the week."
-          emptyText="No service jobs captured yet."
-          addButtonText="+ Add job"
-          compact
-          accountPlaceholder="Site / service location"
-          objectivePlaceholder="Add service job"
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
-        />}
-        {hasPlanningCategory('virtualEngagements') && template.id === 'small-business' && <WeeklyPlanVirtualEngagementSection
-          items={plan.virtualEngagementPlan}
-          title="Leads / Opportunities"
-          helperText="Track potential customers, quotes, and sales opportunities that need attention this week."
-          emptyText="No leads or opportunities captured yet."
-          addButtonText="+ Add lead"
-          compact
-          contactPlaceholder="Add customer / client"
-          objectivePlaceholder="Describe the opportunity or follow-up needed"
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
-        />}
-        {hasPlanningCategory('accountObjectives') && template.id === 'small-business' && <WeeklyPlanAccountObjectiveSection
-          items={plan.keyAccountObjectives}
-          title="Orders / Sales"
-          helperText="Capture customers, commercial commitments, and sales work that needs attention this week."
-          emptyText="No orders or sales work captured yet."
-          addButtonText="+ Add order / sale"
-          compact
-          accountPlaceholder="Customer / client"
-          objectivePlaceholder="Add sales objective"
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
-        />}
-        {hasPlanningCategory('virtualEngagements') && template.id !== 'field-service' && template.id !== 'small-business' && <WeeklyPlanVirtualEngagementSection
-          items={plan.virtualEngagementPlan}
-          title={getPlanningCategoryLabel('virtualEngagements')}
-          helperText={template.id === 'project-management' ? 'Add the activities that matter this week.' : undefined}
-          emptyText={template.id === 'project-management' ? 'No key activities planned yet.' : undefined}
-          addButtonText={template.id === 'project-management' ? '+ Add key activity' : undefined}
-          compact
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
-        />}
-        {hasPlanningCategory('accountObjectives') && template.id !== 'field-service' && template.id !== 'small-business' && <WeeklyPlanAccountObjectiveSection
-          items={plan.keyAccountObjectives}
-          title={getPlanningCategoryLabel('accountObjectives')}
-          helperText={template.id === 'project-management' ? 'Add what needs to be delivered this week.' : undefined}
-          emptyText={template.id === 'project-management' ? 'No deliverables captured yet.' : undefined}
-          addButtonText={template.id === 'project-management' ? '+ Add deliverable' : undefined}
-          compact
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
-        />}
-        {hasPlanningCategory('commercialPriorities') && <WeeklyPlanCommercialPrioritySection
-          items={plan.commercialPriorities}
-          title={template.id === 'project-management' ? 'Priorities' : template.id === 'field-service' ? 'Priority Issues' : template.id === 'small-business' ? 'Business Priorities' : undefined}
-          helperText={template.id === 'project-management' ? 'Add the priorities that matter most.' : template.id === 'small-business' ? 'Capture the highest-priority business matters that need attention this week.' : template.id === 'field-service' ? 'Capture the service issues that need attention this week, with optional site and asset context.' : `Capture your ${terminology.priorities.toLowerCase()} for the selected week.`}
-          compact
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, commercialPriorities: items }))}
-        />}
-        {hasPlanningCategory('successMeasures') && <WeeklyPlanSuccessMeasureSection
-          items={plan.successMeasures}
-          title={template.id === 'field-service' ? 'Service Targets' : 'Success Measures'}
-          helperText={template.id === 'project-management' ? "Define how you'll measure progress this week." : template.id === 'field-service' ? 'Track the service goals and measurable targets for the week.' : 'Track the measurable indicators of success for the week, with optional target and category context.'}
-          emptyText={template.id === 'project-management' ? 'No success measures captured yet.' : template.id === 'field-service' ? 'No service targets captured yet.' : 'No success measures captured yet.'}
-          addButtonText={template.id === 'field-service' ? '+ Add target' : '+ Add measure'}
-          compact
-          onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, successMeasures: items }))}
-        />}
+        {template.id === 'ngo-community' ? (
+          <>
+            <ProgrammeContextSection
+              context={plan.programmeContext}
+              onChange={(context) => setPlan((currentPlan) => ({ ...currentPlan, programmeContext: context }))}
+            />
+            <NGOWeeklyFocusSection
+              focusText={plan.programmeContext?.weeklyTheme ?? ''}
+              onChange={(text) => setPlan((currentPlan) => ({
+                ...currentPlan,
+                programmeContext: {
+                  ...currentPlan.programmeContext,
+                  weeklyTheme: text.trim() ? text : undefined,
+                },
+              }))}
+            />
+            <NGOWeeklyObjectivesSection
+              items={plan.weeklyStrategicObjectives}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, weeklyStrategicObjectives: items }))}
+            />
+            <NGOProgrammeActivitiesSection
+              items={plan.programmeActivities ?? []}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, programmeActivities: items }))}
+            />
+            <NGOCommunityEngagementSection
+              items={plan.communityEngagement ?? []}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, communityEngagement: items }))}
+            />
+            <NGOVolunteerPlanSection
+              items={plan.volunteerPlan ?? []}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, volunteerPlan: items }))}
+            />
+            <NGOStakeholderPlanSection
+              items={plan.stakeholderPlan ?? []}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, stakeholderPlan: items }))}
+            />
+            <NGOResourcesLogisticsSection
+              items={plan.resourcesLogistics ?? []}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, resourcesLogistics: items }))}
+            />
+            <NGOCommunicationsPlanSection
+              items={plan.communicationsPlan ?? []}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, communicationsPlan: items }))}
+            />
+            <NGODocumentationPlanSection
+              items={plan.documentationPlan ?? []}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, documentationPlan: items }))}
+            />
+            <NGOMonitoringImpactTargetsSection
+              items={plan.monitoringImpactTargets ?? []}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, monitoringImpactTargets: items }))}
+            />
+          </>
+        ) : (
+          <>
+            {hasPlanningCategory('primaryObjectives') && <WeeklyPlanTextListSection
+              title={template.id === 'personal' ? 'Weekly Focus' : template.id === 'project-management' ? 'Weekly Objectives' : terminology.objectives === 'Objectives' ? 'Weekly Strategic Objectives' : terminology.objectives}
+              summary={`${plan.weeklyStrategicObjectives.length} item${plan.weeklyStrategicObjectives.length === 1 ? '' : 's'}`}
+              items={plan.weeklyStrategicObjectives}
+              emptyText={template.id === 'personal' ? 'No weekly focus captured for this week yet.' : template.id === 'project-management' ? 'No weekly objectives captured for this week yet.' : `No ${terminology.objectives.toLowerCase()} captured for this week yet.`}
+              placeholder={template.id === 'personal' ? 'Add the main focus for your week.' : template.id === 'project-management' ? 'Add a weekly objective' : `Add ${terminology.objective.toLowerCase()}`}
+              compact
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, weeklyStrategicObjectives: items }))}
+              renderItemExtras={template.id === 'project-management' ? (item, updateItem) => (
+                <>
+                  <input
+                    aria-label="Success measure"
+                    value={item.successMeasure ?? ''}
+                    placeholder="Success Measure"
+                    onChange={(event) => updateItem(item.id, { successMeasure: event.target.value || undefined })}
+                  />
+                  <select
+                    aria-label="Objective priority"
+                    value={item.priority ?? 'medium'}
+                    onChange={(event) => updateItem(item.id, { priority: event.target.value as any })}
+                  >
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </>
+              ) : undefined}
+            />}
+            {hasPlanningCategory('virtualEngagements') && template.id === 'field-service' && <WeeklyPlanVirtualEngagementSection
+              items={plan.virtualEngagementPlan}
+              title="Preventive Maintenance"
+              helperText="Plan preventive maintenance work, routine checks and scheduled service activity for the week."
+              emptyText="No preventive maintenance planned yet."
+              addButtonText="+ Add maintenance"
+              compact
+              contactPlaceholder="Add customer contact"
+              objectivePlaceholder="Describe the objective of this maintenance task"
+              template={template}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
+            />}
+            {hasPlanningCategory('accountObjectives') && template.id === 'field-service' && <WeeklyPlanAccountObjectiveSection
+              items={plan.keyAccountObjectives}
+              title="Work Orders / Jobs"
+              helperText="Capture the service jobs and work requests scheduled for the week."
+              emptyText="No service jobs captured yet."
+              addButtonText="+ Add job"
+              compact
+              accountPlaceholder="Site / service location"
+              objectivePlaceholder="Add service job"
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
+            />}
+            {hasPlanningCategory('virtualEngagements') && template.id === 'small-business' && <WeeklyPlanVirtualEngagementSection
+              items={plan.virtualEngagementPlan}
+              title="Leads / Opportunities"
+              helperText="Track potential customers, quotes, and sales opportunities that need attention this week."
+              emptyText="No leads or opportunities captured yet."
+              addButtonText="+ Add lead"
+              compact
+              contactPlaceholder="Add customer / client"
+              objectivePlaceholder="Describe the opportunity or follow-up needed"
+              template={template}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
+            />}
+            {hasPlanningCategory('accountObjectives') && template.id === 'small-business' && <WeeklyPlanAccountObjectiveSection
+              items={plan.keyAccountObjectives}
+              title="Orders / Sales"
+              helperText="Capture customers, commercial commitments, and sales work that needs attention this week."
+              emptyText="No orders or sales work captured yet."
+              addButtonText="+ Add order / sale"
+              compact
+              accountPlaceholder="Customer / client"
+              objectivePlaceholder="Add sales objective"
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
+            />}
+            {hasPlanningCategory('virtualEngagements') && template.id !== 'field-service' && template.id !== 'small-business' && <WeeklyPlanVirtualEngagementSection
+              items={plan.virtualEngagementPlan}
+              title={template.id === 'personal' ? 'Weekly Tasks' : getPlanningCategoryLabel('virtualEngagements')}
+              helperText={template.id === 'project-management' ? 'Add the activities that matter this week.' : template.id === 'personal' ? 'Plan the weekly tasks that move your focus forward.' : undefined}
+              emptyText={template.id === 'project-management' ? 'No key activities planned yet.' : template.id === 'personal' ? 'No weekly tasks captured yet.' : undefined}
+              addButtonText={template.id === 'project-management' ? '+ Add key activity' : template.id === 'personal' ? '+ Add task' : undefined}
+              compact
+              contactPlaceholder={template.id === 'personal' ? 'Add a person or context' : 'Add priority contact'}
+              objectivePlaceholder={template.id === 'personal' ? 'Describe the task or objective' : undefined}
+              template={template}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, virtualEngagementPlan: items }))}
+            />}
+            {hasPlanningCategory('accountObjectives') && template.id !== 'field-service' && template.id !== 'small-business' && <WeeklyPlanAccountObjectiveSection
+              items={plan.keyAccountObjectives}
+              title={template.id === 'personal' ? 'Personal Routines' : getPlanningCategoryLabel('accountObjectives')}
+              helperText={template.id === 'project-management' ? 'Add what needs to be delivered this week.' : template.id === 'personal' ? 'Capture recurring or planned personal routines that support the week.' : undefined}
+              emptyText={template.id === 'project-management' ? 'No deliverables captured yet.' : template.id === 'personal' ? 'No personal routines captured yet.' : undefined}
+              addButtonText={template.id === 'project-management' ? '+ Add deliverable' : template.id === 'personal' ? '+ Add routine' : undefined}
+              compact
+              accountPlaceholder={template.id === 'personal' ? 'Area / Commitment' : undefined}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, keyAccountObjectives: items }))}
+            />}
+            {hasPlanningCategory('commercialPriorities') && <WeeklyPlanCommercialPrioritySection
+              items={plan.commercialPriorities}
+              title={template.id === 'personal' ? 'Big Three' : template.id === 'project-management' ? 'Priorities' : template.id === 'field-service' ? 'Priority Issues' : template.id === 'small-business' ? 'Business Priorities' : undefined}
+              helperText={template.id === 'personal' ? 'Capture the three most important personal outcomes or priorities for the week.' : template.id === 'project-management' ? 'Add the priorities that matter most.' : template.id === 'small-business' ? 'Capture the highest-priority business matters that need attention this week.' : template.id === 'field-service' ? 'Capture the service issues that need attention this week, with optional site and asset context.' : `Capture your ${terminology.priorities.toLowerCase()} for the selected week.`}
+              compact
+              template={template}
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, commercialPriorities: items }))}
+            />}
+            {template.id !== 'personal' && hasPlanningCategory('successMeasures') && <WeeklyPlanSuccessMeasureSection
+              items={plan.successMeasures}
+              title={template.id === 'field-service' ? 'Service Targets' : 'Success Measures'}
+              helperText={template.id === 'project-management' ? "Define how you'll measure progress this week." : template.id === 'field-service' ? 'Track the service goals and measurable targets for the week.' : 'Track the measurable indicators of success for the week, with optional target and category context.'}
+              emptyText={template.id === 'field-service' ? 'No service targets captured yet.' : 'No success measures captured yet.'}
+              addButtonText={template.id === 'field-service' ? '+ Add target' : '+ Add measure'}
+              compact
+              onChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, successMeasures: items }))}
+            />}
+          </>
+        )}
       </div>
       <section className="daily-field-plan-section" aria-labelledby="daily-field-plan-heading">
         <div className="weekly-plan-summary-header daily-plan-header">
@@ -1562,6 +2774,7 @@ function ReportHistory({ selectedWeek, onSelectWeek, onOpenReport, template = FI
     try {
       const snapshot = getReportHistoryEntry(weekStart, currentWorkspaceId)
       if (!snapshot) return
+      const { exportReportWord } = await import('./utils/reportDocx')
       const result = await exportReportWord(snapshot)
       setExportMessage(`Downloaded ${result.filename}`)
     } catch {
@@ -1603,20 +2816,41 @@ function getHistoricalReportWeek() {
   return week && /^\d{4}-\d{2}-\d{2}$/.test(week) ? week : null
 }
 
+function getEntryWeekContext(screen: string) {
+  // Explicit week navigation is authoritative; only unset/default contexts adapt to the workflow.
+  if (getWeekSelectionSource() === 'explicit') return null
+  if (screen === 'weekly-plan') return { weekStart: getPlanningWeekStart(), source: 'planning-default' as const }
+  if (screen === 'daily-activity') return { weekStart: getCurrentWeekStart(), source: 'activity-default' as const }
+  return null
+}
+
+function getInitialWeekContext() {
+  return getSelectedWeekStart()
+}
+
 function App() {
   const [accountState, setAccountState] = useState<AccountState>(() => isSupabaseConfigured ? { status: 'loading', user: null } : { status: 'local-demo', user: null })
   const accountStatusRef = useRef<AccountState['status']>(isSupabaseConfigured ? 'loading' : 'local-demo')
+  const bootstrapMountIdRef = useRef(Math.random().toString(36).slice(2, 10))
   const [activeScreen, setActiveScreen] = useState(getInitialScreen)
   const [historicalReportWeek, setHistoricalReportWeek] = useState(getHistoricalReportWeek)
   const [historicalReportSnapshot, setHistoricalReportSnapshot] = useState<ReportHistoryEntry | null>(() => {
     const week = getHistoricalReportWeek()
     return week ? getReportHistoryEntry(week, getCurrentWorkspaceId()) : null
   })
-  const [selectedWeek, setSelectedWeek] = useState(getSelectedWeekStart)
+  const [selectedWeek, setSelectedWeek] = useState(getInitialWeekContext)
   const [selectedTemplate, setSelectedTemplate] = useState(getSelectedTemplate)
   const [currentWorkspace, setCurrentWorkspace] = useState(getCurrentWorkspace)
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false)
+  const [workspaceToRename, setWorkspaceToRename] = useState<ReturnType<typeof getCurrentWorkspace> | null>(null)
+  const [workspaceRenameName, setWorkspaceRenameName] = useState('')
+  const [workspaceRenamePending, setWorkspaceRenamePending] = useState(false)
+  const [workspaceRenameError, setWorkspaceRenameError] = useState('')
+  const [workspaceToDelete, setWorkspaceToDelete] = useState<ReturnType<typeof getCurrentWorkspace> | null>(null)
+  const [workspaceDeletePending, setWorkspaceDeletePending] = useState(false)
+  const [workspaceDeleteError, setWorkspaceDeleteError] = useState('')
+  const [workspaceListVersion, setWorkspaceListVersion] = useState(0)
   const [newWorkspaceName, setNewWorkspaceName] = useState('')
   const [newWorkspaceTemplateId, setNewWorkspaceTemplateId] = useState('field-sales')
   const [workspaceCreateValidation, setWorkspaceCreateValidation] = useState('')
@@ -1624,36 +2858,118 @@ function App() {
   const [navigationCollapsed, setNavigationCollapsed] = useState(false)
   const [navigationOpen, setNavigationOpen] = useState(false)
   const [workspaceInitializationError, setWorkspaceInitializationError] = useState('')
+  const [themePreference] = useState(getStoredThemePreference)
   const [workspaceInitializationPending, setWorkspaceInitializationPending] = useState(false)
   const [workspaceReadyOwnerId, setWorkspaceReadyOwnerId] = useState<string | null>(null)
+  const accountStateRef = useRef(accountState)
+  const workspaceReadyOwnerRef = useRef(workspaceReadyOwnerId)
   const initializedWorkspaceOwnersRef = useRef(new Map<string, Promise<void>>())
 
+  function logBootstrap(event: string, extra: Record<string, unknown> = {}) {
+    if (!import.meta.env.DEV) return
+    console.info('[WeekFlow bootstrap]', {
+      event,
+      path: window.location.pathname,
+      mountId: bootstrapMountIdRef.current,
+      accountStatus: accountState.status,
+      authenticatedUserPresent: accountState.status === 'authenticated',
+      workspaceInitializationPending,
+      workspaceReadyOwnerPresent: workspaceReadyOwnerId !== null,
+      workspaceReadyOwnerMatchesAccount: accountState.status === 'authenticated' && workspaceReadyOwnerId === accountState.user.id,
+      currentWorkspacePresent: currentWorkspace !== null,
+      ...extra,
+    })
+  }
+
+  useEffect(() => {
+    applyTheme(themePreference)
+  }, [themePreference])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const handleSystemThemeChange = () => {
+      if (getStoredThemePreference() === 'system') applyTheme('system')
+    }
+    mediaQuery.addEventListener('change', handleSystemThemeChange)
+    return () => mediaQuery.removeEventListener('change', handleSystemThemeChange)
+  }, [])
+
+  useEffect(() => {
+    logBootstrap('APP_MOUNT')
+    return () => logBootstrap('APP_UNMOUNT')
+  }, [])
+
+  useEffect(() => {
+    logBootstrap('STATE_TRANSITION')
+  }, [accountState, workspaceInitializationPending, workspaceReadyOwnerId, currentWorkspace])
+
+  useEffect(() => {
+    accountStateRef.current = accountState
+  }, [accountState])
+
+  useEffect(() => {
+    workspaceReadyOwnerRef.current = workspaceReadyOwnerId
+  }, [workspaceReadyOwnerId])
+
   async function initializeAuthenticatedWorkspace(user: UserProfile) {
+    const ownerId = user.id
+    logBootstrap('WORKSPACE_INIT_START', { existingInitialization: initializedWorkspaceOwnersRef.current.has(ownerId) })
+
+    if (accountStateRef.current.status === 'authenticated' && accountStateRef.current.user?.id === ownerId && workspaceReadyOwnerRef.current === ownerId) {
+      logBootstrap('WORKSPACE_INIT_SKIPPED_ALREADY_READY')
+      return undefined
+    }
+
+    const existingInitialization = initializedWorkspaceOwnersRef.current.get(ownerId)
+    if (existingInitialization) {
+      logBootstrap('WORKSPACE_INIT_REUSED_INFLIGHT')
+      return existingInitialization
+    }
+
     setWorkspaceInitializationPending(true)
-    setWorkspaceReadyOwnerId(null)
-    const existingInitialization = initializedWorkspaceOwnersRef.current.get(user.id)
-    if (existingInitialization) return existingInitialization
+    if (accountStateRef.current.status === 'authenticated' && accountStateRef.current.user?.id === ownerId) {
+      setWorkspaceReadyOwnerId(null)
+      logBootstrap('WORKSPACE_READY_CLEAR', { reason: 'reinitializing same authenticated owner' })
+    }
 
     const initialization = (async () => {
       setWorkspaceInitializationError('')
-      const workspace = await ensureFirstWorkspaceForOwner(user.id, 'My Workspace', 'personal')
-      if (!workspace) return
+      const workspace = await ensureFirstWorkspaceForOwner(ownerId, 'My Workspace', 'personal')
+      if (!workspace) {
+        setCurrentWorkspace(null)
+        setSelectedTemplate(getSelectedTemplate())
+        setSelectedWeek(getSelectedWeekStart())
+        setWorkspaceReadyOwnerId(ownerId)
+        logBootstrap('WORKSPACE_INIT_NO_WORKSPACE', { validEmptyState: true })
+        return
+      }
+
       const provisionedWorkspace = await provisionWorkspaceInCloud(workspace)
       setCurrentWorkspace(provisionedWorkspace)
+      const entryContext = getEntryWeekContext(getScreenFromPath())
+      if (entryContext) {
+        setSelectedWeekStart(entryContext.weekStart, entryContext.source)
+        setSelectedWeek(entryContext.weekStart)
+      } else {
+        setSelectedWeek(getSelectedWeekStart())
+      }
       setSelectedTemplate(getSelectedTemplate())
-      setSelectedWeek(getSelectedWeekStart())
-      setWorkspaceReadyOwnerId(user.id)
+      setWorkspaceReadyOwnerId(ownerId)
+      logBootstrap('WORKSPACE_INIT_SUCCESS')
     })().catch((error) => {
-      initializedWorkspaceOwnersRef.current.delete(user.id)
       setWorkspaceInitializationError(error instanceof Error ? error.message : 'Workspace setup could not be completed. Your local workspace is still available.')
       setCurrentWorkspace(getCurrentWorkspace())
       setSelectedTemplate(getSelectedTemplate())
       setSelectedWeek(getSelectedWeekStart())
-      setWorkspaceReadyOwnerId(user.id)
+      setWorkspaceReadyOwnerId(ownerId)
+      logBootstrap('WORKSPACE_INIT_ERROR', { error: error instanceof Error ? error.message : 'unknown' })
     }).finally(() => {
+      initializedWorkspaceOwnersRef.current.delete(ownerId)
       setWorkspaceInitializationPending(false)
+      logBootstrap('WORKSPACE_INIT_FINALLY')
     })
-    initializedWorkspaceOwnersRef.current.set(user.id, initialization)
+
+    initializedWorkspaceOwnersRef.current.set(ownerId, initialization)
     return initialization
   }
 
@@ -1663,31 +2979,52 @@ function App() {
     getCurrentUser()
       .then((user) => {
         if (active) {
+          logBootstrap('AUTH_GET_CURRENT_USER_RESOLVED', { authenticatedUserPresent: user !== null })
           setWorkspaceOwner(user?.id ?? null)
           setWorkspaceReadyOwnerId(null)
           const nextState: AccountState = user ? { status: 'authenticated', user } : { status: 'unauthenticated', user: null }
           accountStatusRef.current = nextState.status
+          accountStateRef.current = nextState
           setAccountState(nextState)
-          if (user && window.location.pathname !== '/reset-password') void initializeAuthenticatedWorkspace(user)
+          if (user && window.location.pathname !== '/reset-password') {
+            void initializeAuthenticatedWorkspace(user)
+            if (window.location.pathname === '/auth/callback') navigateTo('/workspaces')
+          }
         }
       })
       .catch(() => {
         if (active) {
+          logBootstrap('AUTH_GET_CURRENT_USER_ERROR')
           setWorkspaceOwner(null)
           setWorkspaceReadyOwnerId(null)
           accountStatusRef.current = 'unauthenticated'
+          accountStateRef.current = { status: 'unauthenticated', user: null }
           setAccountState({ status: 'unauthenticated', user: null })
         }
       })
     const unsubscribe = accountProvider.onAuthStateChange((state) => {
       if (!active) return
       const previousStatus = accountStatusRef.current
+      logBootstrap('AUTH_CALLBACK_EVENT', { previousStatus, nextStatus: state.status })
       accountStatusRef.current = state.status
-      if (state.status !== 'authenticated' || previousStatus !== 'authenticated') setWorkspaceReadyOwnerId(null)
-      if (state.status !== 'authenticated') setWorkspaceOwner(null)
-      else setWorkspaceOwner(state.user.id)
+
+      if (state.status !== 'authenticated') {
+        setWorkspaceOwner(null)
+        setWorkspaceReadyOwnerId(null)
+        logBootstrap('WORKSPACE_READY_CLEAR', { reason: 'auth callback unauthenticated' })
+      } else {
+        setWorkspaceOwner(state.user.id)
+        const activeUserId = accountStateRef.current.status === 'authenticated' ? accountStateRef.current.user.id : null
+        const isSameAuthenticatedOwner = previousStatus === 'authenticated' && activeUserId === state.user.id
+        if (!isSameAuthenticatedOwner) {
+          setWorkspaceReadyOwnerId(null)
+          logBootstrap('WORKSPACE_READY_CLEAR', { reason: 'auth callback authenticated owner changed' })
+        }
+      }
+
+      accountStateRef.current = state
       setAccountState(state)
-      if (state.status === 'authenticated' && previousStatus === 'unauthenticated') {
+      if (state.status === 'authenticated' && (previousStatus === 'unauthenticated' || window.location.pathname === '/auth/callback')) {
         if (window.location.pathname !== '/reset-password') {
           void initializeAuthenticatedWorkspace(state.user)
           navigateTo('/workspaces')
@@ -1715,12 +3052,23 @@ function App() {
           setWorkspaceCreateValidation('')
           return
         }
+        if (workspaceToRename && !workspaceRenamePending) {
+          setWorkspaceToRename(null)
+          setWorkspaceRenameName('')
+          setWorkspaceRenameError('')
+          return
+        }
+        if (workspaceToDelete && !workspaceDeletePending) {
+          setWorkspaceToDelete(null)
+          setWorkspaceDeleteError('')
+          return
+        }
         setNavigationOpen(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showCreateWorkspace])
+  }, [showCreateWorkspace, workspaceDeletePending, workspaceToRename, workspaceRenamePending, workspaceToDelete])
 
   useEffect(() => {
     // Monitor hash changes for backward compatibility (e.g., old bookmarks, external links)
@@ -1730,7 +3078,13 @@ function App() {
 
     const handleLocationChange = () => {
       const historicalWeek = getHistoricalReportWeek()
-      setActiveScreen(getScreenFromPath())
+      const nextScreen = getScreenFromPath()
+      const entryContext = getEntryWeekContext(nextScreen)
+      if (entryContext) {
+        setSelectedWeekStart(entryContext.weekStart, entryContext.source)
+        setSelectedWeek(entryContext.weekStart)
+      }
+      setActiveScreen(nextScreen)
       setHistoricalReportWeek(historicalWeek)
       setHistoricalReportSnapshot(historicalWeek ? getReportHistoryEntry(historicalWeek, getCurrentWorkspaceId()) : null)
     }
@@ -1764,12 +3118,11 @@ function App() {
   }
 
   function openTemplateSelection() {
-    navigateTo('/template-selection')
-  }
-
-  function completeTemplateSelection() {
-    setSelectedTemplate(getSelectedTemplate())
-    navigateTo('/')
+    setWorkspaceCreateReturnPath('/')
+    setWorkspaceCreateValidation('')
+    setNewWorkspaceName('')
+    setNewWorkspaceTemplateId('field-sales')
+    setShowCreateWorkspace(true)
   }
 
   function selectWorkspace(workspaceId: string) {
@@ -1818,6 +3171,47 @@ function App() {
     navigateTo(workspaceCreateReturnPath)
   }
 
+  async function confirmWorkspaceDeletion() {
+    if (!workspaceToDelete) return
+    setWorkspaceDeletePending(true)
+    setWorkspaceDeleteError('')
+    const wasCurrent = workspaceToDelete.id === currentWorkspace?.id
+    try {
+      const result = await deleteWorkspace(workspaceToDelete.id)
+      setWorkspaceListVersion((current) => current + 1)
+      if (wasCurrent) {
+        setCurrentWorkspace(result.currentWorkspace)
+        setSelectedTemplate(getSelectedTemplate())
+        setSelectedWeek(getSelectedWeekStart())
+        setHistoricalReportWeek(null)
+        setHistoricalReportSnapshot(null)
+        navigateTo(result.currentWorkspace ? '/' : '/workspaces')
+      }
+      setWorkspaceToDelete(null)
+    } catch (error) {
+      setWorkspaceDeleteError(error instanceof Error ? error.message : 'Workspace deletion failed. Please try again.')
+    } finally {
+      setWorkspaceDeletePending(false)
+    }
+  }
+
+  async function confirmWorkspaceRename() {
+    if (!workspaceToRename) return
+    setWorkspaceRenamePending(true)
+    setWorkspaceRenameError('')
+    try {
+      const renamedWorkspace = await renameWorkspace(workspaceToRename.id, workspaceRenameName)
+      setWorkspaceListVersion((current) => current + 1)
+      if (renamedWorkspace.id === currentWorkspace?.id) setCurrentWorkspace(renamedWorkspace)
+      setWorkspaceToRename(null)
+      setWorkspaceRenameName('')
+    } catch (error) {
+      setWorkspaceRenameError(error instanceof Error ? error.message : 'Workspace rename failed. Please try again.')
+    } finally {
+      setWorkspaceRenamePending(false)
+    }
+  }
+
   async function handleSignOut() {
     try {
       await signOut()
@@ -1830,10 +3224,30 @@ function App() {
     }
   }
 
+  async function handleAccountDeleted() {
+    const ownerId = accountState.status === 'authenticated' ? accountState.user.id : null
+    if (ownerId) clearWorkspaceOwnerLocalData(ownerId)
+    try {
+      await signOut()
+    } catch {
+      // The Auth user has already been deleted; finish local teardown regardless.
+    }
+    setWorkspaceOwner(null)
+    setWorkspaceReadyOwnerId(null)
+    setCurrentWorkspace(null)
+    setSelectedTemplate(FIELD_SALES_TEMPLATE)
+    setSelectedWeek(getCurrentWeekStart())
+    accountStatusRef.current = 'unauthenticated'
+    accountStateRef.current = { status: 'unauthenticated', user: null }
+    setAccountState({ status: 'unauthenticated', user: null })
+    navigateTo('/')
+  }
+
   if (window.location.pathname === '/forgot-password') return <ForgotPasswordScreen />
   if (window.location.pathname === '/reset-password') return <ResetPasswordScreen />
   if (accountState.status === 'loading' || workspaceInitializationPending || (accountState.status === 'authenticated' && workspaceReadyOwnerId !== accountState.user.id)) return <AuthLoadingScreen />
   if (accountState.status === 'unauthenticated') {
+    if (window.location.pathname === '/auth/callback') return <AuthCallbackScreen />
     if (window.location.pathname === '/') return <PublicLandingScreen onSignIn={() => navigateTo('/sign-in')} onCreateAccount={() => navigateTo('/sign-up')} />
     return <AuthenticationScreen initialMode={window.location.pathname === '/sign-up' ? 'signup' : 'signin'} />
   }
@@ -1848,14 +3262,6 @@ function App() {
         onToggleWorkspaceMenu={() => setWorkspaceMenuOpen((current) => !current)}
         onOpenNavigation={() => setNavigationOpen(true)}
         onSelectWorkspace={selectWorkspace}
-        onOpenCreateWorkspace={() => {
-          setWorkspaceCreateReturnPath('/')
-          setWorkspaceCreateValidation('')
-          setNewWorkspaceName('')
-          setNewWorkspaceTemplateId('field-sales')
-          setShowCreateWorkspace(true)
-          setWorkspaceMenuOpen(false)
-        }}
         onOpenProfile={() => navigateTo('/profile')}
         user={accountState.status === 'authenticated' ? accountState.user : null}
         onSignOut={handleSignOut}
@@ -1882,17 +3288,63 @@ function App() {
         onCreate={createWorkspaceFromDialog}
         validationMessage={workspaceCreateValidation}
       />
-      {activeScreen !== 'template-selection' && activeScreen !== 'profile' && <WeekNavigation weekStart={selectedWeek} onChange={changeWeek} />}
+      <WorkspaceDeleteDialog
+        workspace={workspaceToDelete}
+        isDeleting={workspaceDeletePending}
+        errorMessage={workspaceDeleteError}
+        onClose={() => {
+          if (workspaceDeletePending) return
+          setWorkspaceToDelete(null)
+          setWorkspaceDeleteError('')
+        }}
+        onConfirm={confirmWorkspaceDeletion}
+      />
+      <WorkspaceRenameDialog
+        workspace={workspaceToRename}
+        name={workspaceRenameName}
+        isSaving={workspaceRenamePending}
+        errorMessage={workspaceRenameError}
+        onNameChange={(name) => {
+          setWorkspaceRenameName(name)
+          if (workspaceRenameError) setWorkspaceRenameError('')
+        }}
+        onClose={() => {
+          if (workspaceRenamePending) return
+          setWorkspaceToRename(null)
+          setWorkspaceRenameName('')
+          setWorkspaceRenameError('')
+        }}
+        onConfirm={confirmWorkspaceRename}
+        onRequestDelete={() => {
+          if (!workspaceToRename) return
+          setWorkspaceRenameError('')
+          setWorkspaceToDelete(workspaceToRename)
+          setWorkspaceToRename(null)
+        }}
+      />
+      {activeScreen !== 'profile' && <WeekNavigation weekStart={selectedWeek} onChange={changeWeek} />}
       <div className="app-body">
-        <AppNavigation activeScreen={activeScreen} templateName={selectedTemplate.name} onSwitchTemplate={openTemplateSelection} onNavigate={navigateTo} collapsed={navigationCollapsed} mobileOpen={navigationOpen} onToggleCollapse={() => setNavigationCollapsed((current) => !current)} onClose={() => setNavigationOpen(false)} />
+        <AppNavigation activeScreen={activeScreen} templateName={currentWorkspace ? selectedTemplate.name : 'No workspace selected'} onSwitchTemplate={openTemplateSelection} onNavigate={navigateTo} collapsed={navigationCollapsed} mobileOpen={navigationOpen} onToggleCollapse={() => setNavigationCollapsed((current) => !current)} onClose={() => setNavigationOpen(false)} />
         {navigationOpen && <button className="navigation-overlay" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />}
-        {activeScreen === 'profile' ? <ProfileSettingsScreen user={accountState.status === 'authenticated' ? accountState.user : { id: '', displayName: '', email: '', createdAt: '', updatedAt: '' }} workspaces={loadWorkspaces()} currentWorkspaceId={currentWorkspace.id} onProfileUpdated={(profile) => setAccountState((state) => state.status === 'authenticated' ? { ...state, user: profile } : state)} onWorkspaceSelected={selectWorkspace} onSignOut={handleSignOut} /> : activeScreen === 'workspaces' ? <WorkspaceHomeScreen user={accountState.status === 'authenticated' ? accountState.user : null} currentWorkspaceId={currentWorkspace.id} selectedWeek={selectedWeek} onOpenWorkspace={(workspaceId) => { selectWorkspace(workspaceId); navigateTo('/') }} onCreateWorkspace={() => {
+        {activeScreen === 'profile' ? <ProfileSettingsScreen user={accountState.status === 'authenticated' ? accountState.user : { id: '', displayName: '', email: '', createdAt: '', updatedAt: '' }} workspaces={loadWorkspaces()} currentWorkspaceId={currentWorkspace?.id ?? null} onProfileUpdated={(profile) => setAccountState((state) => state.status === 'authenticated' ? { ...state, user: profile } : state)} onWorkspaceSelected={selectWorkspace} onSignOut={handleSignOut} onAccountDeleted={handleAccountDeleted} /> : activeScreen === 'workspaces' ? <WorkspaceHomeScreen key={workspaceListVersion} user={accountState.status === 'authenticated' ? accountState.user : null} currentWorkspaceId={currentWorkspace?.id ?? null} onOpenWorkspace={(workspaceId) => { selectWorkspace(workspaceId); navigateTo('/') }} onRequestRename={(workspaceId) => {
+          const workspace = loadWorkspaces().find((candidate) => candidate.id === workspaceId)
+          if (!workspace) return
+          setWorkspaceRenameError('')
+          setWorkspaceRenameName(workspace.name)
+          setWorkspaceToRename(workspace)
+        }} onCreateWorkspace={() => {
           setWorkspaceCreateReturnPath('/workspaces')
           setWorkspaceCreateValidation('')
           setNewWorkspaceName('')
           setNewWorkspaceTemplateId('field-sales')
           setShowCreateWorkspace(true)
-        }} /> : activeScreen === 'template-selection' ? <TemplateSelectionScreen onSelect={completeTemplateSelection} /> : activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={`${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={`${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'report' ? historicalReportWeek && !historicalReportSnapshot ? <main className="generate-report-screen"><section className="report-readiness report-readiness-review" aria-label="Historical report unavailable"><h1>Historical report unavailable</h1><p>The saved report snapshot for this workspace and week could not be found.</p><a className="button button-secondary" href="/report-history" onClick={(event) => { event.preventDefault(); navigateTo('/report-history') }}>Back to Report History</a></section></main> : <GenerateReportScreen key={`${selectedWeek}-${selectedTemplate.id}-${historicalReportWeek ?? 'live'}`} template={historicalReportSnapshot?.template ?? selectedTemplate} historicalSnapshot={historicalReportSnapshot} /> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} onOpenReport={(report) => { setHistoricalReportWeek(report.weekKey); setHistoricalReportSnapshot(report); navigateTo(`/report?historyWeek=${encodeURIComponent(report.weekKey)}`) }} template={selectedTemplate} /> : <OverviewScreen selectedWeek={selectedWeek} template={selectedTemplate} workspaceName={currentWorkspace.name} onNavigate={(screen) => { navigateTo(`/${screen === 'overview' ? '' : screen}`) }} />}
+        }} /> : !currentWorkspace ? <NoWorkspaceScreen onCreateWorkspace={() => {
+          setWorkspaceCreateReturnPath('/')
+          setWorkspaceCreateValidation('')
+          setNewWorkspaceName('')
+          setNewWorkspaceTemplateId('field-sales')
+          setShowCreateWorkspace(true)
+        }} /> : activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'report' ? historicalReportWeek && !historicalReportSnapshot ? <main className="generate-report-screen"><section className="report-readiness report-readiness-review" aria-label="Historical report unavailable"><h1>Historical report unavailable</h1><p>The saved report snapshot for this workspace and week could not be found.</p><a className="button button-secondary" href="/report-history" onClick={(event) => { event.preventDefault(); navigateTo('/report-history') }}>Back to Report History</a></section></main> : <Suspense fallback={<main className="auth-screen" aria-busy="true"><div className="auth-panel auth-loading"><img className="auth-logo" src={logoImage} alt="WeekFlow" /></div></main>}><GenerateReportScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}-${historicalReportWeek ?? 'live'}`} template={historicalReportSnapshot?.template ?? selectedTemplate} historicalSnapshot={historicalReportSnapshot} /></Suspense> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} onOpenReport={(report) => { setHistoricalReportWeek(report.weekKey); setHistoricalReportSnapshot(report); navigateTo(`/report?historyWeek=${encodeURIComponent(report.weekKey)}`) }} template={selectedTemplate} /> : <OverviewScreen selectedWeek={selectedWeek} template={selectedTemplate} workspaceName={currentWorkspace.name} onNavigate={(screen) => { navigateTo(`/${screen === 'overview' ? '' : screen}`) }} />}
       </div>
     </div>
   )

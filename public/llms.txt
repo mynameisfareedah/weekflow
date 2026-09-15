@@ -1,0 +1,19 @@
+# WeekFlow
+
+WeekFlow is a weekly planning workspace for organizing plans, daily activity, follow-ups, review, and reporting.
+
+WeekFlow helps people plan a week, capture daily activity, keep follow-ups visible, review progress, and create a professional weekly report in one workspace.
+
+## Public pages
+
+- Homepage: https://myweekflow.netlify.app/
+- Sign in: https://myweekflow.netlify.app/sign-in
+- Create an account: https://myweekflow.netlify.app/sign-up
+
+## Product rhythm
+
+WeekFlow brings together Weekly Plan, Daily Activity, Follow-ups, Generate Report, and Report History in one workflow.
+
+## Workflows
+
+WeekFlow supports different work patterns including business operations, field operations, project management, NGO and community work, education, personal productivity, and custom workflows.

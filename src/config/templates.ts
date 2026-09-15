@@ -7,6 +7,31 @@ export type ActivityFieldKey =
   | 'account'
   | 'hcpNames'
   | 'outcome'
+  | 'workPerformed'
+  | 'actualResults'
+  | 'programmeArea'
+  | 'location'
+  | 'communityGroup'
+  | 'engagementActivity'
+  | 'actualReach'
+  | 'engagementResult'
+  | 'volunteer'
+  | 'volunteerRole'
+  | 'volunteerActivity'
+  | 'volunteerParticipation'
+  | 'volunteerContribution'
+  | 'stakeholder'
+  | 'stakeholderPurpose'
+  | 'stakeholderEngagement'
+  | 'stakeholderResult'
+  | 'stakeholderNextStep'
+  | 'resource'
+  | 'resourceActual'
+  | 'resourceIssue'
+  | 'resourceAction'
+  | 'timeSpent'
+  | 'dailySummary'
+  | 'carryForward'
   | 'intelligence'
   | 'nextAction'
   | 'structuredOutcomes'
@@ -387,6 +412,11 @@ export const PROJECT_MANAGEMENT_TEMPLATE: WeekFlowTemplate = {
   activityFields: [
     { key: 'account', label: 'Project / Workstream', enabled: true, required: true },
     { key: 'hcpNames', label: 'Stakeholders Involved', enabled: true },
+    { key: 'workPerformed', label: 'Work Performed', enabled: true },
+    { key: 'actualResults', label: 'Actual Results', enabled: true },
+    { key: 'timeSpent', label: 'Time Spent', enabled: true },
+    { key: 'dailySummary', label: 'Daily Summary', enabled: true },
+    { key: 'carryForward', label: 'Carry Forward', enabled: true },
     { key: 'outcome', label: 'Outcome', enabled: true },
     { key: 'intelligence', label: 'Key Intelligence / Notes', enabled: true },
     { key: 'nextAction', label: 'Next Action', enabled: true },
@@ -397,13 +427,13 @@ export const PROJECT_MANAGEMENT_TEMPLATE: WeekFlowTemplate = {
   report: {
     title: 'Weekly Project Management Report',
     sections: [
-      { id: 'weekly-summary', title: 'Weekly Summary', enabled: true },
-      { id: 'daily-activity-breakdown', title: 'Daily Activity Breakdown', enabled: true },
-      { id: 'project-workstream-progress', title: 'Project / Workstream Progress', enabled: true },
-      { id: 'key-deliverables', title: 'Key Deliverables', enabled: true },
-      { id: 'risks-blockers-decisions', title: 'Risks, Blockers & Decisions', enabled: true },
-      { id: 'stakeholder-client-updates', title: 'Stakeholder / Client Updates', enabled: true },
-      { id: 'priorities-coming-week', title: 'Priorities for Coming Week', enabled: true },
+      { id: 'weekly-summary', title: 'Executive Summary', enabled: true },
+      { id: 'daily-activity-breakdown', title: 'Daily Activity Log', enabled: true },
+      { id: 'project-workstream-progress', title: 'Progress Against Weekly Objectives', enabled: true },
+      { id: 'key-deliverables', title: 'Key Accomplishments', enabled: true },
+      { id: 'risks-blockers-decisions', title: 'Issues, Risks & Decisions', enabled: true },
+      { id: 'stakeholder-client-updates', title: 'Stakeholder Updates', enabled: true },
+      { id: 'priorities-coming-week', title: 'Next Week Priorities', enabled: true },
       { id: 'completed-follow-ups', title: 'Completed Follow-ups', enabled: true },
     ],
   },
@@ -412,7 +442,7 @@ export const PROJECT_MANAGEMENT_TEMPLATE: WeekFlowTemplate = {
 const FOUNDATION_TERMINOLOGY: Record<string, TemplateTerminology> = {
   'field-service': FIELD_SERVICE_TEMPLATE_TERMINOLOGY,
   'small-business': { ...PROJECT_MANAGEMENT_TEMPLATE.terminology, activity: 'Business Task', activityPlural: 'Business Tasks', activityType: 'Business Activity', person: 'Customer / Client', people: 'Customers / Clients', contact: 'Customer / Client', account: 'Customer / Business Area', accounts: 'Customers / Business Areas', objective: 'Business Objective', objectives: 'Weekly Business Objectives', outcome: 'Business Outcome', outcomes: 'Business Outcomes', notes: 'Business Notes', priority: 'Business Priority', priorities: 'Business Priorities', successMeasure: 'Success Measure', successMeasures: 'Success Measures', followUp: 'Follow-up', weeklyReport: 'Weekly Business Review', summary: 'Business Summary', weeklyPlanIntro: 'Plan your business priorities, customers and objectives for the selected week.', dailyPlanHelper: 'Plan your business priorities, customers and objectives for each day.' },
-  'ngo-community': { ...PROJECT_MANAGEMENT_TEMPLATE.terminology, activity: 'Community Activity', activityPlural: 'Community Activities', person: 'Beneficiary', people: 'Beneficiaries', contact: 'Partner / Volunteer', account: 'Community / Programme', accounts: 'Communities / Programmes', objective: 'Programme Objective', objectives: 'Programme Objectives', outcome: 'Impact', outcomes: 'Interventions / Impact', notes: 'Programme Notes', priority: 'Programme Priority', priorities: 'Programme Priorities', weeklyReport: 'Weekly Programme Report', summary: 'Programme Summary', weeklyPlanIntro: 'Plan your programme priorities, communities and objectives for the selected week.', dailyPlanHelper: 'Plan your programme priorities, communities and objectives for each day.' },
+  'ngo-community': { ...PROJECT_MANAGEMENT_TEMPLATE.terminology, activity: 'Community Activity', activityPlural: 'Community Activities', person: 'Beneficiary', people: 'Beneficiaries', contact: 'Partner / Volunteer', account: 'Community / Programme', accounts: 'Communities / Programmes', objective: 'Programme Objective', objectives: 'Weekly Objectives', outcome: 'Impact', outcomes: 'Interventions / Impact', notes: 'Programme Notes', priority: 'Programme Priority', priorities: 'Programme Priorities', weeklyReport: 'Weekly Programme Report', summary: 'Programme Summary', weeklyPlanIntro: 'Plan your programme priorities, community engagement, resources and impact targets for the selected week.', dailyPlanHelper: 'Track community activities, partnerships, beneficiary engagement and programme follow-through each day.' },
   education: { ...PROJECT_MANAGEMENT_TEMPLATE.terminology, activity: 'Learning Activity', activityPlural: 'Learning Activities', person: 'Student', people: 'Students', contact: 'Parent / Guardian', account: 'Class / Subject', accounts: 'Classes / Subjects', objective: 'Learning Objective', objectives: 'Learning Objectives', outcome: 'Learning Outcome', outcomes: 'Learning Outcomes', notes: 'Teaching Notes', priority: 'Learning Priority', priorities: 'Learning Priorities', weeklyReport: 'Weekly Education Review', summary: 'Learning Summary', weeklyPlanIntro: 'Plan your learning priorities, classes and objectives for the selected week.', dailyPlanHelper: 'Plan your learning priorities, classes and objectives for each day.' },
   personal: { ...PROJECT_MANAGEMENT_TEMPLATE.terminology, activity: 'Task', activityPlural: 'Tasks', person: 'Person', people: 'People', contact: 'Person', account: 'Area / Commitment', accounts: 'Areas / Commitments', objective: 'Goal', objectives: 'Goals', outcome: 'Outcome', outcomes: 'Notes / Outcomes', notes: 'Note', priority: 'Priority', priorities: 'Priorities', successMeasure: 'Goal Measure', successMeasures: 'Goal Measures', followUp: 'Next Step', followUps: 'Next Steps', weeklyReport: 'Weekly Review', summary: 'Weekly Summary', weeklyPlanIntro: 'Plan your priorities, commitments and goals for the selected week.', dailyPlanHelper: 'Plan your priorities, commitments and goals for each day.' },
   custom: { ...PROJECT_MANAGEMENT_TEMPLATE.terminology, activity: 'Activity', activityPlural: 'Activities', person: 'Person', people: 'People', contact: 'Person / Contact', account: 'Work Area', accounts: 'Work Areas', objective: 'Objective', objectives: 'Objectives', outcome: 'Outcome', outcomes: 'Outcomes', notes: 'Notes', priority: 'Priority', priorities: 'Priorities', weeklyReport: 'Weekly Review', summary: 'Weekly Summary', weeklyPlanIntro: 'Plan your priorities, work areas and objectives for the selected week.', dailyPlanHelper: 'Plan your priorities, work areas and objectives for each day.' },
@@ -426,7 +456,7 @@ export const TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
   { id: 'ngo-community', name: 'NGO & Community Work', description: 'Plan and report community activities, beneficiaries, outreach, partnerships, and follow-ups.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY['ngo-community'] },
   { id: 'education', name: 'Education', description: 'Plan teaching, learning, student activities, academic tasks, and follow-ups.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.education },
   { id: 'personal', name: 'Personal Productivity', description: 'Organize weekly goals, tasks, activities, priorities, and personal follow-ups.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.personal },
-  { id: 'custom', name: 'Custom', description: 'Create a weekly workflow tailored to your own work or activity.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.custom },
+  { id: 'custom', name: 'Custom', description: 'Create a template tailored to your own work or activity.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.custom },
 ]
 
 export function getAvailableTemplates() {

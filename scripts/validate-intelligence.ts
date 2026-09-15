@@ -1,5 +1,7 @@
 import { deriveWeeklyIntelligence } from '../src/intelligence/intelligenceEngine.ts'
+import { deriveProjectPerformance } from '../src/report/projectPerformance.ts'
 import { getSmartStartCandidates, mergeSmartStartSelections } from '../src/intelligence/smartStart.ts'
+import { deriveNgoPerformance } from '../src/report/ngoPerformance.ts'
 import { getWorkflowTemplateById } from '../src/config/templates.ts'
 import type { DailyActivity } from '../src/types/dailyActivity.ts'
 import type { FollowUp } from '../src/types/followUp.ts'
@@ -102,6 +104,59 @@ assert(JSON.stringify({ plan: previousPlan, followUps: previousFollowUps }) === 
 const repeat = mergeSmartStartSelections(merge.plan, newWeek, merge.followUps, smartCandidates, selectedSmartCandidates.map((candidate) => candidate.key))
 assert(repeat.added === 0, 'Smart Start duplicate protection failed')
 
+const ngoPreviousPlan = createEmptyWeeklyPlan('2026-09-14')
+ngoPreviousPlan.weeklyStrategicObjectives = [{ id: 'ngo-objective-old', text: 'Complete unresolved outreach objective', successMeasure: 'Reach the partner group', priority: 'high' }]
+ngoPreviousPlan.programmeActivities = [
+  { id: 'ngo-programme-open', activity: 'Community mobilisation', target: '30 people', status: 'Planned' },
+  { id: 'ngo-programme-complete', activity: 'Completed health session', target: '20 people', status: 'Completed' },
+]
+ngoPreviousPlan.communityEngagement = [{ id: 'ngo-engagement-open', communityGroup: 'Women 18–35', engagementActivity: 'Confirm outreach session', target: '30 people' }]
+ngoPreviousPlan.volunteerPlan = [
+  { id: 'ngo-volunteer-open', volunteer: 'Volunteer A', role: 'Registration', activity: 'Support outreach', status: 'Planned' },
+  { id: 'ngo-volunteer-complete', volunteer: 'Volunteer B', role: 'Facilitation', activity: 'Completed session', status: 'Completed' },
+]
+ngoPreviousPlan.stakeholderPlan = [{ id: 'ngo-stakeholder-open', stakeholder: 'Local Health Centre', purpose: 'Referral support', actionRequired: 'Confirm referral contact', owner: 'Programme lead', due: '2026-09-20', status: 'Open' }]
+ngoPreviousPlan.resourcesLogistics = [{ id: 'ngo-resource-open', resource: 'Educational flyers', required: '100', gap: '30 additional copies', action: 'Print additional copies' }]
+ngoPreviousPlan.communicationsPlan = [{ id: 'ngo-communication-open', communication: 'Share outreach summary', audience: 'Programme team', channel: 'Email', status: 'Pending' }]
+ngoPreviousPlan.documentationPlan = [{ id: 'ngo-documentation-open', documentation: 'Collect attendance evidence', required: 'Signed register', responsible: 'Programme lead', status: 'Pending' }]
+ngoPreviousPlan.monitoringImpactTargets = [{ id: 'ngo-monitoring-open', kind: 'intended-outcomes', text: 'Increased awareness of community health issues' }]
+const ngoPreviousFollowUps: FollowUp[] = [
+  { id: 'ngo-follow-open', weekKey: '2026-09-14', task: 'Confirm referral contact', facility: 'Local Health Centre', priority: 'high', status: 'open', createdAt: '2026-09-14', updatedAt: '2026-09-14' },
+  { id: 'ngo-follow-complete', weekKey: '2026-09-14', task: 'Completed stakeholder briefing', priority: 'normal', status: 'completed', createdAt: '2026-09-14', updatedAt: '2026-09-14' },
+]
+const ngoPreviousSnapshot = JSON.stringify({ plan: ngoPreviousPlan, followUps: ngoPreviousFollowUps })
+const ngoCandidates = getSmartStartCandidates(ngoPreviousPlan, ngoPreviousFollowUps, 'ngo-community')
+assert(ngoCandidates.length === 10, 'NGO Smart Start did not expose the expected unfinished planning candidates')
+assert(!ngoCandidates.some((candidate) => candidate.title === 'Completed health session' || candidate.title === 'Completed session' || candidate.title === 'Completed stakeholder briefing'), 'Completed NGO work was offered for carry-forward')
+assert(getSmartStartCandidates(ngoPreviousPlan, ngoPreviousFollowUps, 'field-sales').every((candidate) => !candidate.type.startsWith('ngo-')), 'NGO Smart Start candidates leaked into another template')
+const ngoNextWeek = '2026-09-21'
+const ngoMerge = mergeSmartStartSelections(createEmptyWeeklyPlan(ngoNextWeek), ngoNextWeek, [], ngoCandidates, ngoCandidates.map((candidate) => candidate.key))
+assert(ngoMerge.added === 10, 'NGO Smart Start did not merge every selected planning candidate')
+assert(ngoMerge.plan.weekStart === ngoNextWeek, 'NGO Smart Start did not scope the merged plan to the next week')
+assert(ngoMerge.plan.programmeActivities?.every((item) => item.id !== 'ngo-programme-open') && ngoMerge.plan.programmeActivities?.some((item) => item.activity === 'Community mobilisation'), 'NGO programme activity was not copied with a fresh ID')
+assert(ngoMerge.plan.volunteerPlan?.every((item) => item.id !== 'ngo-volunteer-complete'), 'Completed NGO volunteer planning was copied')
+assert(ngoMerge.followUps.length === 1 && ngoMerge.followUps[0].id !== 'ngo-follow-open' && ngoMerge.followUps[0].weekKey === ngoNextWeek && ngoMerge.followUps[0].status === 'open', 'NGO open follow-up was not safely copied to the next week')
+assert(JSON.stringify({ plan: ngoPreviousPlan, followUps: ngoPreviousFollowUps }) === ngoPreviousSnapshot, 'NGO previous-week data changed during Smart Start merge')
+
+const ngoDashboardTemplate = getWorkflowTemplateById('ngo-community')
+const ngoDashboardPlan = createEmptyWeeklyPlan('2026-09-14')
+ngoDashboardPlan.weeklyStrategicObjectives = [{ id: 'dashboard-objective', text: 'Coordinate outreach sessions' }]
+ngoDashboardPlan.programmeActivities = [{ id: 'dashboard-programme', activity: 'Community mobilisation', target: '30 people', status: 'Planned' }]
+ngoDashboardPlan.monitoringImpactTargets = [{ id: 'dashboard-outcome', kind: 'intended-outcomes', text: 'Increased awareness' }]
+const emptyNgoPerformance = deriveNgoPerformance(ngoDashboardPlan, [], [], '2026-09-14', ngoDashboardTemplate)
+assert(emptyNgoPerformance.empty && emptyNgoPerformance.actualReach === null && emptyNgoPerformance.status === 'Insufficient evidence', 'Empty NGO dashboard state was not cautious')
+const partialNgoDashboardActivity = activity('dashboard-partial', 'Community mobilisation', '', [], '', '2026-09-14')
+partialNgoDashboardActivity.workPerformed = 'Delivered an introductory outreach visit.'
+partialNgoDashboardActivity.actualResults = 'One introductory visit was recorded.'
+const partialNgoPerformance = deriveNgoPerformance(ngoDashboardPlan, [partialNgoDashboardActivity], [], '2026-09-14', ngoDashboardTemplate)
+assert(partialNgoPerformance.plannedActivities === 1 && partialNgoPerformance.completedActivities === 1 && partialNgoPerformance.actualReach === null, 'Partial NGO dashboard metrics confused actual delivery and reach')
+assert(partialNgoPerformance.status === 'Insufficient evidence', 'Partial NGO dashboard status was not evidence-based')
+const populatedNgoDashboardActivity = { ...partialNgoDashboardActivity, actualReach: '18', actualResults: '18 participants attended and completed the education session.', engagementResult: 'Participants engaged in discussion.', outcome: 'Participants engaged in discussion.', volunteer: 'Volunteer A', volunteerParticipation: 'Present', volunteerContribution: 'Supported registration.', stakeholder: 'Local Health Centre', stakeholderEngagement: 'Discussed referral coordination.', stakeholderResult: 'Referral coordination requirements were discussed.', resourceIssue: '30 additional copies required', resourceAction: 'Print additional copies' }
+const populatedNgoPerformance = deriveNgoPerformance(ngoDashboardPlan, [populatedNgoDashboardActivity], [{ id: 'dashboard-follow-up', weekKey: '2026-09-14', task: 'Confirm referral contact', facility: 'Local Health Centre', priority: 'high', status: 'open', createdAt: '2026-09-14', updatedAt: '2026-09-14' }], '2026-09-14', ngoDashboardTemplate)
+assert(populatedNgoPerformance.plannedReach === 30 && populatedNgoPerformance.actualReach === 18 && populatedNgoPerformance.reachVariance === -12, 'NGO dashboard reach variance was incorrect')
+assert(populatedNgoPerformance.openFollowUps === 1 && populatedNgoPerformance.stakeholderEngagements === 1 && populatedNgoPerformance.resourceIssues.length > 0, 'NGO dashboard did not surface persisted follow-ups and evidence-backed issues')
+assert(populatedNgoPerformance.status === 'Attention required', 'NGO dashboard status did not agree with the evidence-backed report assessment')
+
 const serviceWeek = '2026-09-09'
 const serviceActivities: DailyActivity[] = [
   {
@@ -138,6 +193,38 @@ const salesFixture: DailyActivity[] = [
 const salesIsolation = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: salesFixture, followUps: [], template: fieldSalesTemplate })
 assert(!salesIsolation.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('escalation required') || signal.title.toLowerCase().includes('downtime') || signal.title.toLowerCase().includes('equipment fault')), 'Field Sales received Field Service signals')
 assert(salesIsolation.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('stock issue') || signal.title.toLowerCase().includes('mdt opportunity') || signal.title.toLowerCase().includes('prescription identified')), 'Field Sales baseline signals were not available')
+
+const personalTemplate = getWorkflowTemplateById('personal')
+const personalWeek = '2026-08-11'
+const personalPlan = createEmptyWeeklyPlan(personalWeek)
+personalPlan.commercialPriorities = [{ id: 'personal-priority-1', text: 'Clean the study', opportunity: 'Personal focus', account: 'Home', product: 'Other', priority: 'high' }]
+const personalActivities: DailyActivity[] = [
+  { id: 'personal-activity-1', date: personalWeek, weekStart: personalWeek, plannedActivityId: null, account: 'Home', activityType: 'Task', hcpNames: [], outcome: '', workPerformed: 'Reviewed and sorted the home desk.', actualResults: 'The desk is clear and ready for next week.', timeSpent: '2h', dailySummary: 'A useful reset happened.', carryForward: '', intelligence: 'Desk reset went smoothly.', nextAction: 'Plan the next desk session.', structuredOutcomes: [], createdAt: personalWeek, updatedAt: personalWeek },
+  { id: 'personal-activity-2', date: personalWeek, weekStart: personalWeek, plannedActivityId: null, account: 'Home', activityType: 'Task', hcpNames: [], outcome: '', workPerformed: 'Started the study cleanup.', actualResults: 'Still not complete enough for a final handoff.', timeSpent: '1h', dailySummary: '', carryForward: 'Clean the study', intelligence: 'The remaining work is small but visible.', nextAction: 'Finish the cleanup tomorrow.', structuredOutcomes: [], createdAt: personalWeek, updatedAt: personalWeek },
+]
+const personalFollowUps: FollowUp[] = [{ id: 'personal-follow-up-1', weekKey: personalWeek, task: 'Call the dentist', facility: 'Health', priority: 'high', status: 'open', createdAt: personalWeek, updatedAt: personalWeek }]
+const personalIntelligence = deriveWeeklyIntelligence({ selectedWeek: personalWeek, plan: personalPlan, activities: personalActivities, followUps: personalFollowUps, template: personalTemplate })
+assert(personalIntelligence.insights.progress.some((signal) => signal.title === 'Completed / Accomplished' && signal.detail.includes('desk')), 'Personal accomplishment signal was not detected')
+assert(personalIntelligence.insights.progress.some((signal) => signal.title === 'Carry-forward work' && signal.detail.includes('Clean the study')), 'Personal carry-forward signal was not detected')
+assert(personalIntelligence.insights.stakeholders.some((signal) => signal.title === 'Open follow-up' && signal.detail.includes('Call the dentist')), 'Personal open follow-up signal was not detected')
+assert(personalIntelligence.insights.progress.some((signal) => signal.title === 'Time / effort pattern' && signal.detail.includes('3 hours')), 'Personal time/effort pattern was not detected')
+assert(personalIntelligence.insights.risks.some((signal) => signal.title === 'Priority attention' && signal.detail.includes('Clean the study')), 'Personal priority-attention signal was not detected')
+assert(personalIntelligence.insights.progress.some((signal) => signal.title === 'Next-step signal'), 'Personal next-step signal was not detected')
+
+const genericCompleteActivity = activity('personal-generic-complete', 'Home', '', [], 'Complete the cleanup.', personalWeek)
+genericCompleteActivity.actualResults = 'Complete'
+const genericComplete = deriveWeeklyIntelligence({ selectedWeek: personalWeek, plan: createEmptyWeeklyPlan(personalWeek), activities: [genericCompleteActivity], followUps: [], template: personalTemplate })
+assert(!genericComplete.insights.progress.some((signal) => signal.title === 'Completed / Accomplished'), 'Generic completion word alone was incorrectly treated as accomplishment evidence')
+
+const personalMissingActivity = deriveWeeklyIntelligence({ selectedWeek: personalWeek, plan: createEmptyWeeklyPlan(personalWeek), activities: [], followUps: [], template: personalTemplate })
+assert(personalMissingActivity.insights.progress.length === 0 && personalMissingActivity.insights.risks.length === 0 && personalMissingActivity.insights.stakeholders.length === 0, 'Empty Personal week fabricated personal intelligence')
+
+const personalTimeOnly = deriveWeeklyIntelligence({ selectedWeek: personalWeek, plan: createEmptyWeeklyPlan(personalWeek), activities: [{ ...activity('personal-time-only', 'Home', '', [], 'Keep focus.', personalWeek), timeSpent: '12 hours', workPerformed: 'Focused on chores', actualResults: '', nextAction: 'Keep the day simple.' }], followUps: [], template: personalTemplate })
+assert(personalTimeOnly.insights.progress.some((signal) => signal.title === 'Time / effort pattern' && signal.detail.includes('12 hours')), 'Personal time-only evidence was not surfaced as a factual time insight')
+assert(!personalTimeOnly.insights.progress.some((signal) => signal.title === 'Completed / Accomplished'), 'Personal time-only evidence was incorrectly used as an accomplishment signal')
+
+const reverseLeakingTemplate = deriveWeeklyIntelligence({ selectedWeek: personalWeek, plan: createEmptyWeeklyPlan(personalWeek), activities: personalActivities, followUps: personalFollowUps, template: getWorkflowTemplateById('field-sales') })
+assert(reverseLeakingTemplate.insights.progress.length === 0 && reverseLeakingTemplate.insights.risks.length === 0 && reverseLeakingTemplate.insights.stakeholders.length === 0, 'Personal intelligence leaked into another template')
 
 const serviceSignalTitles = ['unresolved service issue', 'repeat fault', 'recurring equipment problem', 'escalation required', 'downtime', 'safety concern', 'preventive maintenance', 'sla risk', 'parts required', 'customer concern', 'service quality']
 const reverseIsolation = deriveWeeklyIntelligence({
@@ -228,5 +315,101 @@ const fieldServiceSmallBusinessIsolation = deriveWeeklyIntelligence({ selectedWe
 assert(fieldServiceSmallBusinessIsolation.opportunitySignals.length === 0, 'Field Service outcomes leaked into Small Business opportunity signals')
 const genericSmallBusinessText = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: [activity('small-business-generic', 'Test Business Area', 'Had a productive meeting with the customer.', [], '', serviceWeek)], followUps: [], template: smallBusinessTemplate })
 assert(!genericSmallBusinessText.opportunitySignals.some((signal) => signal.title === 'Sales opportunity'), 'Generic Small Business meeting text produced an unsupported sales opportunity')
+
+const projectManagementTemplate = getWorkflowTemplateById('project-management')
+const pmPlan = createEmptyWeeklyPlan(serviceWeek)
+pmPlan.virtualEngagementPlan = [{ id: 'pm-dependency', coverage: 'Deployment', priorityContacts: [], objective: 'Release deployment', dependency: 'Office access', status: 'Planned' }]
+const pmActivities = [
+  activity('pm-issue', 'QA Workstream', 'Connectivity issue identified.', [], '', serviceWeek),
+  { ...activity('pm-risk', 'QA Workstream', '', [], '', serviceWeek), dailySummary: 'Vendor access may delay implementation.' },
+  { ...activity('pm-blocked', 'QA Workstream', '', [], '', serviceWeek), workPerformed: 'Attempted configuration.', actualResults: 'Unable to proceed because required credentials were not available.' },
+  { ...activity('pm-delayed', 'QA Workstream', '', [], '', serviceWeek), actualResults: 'Task was postponed due to unavailable access.' },
+  { ...activity('pm-resource', 'QA Workstream', '', [], '', serviceWeek), dailySummary: 'Implementation is constrained by insufficient technical resources.' },
+  { ...activity('pm-schedule', 'QA Workstream', '', [], '', serviceWeek), dailySummary: 'Friday delivery is at risk because the remaining work cannot be completed within the available time.' },
+  { ...activity('pm-follow-up', 'QA Workstream', '', [], 'Confirm deployment approval.', serviceWeek) },
+  { ...activity('pm-false-positive', 'QA Workstream', '', [], '', serviceWeek), timeSpent: '3', dailySummary: 'Estimated hours: 2. Time spent: 3.' },
+  { ...activity('pm-normal-dependency', 'QA Workstream', '', [], '', serviceWeek), dailySummary: 'Dependency: Office access.' },
+]
+const pmIntelligence = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: pmPlan, activities: pmActivities, followUps: [], template: projectManagementTemplate })
+const pmKinds = pmIntelligence.projectSignals.map((signal) => signal.kind)
+assert(pmKinds.includes('issue'), 'Project Management issue signal was not detected')
+assert(pmKinds.includes('risk'), 'Project Management risk signal was not detected')
+assert(pmKinds.includes('dependency-risk'), 'Project Management dependency risk signal was not detected')
+assert(pmKinds.includes('dependency'), 'Project Management dependency signal was not detected')
+assert(pmKinds.includes('blocked-work'), 'Project Management blocked-work signal was not detected')
+assert(pmKinds.includes('delayed-work'), 'Project Management delayed-work signal was not detected')
+assert(pmKinds.includes('resource-capacity'), 'Project Management resource concern was not detected')
+assert(pmKinds.includes('schedule-risk'), 'Project Management schedule risk was not detected')
+assert(pmKinds.includes('follow-up-required'), 'Project Management follow-up signal was not detected')
+assert(!pmIntelligence.projectSignals.some((signal) => signal.sourceActivityId === 'pm-false-positive' || (signal.sourceActivityId === 'pm-normal-dependency' && ['risk', 'dependency-risk', 'blocked-work', 'delayed-work', 'issue'].includes(signal.kind))), 'Project Management false-positive protection failed')
+assert(deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: pmPlan, activities: pmActivities, followUps: [], template: fieldSalesTemplate }).projectSignals.length === 0, 'Project Management signals leaked into Field Sales')
+
+const performancePlan = createEmptyWeeklyPlan(serviceWeek)
+performancePlan.weeklyStrategicObjectives = [
+  { id: 'perf-1', text: 'Complete network assessment' },
+  { id: 'perf-2', text: 'Resolve user IT issues' },
+  { id: 'perf-3', text: 'Complete account review' },
+  { id: 'perf-4', text: 'Update asset register' },
+  { id: 'perf-5', text: 'Prepare status report' },
+  { id: 'perf-6', text: 'Review access controls' },
+  { id: 'perf-7', text: 'Confirm vendor handover' },
+  { id: 'perf-8', text: 'Document support process' },
+]
+const performanceActivities = [
+  { ...activity('perf-a1', 'Complete network assessment', '', [], '', serviceWeek), actualResults: 'Network assessment completed.' },
+  { ...activity('perf-a2', 'Resolve user IT issues', '', [], '', serviceWeek), actualResults: 'Completed user IT issues.' },
+  { ...activity('perf-a3', 'Complete account review', '', [], '', serviceWeek), progressStatus: 'Completed' },
+  { ...activity('perf-a4', 'Update asset register', '', [], '', serviceWeek), dailySummary: 'Completed the asset register.' },
+  { ...activity('perf-a5', 'Prepare status report', '', [], '', serviceWeek), outcome: 'Status report delivered and complete.' },
+  { ...activity('perf-a6', 'Review access controls', '', [], '', serviceWeek), progressStatus: 'In progress' },
+  { ...activity('perf-a7', 'Confirm vendor handover', '', [], '', serviceWeek), carryForward: 'Carry forward vendor handover.' },
+  { ...activity('perf-a8', 'Document support process', '', [], '', serviceWeek), dailySummary: 'Work is underway and in progress.' },
+]
+const performanceIntelligence = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: performancePlan, activities: performanceActivities, followUps: [], template: projectManagementTemplate })
+const performance = deriveProjectPerformance(performancePlan, performanceActivities, [], performanceIntelligence)
+assert(performance.plannedTasks === 8 && performance.completedTasks === 5 && performance.inProgressTasks === 2 && performance.carriedForwardTasks === 1, 'PM task performance counts were incorrect')
+assert(performance.completionRate === 62.5, 'PM completion rate was incorrect')
+const timePlan = createEmptyWeeklyPlan(serviceWeek)
+timePlan.virtualEngagementPlan = [{ id: 'hours-1', coverage: 'Network', priorityContacts: [], objective: 'Assessment', estimatedHours: '20' }]
+const timePerformance = deriveProjectPerformance(timePlan, [{ ...activity('hours-1', 'Network Assessment', '', [], '', serviceWeek), timeSpent: '18' }], [], deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: timePlan, activities: [], followUps: [], template: projectManagementTemplate }))
+assert(timePerformance.plannedHours === 20 && timePerformance.actualHours === 18 && timePerformance.timeVariance === -2, 'PM favourable time variance was incorrect')
+const overrunPerformance = deriveProjectPerformance(timePlan, [{ ...activity('hours-2', 'Network Assessment', '', [], '', serviceWeek), timeSpent: '25' }], [], deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: timePlan, activities: [], followUps: [], template: projectManagementTemplate }))
+assert(overrunPerformance.timeVariance === 5 && overrunPerformance.issuesIdentified === 0 && overrunPerformance.activeRisks === 0, 'PM time overrun created a false issue or risk')
+const emptyPerformance = deriveProjectPerformance(performancePlan, [], [], deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: performancePlan, activities: [], followUps: [], template: projectManagementTemplate }))
+assert(emptyPerformance.completedTasks === 0 && emptyPerformance.objectives.every((objective) => objective.status === 'no-recorded-progress'), 'PM empty-week performance created false completion')
+const followUpPerformance = deriveProjectPerformance(createEmptyWeeklyPlan(serviceWeek), [], [
+  { id: 'perf-follow-1', weekKey: serviceWeek, task: 'One', priority: 'normal', status: 'completed', createdAt: serviceWeek, updatedAt: serviceWeek },
+  { id: 'perf-follow-2', weekKey: serviceWeek, task: 'Two', priority: 'normal', status: 'completed', createdAt: serviceWeek, updatedAt: serviceWeek },
+  { id: 'perf-follow-3', weekKey: serviceWeek, task: 'Three', priority: 'normal', status: 'completed', createdAt: serviceWeek, updatedAt: serviceWeek },
+  { id: 'perf-follow-4', weekKey: serviceWeek, task: 'Four', priority: 'normal', status: 'open', createdAt: serviceWeek, updatedAt: serviceWeek },
+  { id: 'perf-follow-5', weekKey: serviceWeek, task: 'Five', priority: 'normal', status: 'open', createdAt: serviceWeek, updatedAt: serviceWeek },
+], deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: [], followUps: [], template: projectManagementTemplate }))
+assert(followUpPerformance.followUpsCreated === 5 && followUpPerformance.followUpsCompleted === 3 && followUpPerformance.followUpsOutstanding === 2, 'PM follow-up performance counts were incorrect')
+
+const ngoTemplate = getWorkflowTemplateById('ngo-community')
+const ngoPlan = createEmptyWeeklyPlan(serviceWeek)
+ngoPlan.programmeActivities = [{ id: 'ngo-programme-1', activity: 'Community mobilisation', programmeArea: 'Outreach', location: 'Gwagwalada', target: '30 people', plannedDate: 'Monday', status: 'Planned' }]
+ngoPlan.monitoringImpactTargets = [{ id: 'ngo-outcome-1', kind: 'intended-outcomes', text: 'Increased awareness of women\'s health issues' }]
+const ngoActivity: DailyActivity = {
+  ...activity('ngo-activity-1', 'Community mobilisation', 'Participants requested additional information.', [], 'Confirm referral contact.', serviceWeek),
+  plannedActivityId: 'programme:ngo-programme-1',
+  workPerformed: 'Delivered a community health education session.',
+  actualResults: '18 participants attended and completed the education session.',
+  actualReach: '18',
+  engagementResult: 'Participants engaged in discussion and requested additional information.',
+  resourceIssue: '30 additional copies required',
+  resourceAction: 'Print additional copies',
+  stakeholder: 'Local Health Centre',
+  stakeholderNextStep: 'Confirm referral contact.',
+}
+const ngoIntelligence = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: ngoPlan, activities: [ngoActivity], followUps: [], template: ngoTemplate })
+assert(ngoIntelligence.insights.risks.some((signal) => signal.title === 'Participation below target' && signal.detail.includes('18 participants reached against a planned target of 30')), 'NGO below-target signal was not detected')
+assert(ngoIntelligence.insights.risks.some((signal) => signal.title === 'Resource / logistics issue'), 'NGO resource-gap signal was not detected')
+assert(ngoIntelligence.insights.risks.some((signal) => signal.title === 'Outcome evidence pending'), 'NGO pending-outcome signal was not detected')
+assert(ngoIntelligence.insights.stakeholders.some((signal) => signal.title === 'Stakeholder follow-up required'), 'NGO stakeholder follow-up signal was not detected')
+assert(!ngoIntelligence.insights.risks.some((signal) => signal.title === 'Participation below target' && signal.detail.includes('30 participants reached')), 'NGO target was incorrectly reported as actual reach')
+const ngoFalsePositive = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: ngoPlan, activities: [{ ...activity('ngo-generic-1', 'Community meeting', '', [], '', serviceWeek), actualResults: 'Meeting completed successfully.' }], followUps: [], template: ngoTemplate })
+assert(!ngoFalsePositive.insights.risks.some((signal) => signal.title === 'Resource / logistics issue' || signal.title === 'Participation below target'), 'NGO generic activity created a false issue or below-target risk')
+assert(deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: ngoPlan, activities: [ngoActivity], followUps: [], template: fieldSalesTemplate }).insights.risks.length === 0, 'NGO intelligence leaked into Field Sales')
 
 console.log('Intelligence validation passed: August-pattern, empty-week, week-isolation, Smart Start merge checks, Field Service checks, Small Business outcome/scoring checks, and template isolation checks.')

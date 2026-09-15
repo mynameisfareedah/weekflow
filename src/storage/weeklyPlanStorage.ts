@@ -1,14 +1,23 @@
 import {
   PLAN_CATEGORIES,
   type AccountObjective,
+  type CommunicationPlanItem,
+  type CommunityEngagementItem,
   type CommercialPriority,
   type DayCategories,
   type DayId,
+  type DocumentationPlanItem,
+  type MonitoringImpactTarget,
   type PlanItem,
+  type ProgrammeActivity,
+  type ResourceLogisticsItem,
+  type StakeholderPlanItem,
   type SuccessMeasure,
+  type VolunteerPlanItem,
   type SuccessMeasureCategory,
   type VirtualEngagementPlanItem,
   type WeeklyPlan,
+  type WeeklyProgrammeContext,
 } from '../types/weeklyPlan'
 import { getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getLegacyCompatibleWorkspaceId, getWorkspaceScopedStorageKey, getCurrentCloudWorkspaceId } from './workspaceStorage'
 import { supabase } from '../lib/supabase'
@@ -16,6 +25,7 @@ import { WEEK_DAY_IDS, WEEK_DAY_LABELS } from '../utils/week'
 
 const STORAGE_PREFIX = 'weekflow-weekly-plan:'
 const SELECTED_WEEK_KEY = 'weekflow-selected-week'
+const WEEK_SELECTION_SOURCE_KEY = 'weekflow-week-selection-source'
 const STORAGE_PREFIXES = [STORAGE_PREFIX, 'weekflow-daily-activities:', 'weekflow-follow-ups:', 'weekflow-smart-start:']
 const DAY_IDS: DayId[] = [...WEEK_DAY_IDS]
 const DAY_LABELS = [...WEEK_DAY_LABELS]
@@ -38,7 +48,17 @@ function normalizePlanItems(value: unknown): PlanItem[] {
   return value.filter(
     (item): item is PlanItem =>
       Boolean(item) && typeof item === 'object' && typeof (item as PlanItem).id === 'string' && typeof (item as PlanItem).text === 'string',
-  )
+  ).map((item: any) => ({
+    id: item.id,
+    text: item.text,
+    ...(typeof item.successMeasure === 'string' ? { successMeasure: item.successMeasure } : {}),
+    ...(typeof item.priority === 'string' ? { priority: item.priority } : {}),
+    ...(typeof item.owner === 'string' ? { owner: item.owner } : {}),
+    ...(typeof item.plannedDate === 'string' ? { plannedDate: item.plannedDate } : {}),
+    ...(typeof item.estimatedHours === 'string' ? { estimatedHours: item.estimatedHours } : {}),
+    ...(typeof item.dependency === 'string' ? { dependency: item.dependency } : {}),
+    ...(typeof item.status === 'string' ? { status: item.status } : {}),
+  }))
 }
 
 function normalizeVirtualEngagementPlan(value: unknown): VirtualEngagementPlanItem[] {
@@ -50,9 +70,18 @@ function normalizeVirtualEngagementPlan(value: unknown): VirtualEngagementPlanIt
       && typeof candidate.coverage === 'string'
       && Array.isArray(candidate.priorityContacts)
       && typeof candidate.objective === 'string'
-  }).map((item) => ({
+  }).map((item: any) => ({
     ...item,
     priorityContacts: normalizePlanItems(item.priorityContacts),
+    ...(typeof item.relatedObjective === 'string' ? { relatedObjective: item.relatedObjective } : {}),
+    ...(typeof item.owner === 'string' ? { owner: item.owner } : {}),
+    ...(typeof item.priority === 'string' ? { priority: item.priority } : {}),
+    ...(typeof item.plannedDate === 'string' ? { plannedDate: item.plannedDate } : {}),
+    ...(typeof item.startTime === 'string' ? { startTime: item.startTime } : {}),
+    ...(typeof item.endTime === 'string' ? { endTime: item.endTime } : {}),
+    ...(typeof item.estimatedHours === 'string' ? { estimatedHours: item.estimatedHours } : {}),
+    ...(typeof item.dependency === 'string' ? { dependency: item.dependency } : {}),
+    ...(typeof item.status === 'string' ? { status: item.status } : {}),
   }))
 }
 
@@ -64,9 +93,15 @@ function normalizeAccountObjectives(value: unknown): AccountObjective[] {
     return typeof candidate.id === 'string'
       && typeof candidate.account === 'string'
       && Array.isArray(candidate.objectives)
-  }).map((item) => ({
+  }).map((item: any) => ({
     ...item,
     objectives: normalizePlanItems(item.objectives),
+    ...(typeof item.owner === 'string' ? { owner: item.owner } : {}),
+    ...(typeof item.priority === 'string' ? { priority: item.priority } : {}),
+    ...(typeof item.plannedDate === 'string' ? { plannedDate: item.plannedDate } : {}),
+    ...(typeof item.estimatedHours === 'string' ? { estimatedHours: item.estimatedHours } : {}),
+    ...(typeof item.dependency === 'string' ? { dependency: item.dependency } : {}),
+    ...(typeof item.status === 'string' ? { status: item.status } : {}),
   }))
 }
 
@@ -76,11 +111,16 @@ function normalizeCommercialPriorities(value: unknown): CommercialPriority[] {
     if (!item || typeof item !== 'object') return false
     const candidate = item as CommercialPriority
     return typeof candidate.id === 'string'
-      && typeof candidate.text === 'string'
+      && (candidate.text === undefined || typeof candidate.text === 'string')
       && (candidate.opportunity === undefined || typeof candidate.opportunity === 'string')
       && (candidate.account === undefined || typeof candidate.account === 'string')
       && (candidate.product === undefined || typeof candidate.product === 'string')
-  })
+      && (candidate.priority === undefined || typeof candidate.priority === 'string')
+  }).map((item: any) => ({
+    ...item,
+    text: typeof item.text === 'string' && item.text.trim().length > 0 ? item.text : (typeof item.opportunity === 'string' ? item.opportunity : ''),
+    ...(typeof item.priority === 'string' ? { priority: item.priority } : {}),
+  }))
 }
 
 function normalizeSuccessMeasures(value: unknown): SuccessMeasure[] {
@@ -97,6 +137,158 @@ function normalizeSuccessMeasures(value: unknown): SuccessMeasure[] {
   })
 }
 
+function normalizeProgrammeContext(value: unknown): WeeklyProgrammeContext | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const candidate = value as WeeklyProgrammeContext
+  const programmeContext: WeeklyProgrammeContext = {}
+  if (typeof candidate.programme === 'string') programmeContext.programme = candidate.programme
+  if (typeof candidate.organisation === 'string') programmeContext.organisation = candidate.organisation
+  if (typeof candidate.weeklyTheme === 'string') programmeContext.weeklyTheme = candidate.weeklyTheme
+  if (typeof candidate.programmeLead === 'string') programmeContext.programmeLead = candidate.programmeLead
+  if (typeof candidate.programmeStatus === 'string') programmeContext.programmeStatus = candidate.programmeStatus
+  return Object.keys(programmeContext).length > 0 ? programmeContext : undefined
+}
+
+function normalizeProgrammeActivities(value: unknown): ProgrammeActivity[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is ProgrammeActivity => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as ProgrammeActivity
+    return typeof candidate.id === 'string'
+      && typeof candidate.activity === 'string'
+  }).map((item: any) => ({
+    id: item.id,
+    activity: item.activity,
+    ...(typeof item.programmeArea === 'string' ? { programmeArea: item.programmeArea } : {}),
+    ...(typeof item.location === 'string' ? { location: item.location } : {}),
+    ...(typeof item.owner === 'string' ? { owner: item.owner } : {}),
+    ...(typeof item.plannedDate === 'string' ? { plannedDate: item.plannedDate } : {}),
+    ...(typeof item.target === 'string' ? { target: item.target } : {}),
+    ...(typeof item.status === 'string' ? { status: item.status } : {}),
+  }))
+}
+
+function normalizeCommunityEngagement(value: unknown): CommunityEngagementItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is CommunityEngagementItem => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as CommunityEngagementItem
+    return typeof candidate.id === 'string'
+      && typeof candidate.communityGroup === 'string'
+      && typeof candidate.engagementActivity === 'string'
+  }).map((item: any) => ({
+    id: item.id,
+    communityGroup: item.communityGroup,
+    engagementActivity: item.engagementActivity,
+    ...(typeof item.target === 'string' ? { target: item.target } : {}),
+    ...(typeof item.plannedDate === 'string' ? { plannedDate: item.plannedDate } : {}),
+    ...(typeof item.responsible === 'string' ? { responsible: item.responsible } : {}),
+  }))
+}
+
+function normalizeVolunteerPlan(value: unknown): VolunteerPlanItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is VolunteerPlanItem => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as VolunteerPlanItem
+    return typeof candidate.id === 'string'
+      && typeof candidate.volunteer === 'string'
+      && typeof candidate.role === 'string'
+      && typeof candidate.activity === 'string'
+  }).map((item: any) => ({
+    id: item.id,
+    volunteer: item.volunteer,
+    role: item.role,
+    activity: item.activity,
+    ...(typeof item.date === 'string' ? { date: item.date } : {}),
+    ...(typeof item.status === 'string' ? { status: item.status } : {}),
+  }))
+}
+
+function normalizeStakeholderPlan(value: unknown): StakeholderPlanItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is StakeholderPlanItem => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as StakeholderPlanItem
+    return typeof candidate.id === 'string'
+      && typeof candidate.stakeholder === 'string'
+      && typeof candidate.purpose === 'string'
+  }).map((item: any) => ({
+    id: item.id,
+    stakeholder: item.stakeholder,
+    purpose: item.purpose,
+    ...(typeof item.actionRequired === 'string' ? { actionRequired: item.actionRequired } : {}),
+    ...(typeof item.owner === 'string' ? { owner: item.owner } : {}),
+    ...(typeof item.due === 'string' ? { due: item.due } : {}),
+    ...(typeof item.status === 'string' ? { status: item.status } : {}),
+  }))
+}
+
+function normalizeResourcesLogistics(value: unknown): ResourceLogisticsItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is ResourceLogisticsItem => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as ResourceLogisticsItem
+    return typeof candidate.id === 'string'
+      && typeof candidate.resource === 'string'
+  }).map((item: any) => ({
+    id: item.id,
+    resource: item.resource,
+    ...(typeof item.required === 'string' ? { required: item.required } : {}),
+    ...(typeof item.available === 'string' ? { available: item.available } : {}),
+    ...(typeof item.gap === 'string' ? { gap: item.gap } : {}),
+    ...(typeof item.action === 'string' ? { action: item.action } : {}),
+  }))
+}
+
+function normalizeCommunicationsPlan(value: unknown): CommunicationPlanItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is CommunicationPlanItem => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as CommunicationPlanItem
+    return typeof candidate.id === 'string'
+      && typeof candidate.communication === 'string'
+  }).map((item: any) => ({
+    id: item.id,
+    communication: item.communication,
+    ...(typeof item.audience === 'string' ? { audience: item.audience } : {}),
+    ...(typeof item.channel === 'string' ? { channel: item.channel } : {}),
+    ...(typeof item.date === 'string' ? { date: item.date } : {}),
+    ...(typeof item.status === 'string' ? { status: item.status } : {}),
+  }))
+}
+
+function normalizeDocumentationPlan(value: unknown): DocumentationPlanItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is DocumentationPlanItem => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as DocumentationPlanItem
+    return typeof candidate.id === 'string'
+      && typeof candidate.documentation === 'string'
+  }).map((item: any) => ({
+    id: item.id,
+    documentation: item.documentation,
+    ...(typeof item.required === 'string' ? { required: item.required } : {}),
+    ...(typeof item.responsible === 'string' ? { responsible: item.responsible } : {}),
+    ...(typeof item.status === 'string' ? { status: item.status } : {}),
+  }))
+}
+
+function normalizeMonitoringImpactTargets(value: unknown): MonitoringImpactTarget[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is MonitoringImpactTarget => {
+    if (!item || typeof item !== 'object') return false
+    const candidate = item as MonitoringImpactTarget
+    return typeof candidate.id === 'string'
+      && typeof candidate.text === 'string'
+      && (candidate.kind === 'outputs' || candidate.kind === 'intended-outcomes')
+  }).map((item: any) => ({
+    id: item.id,
+    kind: item.kind,
+    text: item.text,
+  }))
+}
+
 export function getCurrentWeekStart() {
   const today = new Date()
   const dayOffset = today.getDay() === 0 ? 6 : today.getDay() - 1
@@ -104,15 +296,40 @@ export function getCurrentWeekStart() {
   return formatDate(today)
 }
 
+export function getNextPlanningWeekStart() {
+  return getNextWeekStart(getCurrentWeekStart())
+}
+
+export function getPlanningWeekStart() {
+  return new Date().getDay() === 1 ? getCurrentWeekStart() : getNextPlanningWeekStart()
+}
+
 function getSelectedWeekStorageKey(workspaceId = getCurrentWorkspaceId()) {
-  return `${SELECTED_WEEK_KEY}:${workspaceId}`
+  return workspaceId ? `${SELECTED_WEEK_KEY}:${workspaceId}` : null
+}
+
+function getWeekSelectionSourceStorageKey(workspaceId = getCurrentWorkspaceId()) {
+  return workspaceId ? `${WEEK_SELECTION_SOURCE_KEY}:${workspaceId}` : null
+}
+
+export type WeekSelectionSource = 'explicit' | 'planning-default' | 'activity-default'
+
+export function getWeekSelectionSource() {
+  try {
+    const workspaceKey = getWeekSelectionSourceStorageKey()
+    const source = workspaceKey ? window.localStorage.getItem(workspaceKey) : null
+    if (source === 'explicit' || source === 'planning-default' || source === 'activity-default') return source
+    return getSelectedWeekStorageKey() && window.localStorage.getItem(getSelectedWeekStorageKey() as string) ? 'explicit' : null
+  } catch {
+    return null
+  }
 }
 
 export function getSelectedWeekStart() {
   try {
     const workspaceId = getCurrentWorkspaceId()
     const workspaceKey = getSelectedWeekStorageKey(workspaceId)
-    const workspaceValue = window.localStorage.getItem(workspaceKey)
+    const workspaceValue = workspaceKey ? window.localStorage.getItem(workspaceKey) : null
     if (workspaceValue) return workspaceValue
     if (workspaceId === getLegacyCompatibleWorkspaceId()) {
       const legacyValue = window.localStorage.getItem(SELECTED_WEEK_KEY)
@@ -124,10 +341,14 @@ export function getSelectedWeekStart() {
   }
 }
 
-export function setSelectedWeekStart(weekStart: string) {
+export function setSelectedWeekStart(weekStart: string, source: WeekSelectionSource = 'explicit') {
   try {
     const workspaceId = getCurrentWorkspaceId()
-    window.localStorage.setItem(getSelectedWeekStorageKey(workspaceId), weekStart)
+    const workspaceKey = getSelectedWeekStorageKey(workspaceId)
+    const sourceKey = getWeekSelectionSourceStorageKey(workspaceId)
+    if (!workspaceKey) return
+    window.localStorage.setItem(workspaceKey, weekStart)
+    if (sourceKey) window.localStorage.setItem(sourceKey, source)
     if (workspaceId === getLegacyCompatibleWorkspaceId()) {
       window.localStorage.setItem(SELECTED_WEEK_KEY, weekStart)
     }
@@ -208,6 +429,15 @@ export function createEmptyWeeklyPlan(weekStart: string): WeeklyPlan {
         categories: createEmptyCategories(),
       }
     }),
+    programmeContext: undefined,
+    programmeActivities: [],
+    communityEngagement: [],
+    volunteerPlan: [],
+    stakeholderPlan: [],
+    resourcesLogistics: [],
+    communicationsPlan: [],
+    documentationPlan: [],
+    monitoringImpactTargets: [],
     virtualEngagementPlan: [],
     keyAccountObjectives: [],
     commercialPriorities: [],
@@ -238,6 +468,15 @@ function normalizePlan(plan: unknown, weekStart: string): WeeklyPlan {
       }
       return { ...day, categories }
     }),
+    programmeContext: normalizeProgrammeContext((plan as WeeklyPlan).programmeContext),
+    programmeActivities: normalizeProgrammeActivities((plan as WeeklyPlan).programmeActivities),
+    communityEngagement: normalizeCommunityEngagement((plan as WeeklyPlan).communityEngagement),
+    volunteerPlan: normalizeVolunteerPlan((plan as WeeklyPlan).volunteerPlan),
+    stakeholderPlan: normalizeStakeholderPlan((plan as WeeklyPlan).stakeholderPlan),
+    resourcesLogistics: normalizeResourcesLogistics((plan as WeeklyPlan).resourcesLogistics),
+    communicationsPlan: normalizeCommunicationsPlan((plan as WeeklyPlan).communicationsPlan),
+    documentationPlan: normalizeDocumentationPlan((plan as WeeklyPlan).documentationPlan),
+    monitoringImpactTargets: normalizeMonitoringImpactTargets((plan as WeeklyPlan).monitoringImpactTargets),
     virtualEngagementPlan: normalizeVirtualEngagementPlan((plan as WeeklyPlan).virtualEngagementPlan),
     keyAccountObjectives: normalizeAccountObjectives((plan as WeeklyPlan).keyAccountObjectives),
     commercialPriorities: normalizeCommercialPriorities((plan as WeeklyPlan).commercialPriorities),
@@ -248,8 +487,8 @@ function normalizePlan(plan: unknown, weekStart: string): WeeklyPlan {
 function loadWeeklyPlanLocal(weekStart: string): WeeklyPlan {
   try {
     const workspaceId = getCurrentWorkspaceId()
-    const key = getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekStart, workspaceId)
-    const savedPlan = window.localStorage.getItem(key) ?? (workspaceId === getLegacyCompatibleWorkspaceId() ? window.localStorage.getItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart)) : null)
+    const key = workspaceId ? getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekStart, workspaceId) : null
+    const savedPlan = (key ? window.localStorage.getItem(key) : null) ?? (workspaceId === getLegacyCompatibleWorkspaceId() ? window.localStorage.getItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart)) : null)
     return savedPlan ? normalizePlan(JSON.parse(savedPlan), weekStart) : createEmptyWeeklyPlan(weekStart)
   } catch {
     return createEmptyWeeklyPlan(weekStart)
@@ -259,6 +498,7 @@ function loadWeeklyPlanLocal(weekStart: string): WeeklyPlan {
 function saveWeeklyPlanLocal(plan: WeeklyPlan) {
   try {
     const workspaceId = getCurrentWorkspaceId()
+    if (!workspaceId) return
     const workspaceKey = getWorkspaceScopedStorageKey(STORAGE_PREFIX, plan.weekStart, workspaceId)
     window.localStorage.setItem(workspaceKey, JSON.stringify(plan))
     if (workspaceId === getLegacyCompatibleWorkspaceId()) {

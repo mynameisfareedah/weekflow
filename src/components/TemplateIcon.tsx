@@ -4,7 +4,7 @@ type TemplateIconProps = SVGProps<SVGSVGElement> & {
   templateId: string
 }
 
-export type AppIconName = 'overview' | 'weekly-plan' | 'daily-activity' | 'follow-ups' | 'report' | 'report-history' | 'workflow' | 'workspaces' | 'menu' | 'close' | 'collapse' | 'expand' | 'chevron-left' | 'chevron-right' | 'arrow-right' | 'arrow-down' | 'check' | 'dot'
+export type AppIconName = 'overview' | 'weekly-plan' | 'daily-activity' | 'follow-ups' | 'report' | 'report-history' | 'workflow' | 'workspaces' | 'menu' | 'close' | 'collapse' | 'expand' | 'chevron-left' | 'chevron-right' | 'chevron-down' | 'arrow-right' | 'arrow-down' | 'check' | 'dot'
 
 const ICON_PATHS: Record<string, string> = {
   'field-sales': 'M3 7.5h18M5 7.5V20h14V7.5M8 7.5V4h8v3.5M8 12h8M8 16h5',
@@ -40,6 +40,7 @@ const APP_ICON_PATHS: Record<AppIconName, string> = {
   expand: 'm16 4-8 8 8 8',
   'chevron-left': 'm15 5-7 7 7 7',
   'chevron-right': 'm9 5 7 7-7 7',
+  'chevron-down': 'm6 9 6 6 6-6',
   'arrow-right': 'M4 12h15M13 6l6 6-6 6',
   'arrow-down': 'M12 4v15M6 13l6 6 6-6',
   check: 'm5 12 4 4L19 6',

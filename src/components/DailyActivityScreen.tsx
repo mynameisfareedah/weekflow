@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { loadDailyActivities, loadDailyActivitiesAsync, saveDailyActivitiesAsync } from '../storage/dailyActivityStorage'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { loadDailyActivities, loadDailyActivitiesAsync, saveDailyActivities, saveDailyActivitiesAsync } from '../storage/dailyActivityStorage'
 import { queueFollowUpPrefill } from '../storage/followUpsStorage'
 import { loadFollowUps } from '../storage/followUpsStorage'
 import { getSelectedWeekStart, loadWeeklyPlan } from '../storage/weeklyPlanStorage'
@@ -13,7 +13,7 @@ import {
   type StructuredOutcome,
   type StructuredOutcomeType,
 } from '../types/dailyActivity'
-import type { DayPlan, PlanItem, WeeklyPlan } from '../types/weeklyPlan'
+import type { DayPlan, PlanItem } from '../types/weeklyPlan'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from '../config/templates'
 import { getTemplateTerminology } from '../config/templateTerminology'
 import { AppIcon } from './TemplateIcon'
@@ -28,6 +28,31 @@ interface ActivityDraft {
   activityType: ActivityType
   hcpNames: string[]
   outcome: string
+  workPerformed?: string
+  actualResults?: string
+  programmeArea?: string
+  location?: string
+  communityGroup?: string
+  engagementActivity?: string
+  actualReach?: string
+  engagementResult?: string
+  volunteer?: string
+  volunteerRole?: string
+  volunteerActivity?: string
+  volunteerParticipation?: string
+  volunteerContribution?: string
+  stakeholder?: string
+  stakeholderPurpose?: string
+  stakeholderEngagement?: string
+  stakeholderResult?: string
+  stakeholderNextStep?: string
+  resource?: string
+  resourceActual?: string
+  resourceIssue?: string
+  resourceAction?: string
+  timeSpent?: string
+  dailySummary?: string
+  carryForward?: string
   intelligence: string
   nextAction: string
   structuredOutcomes: StructuredOutcome[]
@@ -53,6 +78,31 @@ const EMPTY_DRAFT: ActivityDraft = {
   activityType: 'Physical Visit',
   hcpNames: [],
   outcome: '',
+  workPerformed: '',
+  actualResults: '',
+  programmeArea: '',
+  location: '',
+  communityGroup: '',
+  engagementActivity: '',
+  actualReach: '',
+  engagementResult: '',
+  volunteer: '',
+  volunteerRole: '',
+  volunteerActivity: '',
+  volunteerParticipation: '',
+  volunteerContribution: '',
+  stakeholder: '',
+  stakeholderPurpose: '',
+  stakeholderEngagement: '',
+  stakeholderResult: '',
+  stakeholderNextStep: '',
+  resource: '',
+  resourceActual: '',
+  resourceIssue: '',
+  resourceAction: '',
+  timeSpent: '',
+  dailySummary: '',
+  carryForward: '',
   intelligence: '',
   nextAction: '',
   structuredOutcomes: [],
@@ -80,6 +130,31 @@ function getInitialDraft(initialActivity: DailyActivity | null, plannedActivity:
       activityType: initialActivity.activityType,
       hcpNames: [...initialActivity.hcpNames],
       outcome: initialActivity.outcome,
+      workPerformed: initialActivity.workPerformed ?? '',
+      actualResults: initialActivity.actualResults ?? '',
+      programmeArea: initialActivity.programmeArea ?? '',
+      location: initialActivity.location ?? '',
+      communityGroup: initialActivity.communityGroup ?? '',
+      engagementActivity: initialActivity.engagementActivity ?? '',
+      actualReach: initialActivity.actualReach ?? '',
+      engagementResult: initialActivity.engagementResult ?? '',
+      volunteer: initialActivity.volunteer ?? '',
+      volunteerRole: initialActivity.volunteerRole ?? '',
+      volunteerActivity: initialActivity.volunteerActivity ?? '',
+      volunteerParticipation: initialActivity.volunteerParticipation ?? '',
+      volunteerContribution: initialActivity.volunteerContribution ?? '',
+      stakeholder: initialActivity.stakeholder ?? '',
+      stakeholderPurpose: initialActivity.stakeholderPurpose ?? '',
+      stakeholderEngagement: initialActivity.stakeholderEngagement ?? '',
+      stakeholderResult: initialActivity.stakeholderResult ?? '',
+      stakeholderNextStep: initialActivity.stakeholderNextStep ?? '',
+      resource: initialActivity.resource ?? '',
+      resourceActual: initialActivity.resourceActual ?? '',
+      resourceIssue: initialActivity.resourceIssue ?? '',
+      resourceAction: initialActivity.resourceAction ?? '',
+      timeSpent: initialActivity.timeSpent ?? '',
+      dailySummary: initialActivity.dailySummary ?? '',
+      carryForward: initialActivity.carryForward ?? '',
       intelligence: initialActivity.intelligence,
       nextAction: initialActivity.nextAction,
       structuredOutcomes: initialActivity.structuredOutcomes.map((outcome) => ({ ...outcome })),
@@ -106,6 +181,8 @@ function getInitialDraft(initialActivity: DailyActivity | null, plannedActivity:
     structuredOutcomes: [],
     account: plannedActivity?.account ?? '',
     activityType: plannedActivity?.activityType ?? template.activityTypes[0],
+    programmeArea: plannedActivity?.programmeArea ?? '',
+    location: plannedActivity?.location ?? '',
   }
 }
 
@@ -147,6 +224,7 @@ function ActivityCaptureForm({
   const structuredOutcomeOptions = getStructuredOutcomeOptions(template)
   const isFieldEnabled = (key: ActivityFieldKey) => isActivityFieldEnabled(template, key, draft.activityType)
   const isFieldRequired = (key: ActivityFieldKey) => isActivityFieldRequired(template, key)
+  const accountPlaceholder = template.id === 'personal' ? 'Area / Commitment' : 'Select or add an account'
 
   function updateDraft<K extends keyof ActivityDraft>(key: K, value: ActivityDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }))
@@ -211,7 +289,7 @@ function ActivityCaptureForm({
       <div className="capture-form-grid">
         {isFieldEnabled('account') && <label>
           <span>{activityFields.find((field) => field.key === 'account')?.label}</span>
-          <input autoFocus={!plannedActivity && !initialActivity} list="daily-account-options" value={draft.account} onChange={(event) => updateDraft('account', event.target.value)} placeholder="Select or add an account" required={isFieldRequired('account')} />
+          <input autoFocus={!plannedActivity && !initialActivity} list="daily-account-options" value={draft.account} onChange={(event) => updateDraft('account', event.target.value)} placeholder={accountPlaceholder} required={isFieldRequired('account')} />
           <datalist id="daily-account-options">{accountOptions.map((account) => <option key={account} value={account} />)}</datalist>
         </label>}
         <label>
@@ -241,6 +319,31 @@ function ActivityCaptureForm({
       </fieldset>}
       <div className="capture-form-grid">
         {([
+          'workPerformed',
+          'actualResults',
+          'programmeArea',
+          'location',
+          'communityGroup',
+          'engagementActivity',
+          'actualReach',
+          'engagementResult',
+          'volunteer',
+          'volunteerRole',
+          'volunteerActivity',
+          'volunteerParticipation',
+          'volunteerContribution',
+          'stakeholder',
+          'stakeholderPurpose',
+          'stakeholderEngagement',
+          'stakeholderResult',
+          'stakeholderNextStep',
+          'resource',
+          'resourceActual',
+          'resourceIssue',
+          'resourceAction',
+          'timeSpent',
+          'dailySummary',
+          'carryForward',
           'workOrderJob',
           'equipmentAsset',
           'issueProblem',
@@ -310,11 +413,43 @@ function ActivityCaptureForm({
 function ActivitySummary({ activity, onEdit, onDelete, onFollowUp, template, className = '' }: { activity: DailyActivity; onEdit: () => void; onDelete: () => void; onFollowUp: () => void; template: WeekFlowTemplate; className?: string }) {
   const noContactsLabel = template.terminology.contact
   const contactCountLabel = activity.hcpNames.length === 1 ? template.terminology.person : template.terminology.people
+  const isNgoTemplate = template.id === 'ngo-community'
 
   return (
     <article className={`activity-summary${className ? ` ${className}` : ''}`}>
       <div className="activity-summary-check" aria-hidden="true"><AppIcon name="check" /></div>
-      <div className="activity-summary-main"><div className="activity-summary-title"><h3>{activity.account}</h3><span>{activity.activityType}</span></div><p>{activity.hcpNames.length ? `${activity.hcpNames.length} ${contactCountLabel} involved` : `No ${noContactsLabel} recorded`}</p>{activity.outcome && <p className="summary-outcome">{activity.outcome}</p>}{activity.nextAction && <div className="next-action-summary"><span>Next action</span><p>{activity.nextAction}</p><button type="button" onClick={onFollowUp}>+ Add Follow-up</button></div>}{activity.structuredOutcomes.length > 0 && <div className="summary-tags">{activity.structuredOutcomes.map((outcome) => <span key={outcome.id}>{outcome.type}</span>)}</div>}</div>
+      <div className="activity-summary-main">
+        <div className="activity-summary-title"><h3>{activity.account}</h3><span>{activity.activityType}</span></div>
+        <p>{activity.hcpNames.length ? `${activity.hcpNames.length} ${contactCountLabel} involved` : `No ${noContactsLabel} recorded`}</p>
+        {isNgoTemplate && activity.workPerformed && <p className="summary-outcome">{activity.workPerformed}</p>}
+        {isNgoTemplate && activity.actualResults && <p>{activity.actualResults}</p>}
+        {isNgoTemplate && activity.programmeArea && <p>Programme area: {activity.programmeArea}</p>}
+        {isNgoTemplate && activity.location && <p>Location: {activity.location}</p>}
+        {isNgoTemplate && activity.communityGroup && <p>Community group: {activity.communityGroup}</p>}
+        {isNgoTemplate && activity.engagementActivity && <p>Engagement activity: {activity.engagementActivity}</p>}
+        {isNgoTemplate && activity.actualReach && <p>Actual reach: {activity.actualReach}</p>}
+        {isNgoTemplate && activity.engagementResult && <p>Engagement result: {activity.engagementResult}</p>}
+        {isNgoTemplate && activity.volunteer && <p>Volunteer: {activity.volunteer}</p>}
+        {isNgoTemplate && activity.volunteerRole && <p>Volunteer role: {activity.volunteerRole}</p>}
+        {isNgoTemplate && activity.volunteerActivity && <p>Volunteer activity: {activity.volunteerActivity}</p>}
+        {isNgoTemplate && activity.volunteerParticipation && <p>Participation: {activity.volunteerParticipation}</p>}
+        {isNgoTemplate && activity.volunteerContribution && <p>Contribution: {activity.volunteerContribution}</p>}
+        {isNgoTemplate && activity.stakeholder && <p>Stakeholder: {activity.stakeholder}</p>}
+        {isNgoTemplate && activity.stakeholderPurpose && <p>Purpose: {activity.stakeholderPurpose}</p>}
+        {isNgoTemplate && activity.stakeholderEngagement && <p>Engagement / action: {activity.stakeholderEngagement}</p>}
+        {isNgoTemplate && activity.stakeholderResult && <p>Result: {activity.stakeholderResult}</p>}
+        {isNgoTemplate && activity.stakeholderNextStep && <p>Next step: {activity.stakeholderNextStep}</p>}
+        {isNgoTemplate && activity.resource && <p>Resource: {activity.resource}</p>}
+        {isNgoTemplate && activity.resourceActual && <p>Actual / available: {activity.resourceActual}</p>}
+        {isNgoTemplate && activity.resourceIssue && <p>Issue / gap: {activity.resourceIssue}</p>}
+        {isNgoTemplate && activity.resourceAction && <p>Action taken: {activity.resourceAction}</p>}
+        {isNgoTemplate && activity.timeSpent && <p>Time spent: {activity.timeSpent}</p>}
+        {isNgoTemplate && activity.dailySummary && <p>{activity.dailySummary}</p>}
+        {isNgoTemplate && activity.carryForward && <p>Carry forward: {activity.carryForward}</p>}
+        {activity.outcome && <p className="summary-outcome">{activity.outcome}</p>}
+        {activity.nextAction && <div className="next-action-summary"><span>Next action</span><p>{activity.nextAction}</p><button type="button" onClick={onFollowUp}>+ Add Follow-up</button></div>}
+        {activity.structuredOutcomes.length > 0 && <div className="summary-tags">{activity.structuredOutcomes.map((outcome) => <span key={outcome.id}>{outcome.type}</span>)}</div>}
+      </div>
       <div className="summary-actions"><button type="button" onClick={onEdit}>Edit</button><button type="button" onClick={onDelete}>Delete</button></div>
     </article>
   )
@@ -322,10 +457,11 @@ function ActivitySummary({ activity, onEdit, onDelete, onFollowUp, template, cla
 
 export default function DailyActivityScreen({ template = FIELD_SALES_TEMPLATE }: { template?: WeekFlowTemplate }) {
   const terminology = getTemplateTerminology(template)
-  const [weekStart] = useState(getSelectedWeekStart)
-  const [plan] = useState<WeeklyPlan>(() => loadWeeklyPlan(weekStart))
+  const weekStart = getSelectedWeekStart()
+  const plan = useMemo(() => loadWeeklyPlan(weekStart), [weekStart])
   const [activities, setActivities] = useState<DailyActivity[]>(() => loadDailyActivities(weekStart))
-  const [activitiesHydrated, setActivitiesHydrated] = useState(false)
+  const activitiesHydratedRef = useRef(false)
+  const activitiesChangedDuringHydrationRef = useRef(false)
   const weekDays = plan.days
   const today = new Date().toISOString().slice(0, 10)
   const defaultDay = weekDays.find((day) => day.date === today) ?? weekDays[0]
@@ -336,24 +472,26 @@ export default function DailyActivityScreen({ template = FIELD_SALES_TEMPLATE }:
   const [followUpSuggestion, setFollowUpSuggestion] = useState<FollowUpSuggestion | null>(null)
   const [newActivityId, setNewActivityId] = useState<string | null>(null)
   const selectedDay = weekDays.find((day) => day.id === selectedDayId) ?? weekDays[0]
-  const plannedActivities = useMemo(() => getExecutablePlannedActivities(selectedDay, template), [selectedDay, template])
+  const plannedActivities = useMemo(() => getExecutablePlannedActivities(selectedDay, template, plan), [selectedDay, template, plan])
   const dayActivities = activities.filter((activity) => activity.date === selectedDay.date)
 
   useEffect(() => {
+    activitiesHydratedRef.current = false
+    activitiesChangedDuringHydrationRef.current = false
     let active = true
     loadDailyActivitiesAsync(weekStart).then((loadedActivities) => {
       if (active) {
-        setActivities(loadedActivities)
-        setActivitiesHydrated(true)
+        setActivities((currentActivities) => activitiesChangedDuringHydrationRef.current ? currentActivities : loadedActivities)
+        activitiesHydratedRef.current = true
       }
     })
     return () => { active = false }
   }, [weekStart])
 
   useEffect(() => {
-    if (!activitiesHydrated) return
+    if (!activitiesHydratedRef.current) return
     void saveDailyActivitiesAsync(weekStart, activities)
-  }, [activities, activitiesHydrated, weekStart])
+  }, [activities, weekStart])
 
   useEffect(() => {
     if (!newActivityId) return
@@ -377,11 +515,16 @@ export default function DailyActivityScreen({ template = FIELD_SALES_TEMPLATE }:
     const now = new Date().toISOString()
     const savedActivity: DailyActivity = activityId
       ? { ...(activities.find((activity) => activity.id === activityId) as DailyActivity), ...draft, plannedActivityId, updatedAt: now }
-      : { id: createId(), date: selectedDay.date, weekStart, plannedActivityId, ...draft, createdAt: now, updatedAt: now }
+      : { id: createId(), date: selectedDay.date, weekStart, templateId: template.id, plannedActivityId, ...draft, createdAt: now, updatedAt: now }
     const nextActivities = activityId
       ? activities.map((activity) => activity.id === activityId ? savedActivity : activity)
       : [...activities, savedActivity]
+
+    activitiesChangedDuringHydrationRef.current = true
     setActivities(nextActivities)
+    saveDailyActivities(weekStart, nextActivities)
+    void saveDailyActivitiesAsync(weekStart, nextActivities)
+
     if (!activityId) {
       setNewActivityId(savedActivity.id)
     }
@@ -407,7 +550,13 @@ export default function DailyActivityScreen({ template = FIELD_SALES_TEMPLATE }:
   }
 
   function deleteActivity(activityId: string) {
-    setActivities((current) => current.filter((activity) => activity.id !== activityId))
+    activitiesChangedDuringHydrationRef.current = true
+    setActivities((current) => {
+      const nextActivities = current.filter((activity) => activity.id !== activityId)
+      saveDailyActivities(weekStart, nextActivities)
+      void saveDailyActivitiesAsync(weekStart, nextActivities)
+      return nextActivities
+    })
     setFollowUpSuggestion((current) => current?.sourceActivityId === activityId ? null : current)
   }
 

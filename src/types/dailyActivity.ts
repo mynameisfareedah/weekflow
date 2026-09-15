@@ -104,11 +104,37 @@ export interface DailyActivity {
   id: string
   date: string
   weekStart: string
+  templateId?: string
   plannedActivityId: string | null
   account: string
   activityType: ActivityType
   hcpNames: string[]
   outcome: string
+  workPerformed?: string
+  actualResults?: string
+  programmeArea?: string
+  location?: string
+  communityGroup?: string
+  engagementActivity?: string
+  actualReach?: string
+  engagementResult?: string
+  volunteer?: string
+  volunteerRole?: string
+  volunteerActivity?: string
+  volunteerParticipation?: string
+  volunteerContribution?: string
+  stakeholder?: string
+  stakeholderPurpose?: string
+  stakeholderEngagement?: string
+  stakeholderResult?: string
+  stakeholderNextStep?: string
+  resource?: string
+  resourceActual?: string
+  resourceIssue?: string
+  resourceAction?: string
+  timeSpent?: string
+  dailySummary?: string
+  carryForward?: string
   intelligence: string
   nextAction: string
   structuredOutcomes: StructuredOutcome[]

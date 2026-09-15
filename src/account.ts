@@ -28,6 +28,7 @@ export interface AccountProvider {
   updateProfile(displayName: string): Promise<UserProfile>
   requestPasswordReset(email: string, redirectTo: string): Promise<void>
   updatePassword(password: string): Promise<void>
+  deleteAccount(): Promise<void>
   signOut(): Promise<void>
   createAccount(input: CreateAccountInput): Promise<CreateAccountResult>
   onAuthStateChange(listener: AuthStateListener): () => void
@@ -55,6 +56,9 @@ const localDemoAccountProvider: AccountProvider = {
   },
   updatePassword() {
     return unsupportedAuthentication('Password update')
+  },
+  deleteAccount() {
+    return unsupportedAuthentication('Account deletion')
   },
   signOut() {
     return Promise.resolve()
@@ -89,6 +93,10 @@ export function requestPasswordReset(email: string, redirectTo: string) {
 
 export function updatePassword(password: string) {
   return accountProvider.updatePassword(password)
+}
+
+export function deleteAccount() {
+  return accountProvider.deleteAccount()
 }
 
 export function signOut() {

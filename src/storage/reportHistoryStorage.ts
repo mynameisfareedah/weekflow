@@ -11,7 +11,7 @@ export type ReportHistoryEntry = ReportSnapshot & {
 const STORAGE_PREFIX = 'weekflow-report-history:'
 
 function getHistoryStorageKey(workspaceId = getCurrentWorkspaceId()) {
-  return `${STORAGE_PREFIX}${workspaceId}`
+  return workspaceId ? `${STORAGE_PREFIX}${workspaceId}` : null
 }
 
 function isValidReportSnapshot(value: unknown): value is ReportSnapshot {
@@ -36,6 +36,7 @@ function normalizeReportHistoryEntry(value: unknown): ReportHistoryEntry | null 
     plan: candidate.plan as ReportSnapshot['plan'],
     activities: candidate.activities as ReportSnapshot['activities'],
     followUps: candidate.followUps as ReportSnapshot['followUps'],
+    performance: candidate.performance as ReportSnapshot['performance'],
     template: candidate.template as ReportSnapshot['template'],
     workspaceId: candidate.workspaceId,
     generatedAt: candidate.generatedAt,
@@ -45,7 +46,9 @@ function normalizeReportHistoryEntry(value: unknown): ReportHistoryEntry | null 
 
 export function loadReportHistoryEntries(workspaceId = getCurrentWorkspaceId()): ReportHistoryEntry[] {
   try {
-    const saved = window.localStorage.getItem(getHistoryStorageKey(workspaceId))
+    const key = getHistoryStorageKey(workspaceId)
+    if (!key) return []
+    const saved = window.localStorage.getItem(key)
     if (!saved) return []
     const parsed: unknown = JSON.parse(saved)
     if (!Array.isArray(parsed)) return []
@@ -60,13 +63,16 @@ export function loadReportHistoryEntries(workspaceId = getCurrentWorkspaceId()):
 
 export function saveReportHistoryEntries(entries: ReportHistoryEntry[], workspaceId = getCurrentWorkspaceId()) {
   try {
-    window.localStorage.setItem(getHistoryStorageKey(workspaceId), JSON.stringify(entries))
+    const key = getHistoryStorageKey(workspaceId)
+    if (!key) return
+    window.localStorage.setItem(key, JSON.stringify(entries))
   } catch {
     // Storage can be unavailable in private browsing or restricted environments.
   }
 }
 
 export async function loadReportHistoryEntriesAsync(workspaceId = getCurrentWorkspaceId()): Promise<ReportHistoryEntry[]> {
+  if (!workspaceId) return []
   const localEntries = loadReportHistoryEntries(workspaceId)
   try {
     const cloudWorkspaceId = await getCurrentCloudWorkspaceId()
@@ -87,6 +93,7 @@ export async function loadReportHistoryEntriesAsync(workspaceId = getCurrentWork
       plan: row.report_data?.plan ?? { weekStart: row.week_start, weeklyStrategicObjectives: [], days: [], virtualEngagementPlan: [], keyAccountObjectives: [], commercialPriorities: [], successMeasures: [] },
       activities: Array.isArray(row.report_data?.activities) ? row.report_data.activities : [],
       followUps: Array.isArray(row.report_data?.followUps) ? row.report_data.followUps : [],
+      performance: row.report_data?.performance,
       template: row.report_data?.template,
       workspaceId,
       generatedAt: row.created_at,
@@ -105,6 +112,7 @@ export async function loadReportHistoryEntriesAsync(workspaceId = getCurrentWork
 }
 
 export async function upsertReportHistoryEntry(snapshot: ReportSnapshot, workspaceId = getCurrentWorkspaceId()): Promise<ReportHistoryEntry> {
+  if (!workspaceId) throw new Error('A workspace is required to save report history.')
   const entries = loadReportHistoryEntries(workspaceId)
   const existingIndex = entries.findIndex((entry) => entry.weekKey === snapshot.weekKey)
   const timestamp = new Date().toISOString()
@@ -147,5 +155,6 @@ export async function upsertReportHistoryEntry(snapshot: ReportSnapshot, workspa
 }
 
 export function getReportHistoryEntry(weekKey: string, workspaceId = getCurrentWorkspaceId()) {
+  if (!workspaceId) return null
   return loadReportHistoryEntries(workspaceId).find((entry) => entry.weekKey === weekKey) ?? null
 }

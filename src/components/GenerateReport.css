@@ -1,3 +1,20 @@
+.report-project-performance {
+  border: 1px solid var(--line);
+  margin: 0 0 24px;
+  padding: 18px;
+}
+
+.report-project-performance .report-intelligence-section-heading > strong { color: var(--color-accent); font-size: var(--text-small); }
+.report-performance-metrics { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 16px 0; }
+.report-performance-metrics div { border-left: 2px solid rgba(169, 95, 57, 0.25); padding-left: 10px; }
+.report-performance-metrics span { color: var(--muted); display: block; font-size: var(--text-small); }
+.report-performance-metrics strong { color: var(--color-text-primary); display: block; font-family: var(--font-heading); font-size: 1.15rem; margin-top: 4px; }
+.report-performance-summary { color: var(--muted); margin: 0; }
+
+@media (max-width: 760px) {
+  .report-performance-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .generate-report-screen {
   flex: 1;
   max-width: 1120px;

@@ -13,6 +13,7 @@ export type IntelligenceInput = {
 export type IntelligenceCategory = 'commercial' | 'patient' | 'access-market' | 'strategic-accounts' | 'scientific-engagement' | 'progress' | 'risks' | 'stakeholders' | 'deliverables'
 export type OpportunityStrength = 'low' | 'moderate' | 'high' | 'priority'
 export type PlanGapStatus = 'covered' | 'partially covered' | 'not evidenced' | 'needs review'
+export type ProjectIntelligenceKind = 'issue' | 'risk' | 'dependency' | 'blocked-work' | 'delayed-work' | 'dependency-risk' | 'resource-capacity' | 'schedule-risk' | 'follow-up-required'
 
 export interface Evidence {
   activityId: string
@@ -65,6 +66,15 @@ export interface WeeklyInsight {
   evidence: Evidence[]
 }
 
+export interface ProjectIntelligenceSignal {
+  kind: ProjectIntelligenceKind
+  title: string
+  detail: string
+  account: string
+  evidence: Evidence[]
+  sourceActivityId?: string
+}
+
 export interface Recommendation {
   title: string
   reason: string
@@ -111,6 +121,7 @@ export interface WeeklyIntelligence {
   followUpSuggestions: FollowUpSuggestion[]
   opportunitySignals: OpportunitySignal[]
   opportunityScores: OpportunityScore[]
+  projectSignals: ProjectIntelligenceSignal[]
   planGaps: PlanGap[]
   insights: Record<IntelligenceCategory, WeeklyInsight[]>
   recommendations: Recommendation[]

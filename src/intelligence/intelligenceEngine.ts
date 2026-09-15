@@ -2,7 +2,7 @@ import { detectDataQualityWarnings } from './dataQuality.ts'
 import { detectFollowUpSuggestions } from './followUpDetection.ts'
 import { detectPlanGaps } from './planGapDetection.ts'
 import { scoreOpportunities } from './opportunityScoring.ts'
-import { deriveOpportunitySignals, deriveWeeklyInsights } from './weeklyInsights.ts'
+import { deriveOpportunitySignals, deriveProjectIntelligence, deriveWeeklyInsights } from './weeklyInsights.ts'
 import { FIELD_SALES_TEMPLATE } from '../config/templates.ts'
 import type { CarryForwardCandidate, IntelligenceInput, IntelligenceCategory, Recommendation, WeeklyIntelligence } from './intelligenceTypes'
 
@@ -92,8 +92,9 @@ export function deriveWeeklyIntelligence(input: IntelligenceInput): WeeklyIntell
     followUpSuggestions,
     opportunitySignals,
     opportunityScores,
+    projectSignals: deriveProjectIntelligence(activities, input.plan, followUpSuggestions, template),
     planGaps,
-    insights: deriveWeeklyInsights(activities, template),
+    insights: deriveWeeklyInsights(activities, template, input.plan, followUps),
     recommendations,
     dataQualityWarnings,
     carryForwardCandidates: getCarryForward({ ...input, activities, followUps }, planGaps, dataQualityWarnings),

@@ -8,13 +8,13 @@ import {
   type StructuredOutcome,
   type StructuredOutcomeType,
 } from '../types/dailyActivity'
-import { getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getLegacyCompatibleWorkspaceId, getWorkspaceScopedStorageKey, getCurrentCloudWorkspaceId } from './workspaceStorage'
+import { getCurrentCloudWorkspaceId, getCurrentWorkspace, getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getLegacyCompatibleWorkspaceId, getWorkspaceScopedStorageKey } from './workspaceStorage'
 import { supabase } from '../lib/supabase'
 
 const STORAGE_PREFIX = 'weekflow-daily-activities:'
 
 function getWorkspaceStorageKey(weekStart: string, workspaceId = getCurrentWorkspaceId()) {
-  return getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekStart, workspaceId)
+  return workspaceId ? getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekStart, workspaceId) : null
 }
 
 function getLegacyCompatibleStorageValue(weekStart: string, workspaceId = getCurrentWorkspaceId()) {
@@ -49,7 +49,7 @@ function normalizeOutcome(outcome: unknown): StructuredOutcome | null {
   }
 }
 
-function normalizeActivity(activity: unknown): DailyActivity | null {
+function normalizeActivity(activity: unknown, fallbackTemplateId = getCurrentWorkspace()?.templateId ?? 'field-sales'): DailyActivity | null {
   if (!activity || typeof activity !== 'object') return null
   const candidate = activity as Partial<DailyActivity>
   if (
@@ -64,11 +64,37 @@ function normalizeActivity(activity: unknown): DailyActivity | null {
     id: candidate.id,
     date: candidate.date,
     weekStart: candidate.weekStart,
+    templateId: typeof candidate.templateId === 'string' ? candidate.templateId : fallbackTemplateId,
     plannedActivityId: typeof candidate.plannedActivityId === 'string' ? candidate.plannedActivityId : null,
     account: candidate.account,
     activityType: candidate.activityType,
     hcpNames: Array.isArray(candidate.hcpNames) ? candidate.hcpNames.filter((name): name is string => typeof name === 'string') : [],
     outcome: typeof candidate.outcome === 'string' ? candidate.outcome : '',
+    ...(typeof candidate.workPerformed === 'string' ? { workPerformed: candidate.workPerformed } : {}),
+    ...(typeof candidate.actualResults === 'string' ? { actualResults: candidate.actualResults } : {}),
+    ...(typeof candidate.programmeArea === 'string' ? { programmeArea: candidate.programmeArea } : {}),
+    ...(typeof candidate.location === 'string' ? { location: candidate.location } : {}),
+    ...(typeof candidate.communityGroup === 'string' ? { communityGroup: candidate.communityGroup } : {}),
+    ...(typeof candidate.engagementActivity === 'string' ? { engagementActivity: candidate.engagementActivity } : {}),
+    ...(typeof candidate.actualReach === 'string' ? { actualReach: candidate.actualReach } : {}),
+    ...(typeof candidate.engagementResult === 'string' ? { engagementResult: candidate.engagementResult } : {}),
+    ...(typeof candidate.volunteer === 'string' ? { volunteer: candidate.volunteer } : {}),
+    ...(typeof candidate.volunteerRole === 'string' ? { volunteerRole: candidate.volunteerRole } : {}),
+    ...(typeof candidate.volunteerActivity === 'string' ? { volunteerActivity: candidate.volunteerActivity } : {}),
+    ...(typeof candidate.volunteerParticipation === 'string' ? { volunteerParticipation: candidate.volunteerParticipation } : {}),
+    ...(typeof candidate.volunteerContribution === 'string' ? { volunteerContribution: candidate.volunteerContribution } : {}),
+    ...(typeof candidate.stakeholder === 'string' ? { stakeholder: candidate.stakeholder } : {}),
+    ...(typeof candidate.stakeholderPurpose === 'string' ? { stakeholderPurpose: candidate.stakeholderPurpose } : {}),
+    ...(typeof candidate.stakeholderEngagement === 'string' ? { stakeholderEngagement: candidate.stakeholderEngagement } : {}),
+    ...(typeof candidate.stakeholderResult === 'string' ? { stakeholderResult: candidate.stakeholderResult } : {}),
+    ...(typeof candidate.stakeholderNextStep === 'string' ? { stakeholderNextStep: candidate.stakeholderNextStep } : {}),
+    ...(typeof candidate.resource === 'string' ? { resource: candidate.resource } : {}),
+    ...(typeof candidate.resourceActual === 'string' ? { resourceActual: candidate.resourceActual } : {}),
+    ...(typeof candidate.resourceIssue === 'string' ? { resourceIssue: candidate.resourceIssue } : {}),
+    ...(typeof candidate.resourceAction === 'string' ? { resourceAction: candidate.resourceAction } : {}),
+    ...(typeof candidate.timeSpent === 'string' ? { timeSpent: candidate.timeSpent } : {}),
+    ...(typeof candidate.dailySummary === 'string' ? { dailySummary: candidate.dailySummary } : {}),
+    ...(typeof candidate.carryForward === 'string' ? { carryForward: candidate.carryForward } : {}),
     intelligence: typeof candidate.intelligence === 'string' ? candidate.intelligence : '',
     nextAction: typeof candidate.nextAction === 'string' ? candidate.nextAction : '',
     structuredOutcomes: Array.isArray(candidate.structuredOutcomes)
@@ -94,18 +120,52 @@ function normalizeActivity(activity: unknown): DailyActivity | null {
   }
 }
 
-function loadDailyActivitiesLocal(weekStart: string) {
+function parseActivities(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((activity) => normalizeActivity(activity)).filter((activity): activity is DailyActivity => activity !== null)
+    : []
+}
+
+function filterActivitiesForCurrentTemplate(activities: DailyActivity[]) {
+  const templateId = getCurrentWorkspace()?.templateId
+  if (!templateId) return []
+  return activities.filter((activity) => activity.templateId === templateId)
+}
+
+function loadStoredActivitiesLocal(weekStart: string) {
   try {
     const workspaceId = getCurrentWorkspaceId()
     const key = getWorkspaceStorageKey(weekStart, workspaceId)
-    const saved = window.localStorage.getItem(key) ?? getLegacyCompatibleStorageValue(weekStart, workspaceId)
-    if (!saved) return []
-    const parsed: unknown = JSON.parse(saved)
-    return Array.isArray(parsed)
-      ? parsed.map(normalizeActivity).filter((activity): activity is DailyActivity => activity !== null)
-      : []
+    const saved = (key ? window.localStorage.getItem(key) : null) ?? getLegacyCompatibleStorageValue(weekStart, workspaceId)
+    return saved ? parseActivities(JSON.parse(saved)) : []
   } catch {
     return []
+  }
+}
+
+function mergeActivities(localActivities: DailyActivity[], cloudActivities: DailyActivity[]) {
+  const merged = new Map(localActivities.map((activity) => [activity.id, activity]))
+  for (const cloudActivity of cloudActivities) {
+    const localActivity = merged.get(cloudActivity.id)
+    if (!localActivity || cloudActivity.updatedAt > localActivity.updatedAt) {
+      merged.set(cloudActivity.id, cloudActivity)
+    }
+  }
+  return [...merged.values()]
+}
+
+function loadDailyActivitiesLocal(weekStart: string) {
+  return filterActivitiesForCurrentTemplate(loadStoredActivitiesLocal(weekStart))
+}
+
+function hasLocalActivitiesSnapshot(weekStart: string) {
+  try {
+    const workspaceId = getCurrentWorkspaceId()
+    const key = getWorkspaceStorageKey(weekStart, workspaceId)
+    return (key ? window.localStorage.getItem(key) : null) !== null
+      || getLegacyCompatibleStorageValue(weekStart, workspaceId) !== null
+  } catch {
+    return false
   }
 }
 
@@ -113,9 +173,15 @@ function saveDailyActivitiesLocal(weekStart: string, activities: DailyActivity[]
   try {
     const workspaceId = getCurrentWorkspaceId()
     const workspaceKey = getWorkspaceStorageKey(weekStart, workspaceId)
-    window.localStorage.setItem(workspaceKey, JSON.stringify(activities))
+    const workspace = getCurrentWorkspace()
+    if (!workspaceId || !workspaceKey || !workspace) return
+    const templateId = workspace.templateId
+    const existingActivities = loadStoredActivitiesLocal(weekStart)
+    const preservedActivities = existingActivities.filter((activity) => activity.templateId !== templateId)
+    const storedActivities = [...preservedActivities, ...activities]
+    window.localStorage.setItem(workspaceKey, JSON.stringify(storedActivities))
     if (workspaceId === getLegacyCompatibleWorkspaceId()) {
-      window.localStorage.setItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart), JSON.stringify(activities))
+      window.localStorage.setItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart), JSON.stringify(storedActivities))
     }
   } catch {
     // Storage can be unavailable in private browsing or restricted environments.
@@ -144,11 +210,9 @@ export async function loadDailyActivitiesAsync(weekStart: string): Promise<Daily
       .maybeSingle()
 
     if (error) throw error
-    if (!data?.data) return localActivities
-    const parsed: unknown = data.data
-    return Array.isArray(parsed)
-      ? parsed.map(normalizeActivity).filter((activity): activity is DailyActivity => activity !== null)
-      : localActivities
+    if (!data?.data || hasLocalActivitiesSnapshot(weekStart)) return localActivities
+    const cloudActivities = filterActivitiesForCurrentTemplate(parseActivities(data.data))
+    return mergeActivities(localActivities, cloudActivities)
   } catch {
     return localActivities
   }
@@ -167,7 +231,7 @@ export async function saveDailyActivitiesAsync(weekStart: string, activities: Da
 
     const activityRecord = await supabase
       .from('daily_activities')
-      .upsert({ workspace_id: workspaceId, week_start: weekStart, data: activities }, { onConflict: 'workspace_id,week_start' })
+      .upsert({ workspace_id: workspaceId, week_start: weekStart, data: loadStoredActivitiesLocal(weekStart) }, { onConflict: 'workspace_id,week_start' })
     if (activityRecord.error) throw activityRecord.error
     return true
   } catch {

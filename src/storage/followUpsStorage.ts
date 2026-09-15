@@ -12,7 +12,7 @@ const STORAGE_PREFIX = 'weekflow-follow-ups:'
 const PENDING_FOLLOW_UP_KEY = 'weekflow-pending-follow-up'
 
 function getWorkspaceStorageKey(weekKey: string, workspaceId = getCurrentWorkspaceId()) {
-  return getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekKey, workspaceId)
+  return workspaceId ? getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekKey, workspaceId) : null
 }
 
 function getLegacyCompatibleStorageValue(weekKey: string, workspaceId = getCurrentWorkspaceId()) {
@@ -59,7 +59,7 @@ function loadFollowUpsLocal(weekKey: string): FollowUp[] {
   try {
     const workspaceId = getCurrentWorkspaceId()
     const key = getWorkspaceStorageKey(weekKey, workspaceId)
-    const saved = window.localStorage.getItem(key) ?? getLegacyCompatibleStorageValue(weekKey, workspaceId)
+    const saved = (key ? window.localStorage.getItem(key) : null) ?? getLegacyCompatibleStorageValue(weekKey, workspaceId)
     if (!saved) return []
     const parsed: unknown = JSON.parse(saved)
     return Array.isArray(parsed)
@@ -74,6 +74,7 @@ function saveFollowUpsLocal(weekKey: string, followUps: FollowUp[]) {
   try {
     const workspaceId = getCurrentWorkspaceId()
     const workspaceKey = getWorkspaceStorageKey(weekKey, workspaceId)
+    if (!workspaceId || !workspaceKey) return
     window.localStorage.setItem(workspaceKey, JSON.stringify(followUps))
     if (workspaceId === getLegacyCompatibleWorkspaceId()) {
       window.localStorage.setItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekKey), JSON.stringify(followUps))
