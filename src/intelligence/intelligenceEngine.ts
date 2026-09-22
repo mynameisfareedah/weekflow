@@ -50,7 +50,7 @@ export function getReportReadiness({
   return { status: 'ready' as const, hasMeaningfulPlan, activityCount, plannedItemCount, capturedPlannedItemCount, openFollowUpCount, completedFollowUpCount, warningCount, highPriorityCount, summary: `The selected week's activity is sufficiently captured for review and export.${followUpNote}` }
 }
 
-function getMeaningfulPlanItemCount(plan: IntelligenceInput['plan']) {
+export function countMeaningfulPlanItems(plan: IntelligenceInput['plan']) {
   const dayItems = plan.days.flatMap((day) => Object.values(day.categories).flat())
   const weeklyItems = [
     ...(plan.weeklyStrategicObjectives ?? []),
@@ -77,7 +77,7 @@ export function deriveWeeklyIntelligence(input: IntelligenceInput): WeeklyIntell
   const dataQualityWarnings = detectDataQualityWarnings(activities, followUps, planGaps)
   const openFollowUps = followUps.filter((followUp) => followUp.status === 'open')
   const completedFollowUps = followUps.filter((followUp) => followUp.status === 'completed')
-  const meaningfulPlanItemCount = getMeaningfulPlanItemCount(input.plan)
+  const meaningfulPlanItemCount = countMeaningfulPlanItems(input.plan)
   const plannedItemCount = getMatchablePlanItemCount(input.plan)
   const capturedPlannedItemCount = plannedItemCount - planGaps.filter((gap) => gap.status === 'not evidenced' || gap.status === 'needs review').length
   const readinessWarnings = dataQualityWarnings.filter((warning) => !warning.title.startsWith('High-priority follow-up remains open:') && !warning.title.endsWith('has no captured activity'))

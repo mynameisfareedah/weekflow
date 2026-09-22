@@ -1,3 +1,5 @@
+import type { ReportMetadata } from '../report/reportMetadata'
+
 export interface UserProfile {
   id: string
   displayName: string
@@ -12,6 +14,7 @@ export interface Workspace {
   cloudId?: string
   name: string
   templateId: string
+  reportMetadata?: ReportMetadata
   createdAt: string
   updatedAt: string
   archived?: boolean

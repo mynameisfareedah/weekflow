@@ -5,11 +5,12 @@ import FollowUpsScreen from './components/FollowUpsScreen'
 import OverviewScreen from './components/OverviewScreen'
 import ProfileSettingsScreen from './components/ProfileSettingsScreen'
 import TemplateIcon, { AppIcon } from './components/TemplateIcon'
+import { getTimeAwareGreeting } from './utils/greeting'
 import { loadDailyActivities } from './storage/dailyActivityStorage'
-import { loadFollowUps, saveFollowUpsAsync } from './storage/followUpsStorage'
+import { loadFollowUps, loadFollowUpsAsync, saveFollowUpsAsync } from './storage/followUpsStorage'
 import { deriveWeeklyIntelligence } from './intelligence/intelligenceEngine'
 import { getSmartStartCandidateKeysFromCarryForwardSelection, getSmartStartCandidates, mergeSmartStartSelections, type SmartStartCandidate } from './intelligence/smartStart'
-import { loadSmartStartCompletion, saveSmartStartCompletion, type SmartStartCompletion } from './storage/smartStartStorage'
+import { loadSmartStartCompletion, loadSmartStartCompletionAsync, saveSmartStartCompletionAsync, type SmartStartCompletion } from './storage/smartStartStorage'
 import {
   getCurrentWeekStart,
   getPlanningWeekStart,
@@ -19,7 +20,6 @@ import {
   getWeekStartFromInput,
   loadWeeklyPlan,
   loadWeeklyPlanAsync,
-  saveWeeklyPlan,
   saveWeeklyPlanAsync,
   setSelectedWeekStart,
   toWeekInput,
@@ -45,21 +45,38 @@ import {
   type WeeklyPlan,
   type WeeklyProgrammeContext,
 } from './types/weeklyPlan'
+import type { FollowUp } from './types/followUp'
 import { FIELD_SALES_TEMPLATE, type WeekFlowTemplate } from './config/templates'
 import { getReportHistoryEntry, loadReportHistoryEntries, type ReportHistoryEntry } from './storage/reportHistoryStorage'
 import { getSelectedTemplate } from './storage/templateStorage'
 import { getPlanningCategoryDescriptors, getPlanningCategoryItems, type PlanningCategoryDescriptor } from './planning/planningCategoryAdapter'
+import { FieldOperationsPlanning } from './components/FieldOperationsPlanning'
+import EducationWeeklyPlan from './components/EducationWeeklyPlan'
+import EducationRecordsScreen from './components/EducationRecordsScreen'
+import CustomTemplateBuilder from './components/CustomTemplateBuilder'
+import CustomTargetsSummary from './components/CustomTargetsSummary'
+import ReportComparisonScreen from './components/ReportComparisonScreen'
+import { loadCustomTemplateConfig, saveCustomTemplateConfig } from './storage/customTemplateStorage'
+import type { CustomTemplateConfig } from './types/customTemplate'
 import { getTemplateTerminology } from './config/templateTerminology'
 import { WEEK_DAY_IDS } from './utils/week'
 import { navigateTo } from './utils/navigation'
 import { clearWorkspaceOwnerLocalData, createWorkspace, DEFAULT_ACCOUNT_ID, deleteWorkspace, ensureFirstWorkspaceForOwner, getCurrentWorkspace, getCurrentWorkspaceId, isWorkspaceNameTaken, loadWorkspaces, normalizeWorkspaceName, provisionWorkspaceInCloud, renameWorkspace, setCurrentWorkspaceId, setWorkspaceOwner } from './storage/workspaceStorage'
 import { getAvailableTemplates } from './config/templates'
 import { accountProvider, type AccountState, createAccount, getCurrentUser, requestPasswordReset, signIn, signOut, updatePassword } from './account'
+import { isAuthenticatedBootstrapBlocked } from './auth/bootstrapState'
 import { isSupabaseConfigured } from './lib/supabase'
-import type { UserProfile } from './types/workspace'
+import type { UserProfile, Workspace } from './types/workspace'
+import { getReportMetadataFields, type ReportMetadata } from './report/reportMetadata'
+import { buildReportComparison, validateReportComparison } from './report/reportComparison'
 import { applyTheme, getStoredThemePreference } from './theme'
 import './App.css'
 import './landing.css'
+import LandingShootingStars from './LandingShootingStars'
+import LandingCustomCursor from './components/LandingCustomCursor'
+import SupportScreen from './SupportScreen'
+import ContactScreen from './ContactScreen'
+import { SupportGettingStartedPage, SupportGuidesPage, SupportTemplatesPage } from './SupportGuidePages'
 
 const GenerateReportScreen = lazy(() => import('./components/GenerateReportScreen'))
 
@@ -80,7 +97,7 @@ const navigationGroups = [
 ] as const
 
 const getSectionIdForScreen = (screen: string): string | null => {
-  if (['overview', 'weekly-plan', 'daily-activity', 'follow-ups', 'report'].includes(screen)) return 'workspace'
+  if (['overview', 'weekly-plan', 'daily-activity', 'education-records', 'follow-ups', 'report'].includes(screen)) return 'workspace'
   if (screen === 'report-history') return 'history'
   if (screen === 'workspaces') return 'configuration'
   return null
@@ -95,13 +112,20 @@ function getScreenFromPath(): string {
   if (pathname === '/sign-up') return 'sign-up'
   if (pathname === '/forgot-password') return 'forgot-password'
   if (pathname === '/reset-password') return 'reset-password'
+  if (pathname === '/support') return 'support'
+  if (pathname === '/contact') return 'contact'
+  if (pathname === '/guides') return 'guides'
+  if (pathname === '/guides/getting-started') return 'getting-started'
+  if (pathname === '/templates') return 'templates'
   if (pathname === '/profile') return 'profile'
   if (pathname === '/workspaces') return 'workspaces'
   if (pathname === '/weekly-plan') return 'weekly-plan'
   if (pathname === '/daily-activity') return 'daily-activity'
+  if (pathname === '/education-records') return 'education-records'
   if (pathname === '/follow-ups') return 'follow-ups'
   if (pathname === '/report') return 'report'
   if (pathname === '/report-history') return 'report-history'
+  if (pathname === '/report-comparison') return 'report-comparison'
   return 'overview'
 }
 
@@ -147,34 +171,133 @@ function formatHeaderWeek(weekStart: string) {
   return `${startLabel} - ${endLabel}`
 }
 
-const landingWorkflowDemos = [
-  { id: 'field-sales', name: 'Pharma Field Sales', status: 'Ready to review', planned: 12, activities: 18, followUps: 5, plan: ['UPTH Urology/Oncology', 'RSUTH', 'Peter Odili Cardiovascular & Cancer Hospital', 'Shalom Medical Center'], activity: ['UPTH Urology/Oncology', 'RSUTH', 'Peter Odili Hospital'], followThrough: '5 actions remain visible' },
-  { id: 'small-business', name: 'Small Business', status: 'On track', planned: 9, activities: 14, followUps: 4, plan: ['Customer meetings', 'Orders', 'Supplier activity', 'Sales priorities'], activity: ['Customer Meeting', 'Sales Activity', 'Order Processing'], followThrough: '4 actions remain visible' },
-  { id: 'personal', name: 'Personal Productivity', status: 'Making progress', planned: 8, activities: 11, followUps: 3, plan: ['Personal goals', 'Important tasks', 'Weekly priorities'], activity: ['Morning planning', 'Priority task', 'Personal errand', 'Follow-up'], followThrough: '3 actions remain visible' },
-  { id: 'project-management', name: 'Project Management', status: 'Ready to review', planned: 10, activities: 16, followUps: 4, plan: ['Project deliverables', 'Stakeholder updates', 'Project priorities', 'Risks and blockers'], activity: ['Project task', 'Stakeholder meeting', 'Deliverable review'], followThrough: '4 actions remain visible' },
-  { id: 'field-service', name: 'Field Operations', status: 'On track', planned: 11, activities: 15, followUps: 6, plan: ['Site visits', 'Inspections', 'Service jobs', 'Equipment checks'], activity: ['Site visit', 'Inspection', 'Service job'], followThrough: '6 actions remain visible' },
-  { id: 'ngo-community', name: 'NGO & Community Work', status: 'Making progress', planned: 8, activities: 13, followUps: 4, plan: ['Community outreach', 'Beneficiary engagement', 'Partner coordination', 'Programme activities'], activity: ['Community visit', 'Beneficiary engagement', 'Partner meeting'], followThrough: '4 actions remain visible' },
-  { id: 'education', name: 'Education', status: 'On track', planned: 9, activities: 14, followUps: 3, plan: ['Lesson planning', 'Student activities', 'Assessment', 'Academic priorities'], activity: ['Lesson preparation', 'Student session', 'Assessment review'], followThrough: '3 actions remain visible' },
-  { id: 'custom', name: 'Custom', status: 'Ready to shape', planned: 6, activities: 9, followUps: 2, plan: ['Custom priorities', 'Key outcomes', 'Important work'], activity: ['Work session', 'Progress update', 'Next action'], followThrough: '2 actions remain visible' },
+type LandingHeroTemplate = {
+  id: string
+  name: string
+  user: string
+  metrics: readonly string[]
+  rows: readonly string[]
+  status: string
+  date: string
+  progress: number | null
+  progressLabel?: string
+  nextAction?: string
+}
+
+const landingHeroTemplates: LandingHeroTemplate[] = [
+  { id: 'field-sales', name: 'Pharma Field Sales', user: 'Sarah', metrics: ['8 Activities', '3 Follow-ups', '5 Accounts'], rows: ['UPTH Urology', 'RSUTH Oncology', 'Alpha Pharmacy'], status: 'Report readiness · 86%', date: 'This week', progress: null, nextAction: 'Confirm pharmacy availability' },
+  { id: 'field-service', name: 'Field Operations', user: 'Daniel', metrics: ['12 Jobs', '9 Completed', '3 Open'], rows: ['Generator service', 'Equipment inspection', 'Customer repair'], status: '3 follow-ups open', date: 'Mon 12 Aug', progress: null, nextAction: 'Review recurring equipment issue' },
+  { id: 'project-management', name: 'Project Management', user: 'Michael', metrics: ['14 Tasks', '9 Done', '3 Open'], rows: ['Website redesign', 'Client review', 'Content delivery', 'Final QA'], status: '2 decisions pending', date: 'Sprint week 4', progress: 64, progressLabel: 'Weekly progress · 64%' },
+  { id: 'small-business', name: 'Small Business', user: 'Amaka', metrics: ['7 Customers', '11 Tasks', '4 Follow-ups'], rows: ['Customer orders', 'Supplier follow-up', 'Outstanding invoice', 'Delivery coordination'], status: 'Week on track', date: 'Week of Aug 12', progress: null, nextAction: 'Confirm supplier delivery' },
+  { id: 'ngo-community', name: 'NGO & Community Work', user: 'David', metrics: ['6 Activities', '4 Communities', '8 Follow-ups'], rows: ['Community outreach', 'Partner meeting', 'Volunteer coordination', 'Field visit'], status: '5 actions open', date: 'August review', progress: null, nextAction: 'Confirm community meeting' },
+  { id: 'education', name: 'Education', user: 'Grace', metrics: ['5 Lessons', '3 Assessments', '7 Follow-ups'], rows: ['Lesson delivery', 'Class assessment', 'Student support', 'Parent follow-up'], status: '2 support actions open', date: 'Term week 6', progress: 80, progressLabel: 'Teaching plan · 80%' },
+  { id: 'personal', name: 'Personal Productivity', user: 'Tunde', metrics: ['9 Tasks', '6 Completed', '2 Follow-ups'], rows: ['Deep work', 'Admin tasks', 'Personal goal', 'Errands'], status: '2 next actions', date: 'Today, 12 Aug', progress: 67, progressLabel: 'Weekly progress · 67%' },
+  { id: 'custom', name: 'Custom Workspace', user: 'Alex', metrics: ['10 Items', '7 Completed', '3 Open'], rows: ['Priority item', 'Custom activity', 'Next action', 'Review'], status: 'Ready to review', date: 'Current week', progress: 70, progressLabel: 'Weekly progress · 70%' },
+]
+
+const landingHeroGreetings = ['Good morning', 'Good afternoon', 'Good evening', 'Hello'] as const
+
+function LandingHeroTemplateCarousel() {
+  const cards = [...landingHeroTemplates, ...landingHeroTemplates]
+  return <div className="landing-template-carousel" aria-label="WeekFlow template dashboard previews"><div className="landing-template-track">{cards.map((template, index) => <article className={`landing-template-card landing-template-card-${template.id}`} key={`${template.id}-${index}`} style={{ ['--greeting-phase' as string]: `${-((index % landingHeroTemplates.length) % 4) * 1.5}s` }}><div className="landing-template-card-header"><div className="landing-template-card-identity"><span className="landing-template-avatar">{template.user.charAt(0)}</span><div className="landing-template-greeting" aria-label={`Illustrative greeting for ${template.user}`}>{landingHeroGreetings.map((greeting, greetingIndex) => <strong key={greeting} style={{ ['--greeting-index' as string]: greetingIndex }}>{greeting}, {template.user}</strong>)}<small>{template.name}</small></div></div><span className="landing-template-date">{template.date}</span></div><div className="landing-template-card-metrics">{template.metrics.map((metric) => { const [value, ...labelParts] = metric.split(' '); return <span key={metric}><b>{value}</b>{labelParts.join(' ')}</span> })}</div><div className="landing-template-card-content"><div className="landing-template-card-rows">{template.rows.map((row, rowIndex) => <span key={row}><i className={rowIndex < 2 ? 'is-done' : 'is-open'}>{rowIndex < 2 ? '✓' : 'o'}</i>{row}</span>)}</div><div className="landing-template-card-footer"><span className="landing-template-status">{template.status}</span>{template.progress !== null && <span className="landing-template-progress"><b>{template.progressLabel}</b><i style={{ width: `${template.progress}%` }} /></span>}{template.nextAction && <small className="landing-template-next-action">Next: {template.nextAction}</small>}</div></div></article>)}</div></div>
+}
+
+const landingProductStages = [
+  { number: '01', label: 'PLAN', title: 'Plan the week with clarity.', copy: 'Set objectives, organise daily work, and know what needs to happen before the week begins.' },
+  { number: '02', label: 'ACTIVITY', title: 'Capture what actually happened.', copy: 'Turn planned work into a clear record of the activities, outcomes, and next actions that happened during the week.' },
+  { number: '03', label: 'FOLLOW-UP', title: 'Keep every next action visible.', copy: 'Capture unresolved work, assign priority, and carry the right actions forward.' },
+  { number: '04', label: 'REVIEW', title: 'See what the week became.', copy: 'Review the work completed, outcomes captured, unresolved actions, and what needs attention before reporting.' },
+  { number: '05', label: 'REPORT', title: 'Turn the week into a report.', copy: "WeekFlow brings the week's work together into a structured report ready to review and export." },
 ] as const
 
-function AnimatedLandingPreview() {
-  const [activeIndex, setActiveIndex] = useState(0)
-  const demo = landingWorkflowDemos[activeIndex]
+function LandingProductMockup({ stage }: { stage: typeof landingProductStages[number] }) {
+  if (stage.label === 'PLAN') return <div className="landing-product-mockup landing-mockup-plan"><div className="landing-mockup-bar"><b>Weekly Plan</b><span>Week of Aug 12 - Aug 18</span></div><div className="landing-mockup-plan-head"><div><small>Current objectives</small><strong>Focus the week before it starts.</strong></div><span className="landing-mockup-date">Selected week</span></div><div className="landing-mockup-objectives"><span><i>01</i>Priority accounts</span><span><i>02</i>Team follow-through</span><span><i>03</i>Report readiness</span></div><div className="landing-mockup-days"><b>MON</b><span>Plan priorities</span><b>TUE</b><span>Account activity</span><b>WED</b><span>Follow-up review</span><b>THU</b><span>Open work</span></div></div>
+  if (stage.label === 'ACTIVITY') return <div className="landing-product-mockup landing-mockup-activity"><div className="landing-mockup-bar"><b>Daily Activity</b><span>Planned work <em>Actual activity</em></span></div><div className="landing-mockup-activity-focus"><span>12 Aug</span><strong>What happened today?</strong><small>Capture the work as it unfolds.</small></div><div className="landing-mockup-activity-row"><i className="is-done">✓</i><div><b>Account meeting</b><small>Outcome recorded · Next action added</small></div><span>09:30</span></div><div className="landing-mockup-activity-row"><i className="is-done">✓</i><div><b>Team coordination</b><small>Notes and intelligence captured</small></div><span>13:00</span></div><div className="landing-mockup-activity-row"><i className="is-open">o</i><div><b>Unplanned follow-through</b><small>Needs a next action</small></div><span>Open</span></div></div>
+  if (stage.label === 'FOLLOW-UP') return <div className="landing-product-mockup landing-mockup-followups"><div className="landing-mockup-bar"><b>Follow-ups</b><span>Open work <em>3 priority actions</em></span></div><div className="landing-mockup-followup-row"><i className="is-open">!</i><div><b>Confirm next action</b><small>From Daily Activity · Due this week</small></div><strong>Priority</strong></div><div className="landing-mockup-followup-row"><i className="is-open">!</i><div><b>Share outcome with team</b><small>From account meeting · Due Friday</small></div><strong>Open</strong></div><div className="landing-mockup-followup-row is-complete"><i className="is-done">✓</i><div><b>Complete review note</b><small>Source activity · Completed</small></div><strong>Done</strong></div><div className="landing-mockup-followup-foot"><span>Carry forward what still matters</span><b>3 actions visible</b></div></div>
+  if (stage.label === 'REVIEW') return <div className="landing-product-mockup landing-mockup-review"><div className="landing-mockup-bar"><b>WeekFlow Review</b><span className="landing-mockup-ready">Ready to review</span></div><div className="landing-mockup-review-grid"><div><small>Evidence captured</small><strong>18 activities</strong><span>12 planned · 6 additional</span></div><div><small>Outcomes</small><strong>8 recorded</strong><span>3 next actions open</span></div><div><small>Intelligence</small><strong>4 signals</strong><span>Needs attention</span></div></div><div className="landing-mockup-review-list"><span><i className="is-done">✓</i> Completed work</span><span><i className="is-open">!</i> Unresolved follow-ups</span><span><i className="is-open">!</i> Coming-week priorities</span></div></div>
+  return <div className="landing-product-mockup landing-mockup-report"><div className="landing-mockup-bar"><b>Generate Report</b><span>Week of Aug 12 - Aug 18</span></div><div className="landing-mockup-report-head"><div><small>Professional weekly report</small><strong>Weekly Activity Report</strong></div><span className="landing-mockup-ready">Ready to export</span></div><div className="landing-mockup-report-sections"><span><b>01</b>Activities Summary <em>18</em></span><span><b>02</b>Daily Activity Breakdown <em>7 days</em></span><span><b>03</b>Key Outcomes & Intelligence <em>8</em></span><span><b>04</b>Completed Follow-ups <em>5</em></span></div></div>
+}
+
+function LandingProductStorySection() {
+  const sectionRef = useRef<HTMLElement>(null)
+  const cardRefs = useRef<Array<HTMLElement | null>>([])
+  const stageRefs = useRef<Array<HTMLSpanElement | null>>([])
 
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const timer = window.setInterval(() => setActiveIndex((current) => (current + 1) % landingWorkflowDemos.length), 5600)
-    return () => window.clearInterval(timer)
+    const section = sectionRef.current
+    if (!section) return
+    const cards = cardRefs.current.filter((card): card is HTMLElement => Boolean(card))
+    const indicators = stageRefs.current.filter((indicator): indicator is HTMLSpanElement => Boolean(indicator))
+    const stage = section.querySelector<HTMLElement>('.landing-product-stack-stage')
+    const sticky = section.querySelector<HTMLElement>('.landing-product-stack-sticky')
+    const visual = section.querySelector<HTMLElement>('.landing-product-stack-visual')
+    if (!stage || !sticky || !visual) return
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let frame = 0
+
+    const updateStack = () => {
+      frame = 0
+      if (reducedMotion.matches) return
+      const stageRect = stage.getBoundingClientRect()
+      const range = Math.max(stage.offsetHeight - sticky.offsetHeight, 1)
+      const progress = Math.max(0, Math.min(1, (sticky.getBoundingClientRect().top - stageRect.top) / range))
+      const entrance = .18
+      const showcaseProgress = Math.max(0, Math.min(1, (progress - entrance) / (1 - entrance)))
+      const cycle = showcaseProgress * (cards.length - 1)
+      const segment = Math.min(cards.length - 2, Math.floor(cycle))
+      const localProgress = cycle - segment
+      const handoffProgress = Math.max(0, Math.min(1, (localProgress - .65) / .35))
+      const easedHandoff = handoffProgress * handoffProgress * (3 - 2 * handoffProgress)
+      const position = showcaseProgress >= 1 ? cards.length - 1 : segment + easedHandoff
+      const activeIndex = Math.min(cards.length - 1, Math.round(position))
+      visual.style.transform = `scale(${.78 + Math.min(1, progress / entrance) * .22})`
+      cards.forEach((card, index) => {
+        const distance = index - position
+        const depth = Math.max(0, Math.min(4, distance))
+        const passed = distance < 0
+        card.style.transform = passed
+          ? `translate3d(0, ${-72 + distance * 12}px, 0) scale(.94)`
+          : `translate3d(0, ${depth * 34}px, 0) scale(${1 - depth * .022})`
+        card.style.opacity = passed ? `${Math.max(.24, 1 + distance * .12)}` : `${1 - depth * .1}`
+        card.style.zIndex = passed ? `${index}` : `${cards.length - Math.round(Math.max(0, distance))}`
+      })
+      indicators.forEach((indicator, index) => indicator.classList.toggle('is-active', index === activeIndex))
+    }
+
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(updateStack)
+    }
+    const onMotionChange = () => {
+      section.classList.toggle('is-reduced-motion', reducedMotion.matches)
+      if (reducedMotion.matches) {
+        visual.style.transform = ''
+        cards.forEach((card) => { card.style.transform = ''; card.style.opacity = ''; card.style.zIndex = '' })
+      } else {
+        updateStack()
+      }
+    }
+
+    section.classList.toggle('is-reduced-motion', reducedMotion.matches)
+    reducedMotion.addEventListener('change', onMotionChange)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll)
+    updateStack()
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame)
+      reducedMotion.removeEventListener('change', onMotionChange)
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+    }
   }, [])
 
-  return <div className="landing-preview-wrap landing-preview-carousel" aria-label={`${demo.name} WeekFlow product preview`}>
-    <div className="landing-demo-selector"><span>TEMPLATES</span><div className="landing-demo-options">{landingWorkflowDemos.map((item, index) => <button type="button" className={index === activeIndex ? 'is-active' : ''} onClick={() => setActiveIndex(index)} key={item.id} aria-label={`Show ${item.name}`}><TemplateIcon templateId={item.id} /><span>{item.name}</span></button>)}</div></div>
-    <div className="landing-product-preview landing-product-preview-live" key={demo.id}><div className="preview-window-bar"><span className="preview-dots"><i /><i /><i /></span><span>WeekFlow</span><span className="preview-week">Week of Aug 10 - Aug 16</span></div><div className="preview-body"><aside><strong>WeekFlow</strong><span className="preview-active">Overview</span><span>Weekly Plan</span><span>Daily Activity</span><span>Follow-ups</span><span>Report</span></aside><div className="preview-main"><div className="preview-heading"><div><small>{demo.name}</small><h2>Your week at a glance.</h2></div><b>{demo.status}</b></div><div className="preview-metrics"><div><small>Planned</small><strong>{demo.planned}</strong></div><div><small>Activities</small><strong>{demo.activities}</strong></div><div><small>Follow-ups</small><strong>{demo.followUps}</strong></div></div><div className="preview-content-grid"><div className="preview-plan"><small>Weekly Plan</small>{demo.plan.map((item) => <strong key={item}>{item}</strong>)}</div><div className="preview-followups"><small>Daily Activity</small>{demo.activity.map((item) => <strong key={item}>{item}</strong>)}<span className="preview-pill">{demo.followThrough}</span></div></div></div></div></div>
-  </div>
+  return <section ref={sectionRef} className="landing-product-story-stack-section" aria-labelledby="landing-product-story-title"><div className="landing-product-story-heading"><p className="landing-eyebrow">Product in action</p><h2 id="landing-product-story-title">See the work come together.</h2><p>One connected workflow, from the first plan to the final report.</p></div><div className="landing-product-stack-stage"><div className="landing-product-stack-indicator" aria-label="WeekFlow workflow stages">{landingProductStages.map((stage, index) => <span ref={(element) => { stageRefs.current[index] = element }} className={index === 0 ? 'is-active' : ''} key={stage.label}>{stage.number} <b>{stage.label}</b></span>)}</div><div className="landing-product-stack-sticky"><div className="landing-product-stack-visual">{landingProductStages.map((stage, index) => <article ref={(element) => { cardRefs.current[index] = element }} className="landing-product-stack-card" key={stage.label} aria-label={`${stage.label} WeekFlow product preview`}><div className="landing-product-stack-label">{stage.number} · {stage.label}</div><LandingProductMockup stage={stage} /></article>)}</div></div></div></section>
 }
 
 function PublicLandingScreen({ onSignIn, onCreateAccount }: { onSignIn: () => void; onCreateAccount: () => void }) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [navOnLightSurface, setNavOnLightSurface] = useState(false)
+  const navRef = useRef<HTMLElement>(null)
+
   useEffect(() => {
     document.querySelector('.landing-hero-actions')?.remove()
     const finalSignIn = document.querySelector<HTMLButtonElement>('.landing-final-cta .landing-secondary-cta')
@@ -199,6 +322,21 @@ function PublicLandingScreen({ onSignIn, onCreateAccount }: { onSignIn: () => vo
     return () => observer.disconnect()
   }, [])
 
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    const observer = new IntersectionObserver(() => {
+      const navRect = nav.getBoundingClientRect()
+      const lightSurfaceActive = Array.from(document.querySelectorAll<HTMLElement>('.landing-feature-band, .landing-reporting, .landing-templates, .landing-workspaces')).some((section) => {
+        const sectionRect = section.getBoundingClientRect()
+        return sectionRect.top <= navRect.bottom && sectionRect.bottom >= navRect.top
+      })
+      setNavOnLightSurface(lightSurfaceActive)
+    }, { rootMargin: '-16px 0px -80% 0px', threshold: [0, 0.01] })
+    document.querySelectorAll<HTMLElement>('.landing-feature-band, .landing-reporting, .landing-templates, .landing-workspaces').forEach((section) => observer.observe(section))
+    return () => observer.disconnect()
+  }, [])
+
   const templateGroups = [
     { label: 'Business & Operations', ids: ['field-sales', 'field-service', 'small-business', 'project-management'] },
     { label: 'People & Impact', ids: ['ngo-community', 'education'] },
@@ -215,18 +353,23 @@ function PublicLandingScreen({ onSignIn, onCreateAccount }: { onSignIn: () => vo
     ['05', 'REPORT', 'Report History', 'Keep a useful record of completed weeks and reports.'],
   ]
   return <main className="landing-page">
-    <AnimatedLandingPreview />
-    <nav className="landing-nav"><a className="landing-brand" href="/" aria-label="WeekFlow home"><img src={logoImage} alt="WeekFlow mark" /><span className="landing-wordmark">WeekFlow</span></a><div className="landing-nav-actions"><button type="button" className="landing-sign-in" onClick={onSignIn}>Sign In</button><button type="button" className="button button-primary landing-nav-cta" onClick={onCreateAccount}>Create a free account</button></div></nav>
+    <LandingShootingStars />
+    <LandingCustomCursor />
+    <LandingHeroTemplateCarousel />
+    <div className="landing-public-content">
+    <nav ref={navRef} className={`landing-nav${mobileNavOpen ? ' is-open' : ''}${navOnLightSurface ? ' is-light-surface' : ''}`}><a className="landing-brand" href="/" aria-label="WeekFlow home"><img src={logoImage} alt="WeekFlow mark" /><span className="landing-wordmark">WeekFlow</span></a><button type="button" className="landing-nav-toggle" aria-expanded={mobileNavOpen} aria-controls="landing-nav-actions" aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'} onClick={() => setMobileNavOpen((open) => !open)}><span /><span /><span /></button><div className="landing-nav-actions" id="landing-nav-actions"><a className="landing-support-link" href="/support" onClick={() => setMobileNavOpen(false)}>Support</a><a className="landing-support-link" href="/contact" onClick={() => setMobileNavOpen(false)}>Contact</a><button type="button" className="landing-sign-in" onClick={() => { setMobileNavOpen(false); onSignIn() }}>Sign In</button><button type="button" className="button button-primary landing-nav-cta" onClick={() => { setMobileNavOpen(false); onCreateAccount() }}>Create a free account</button></div></nav>
     <section className="landing-hero"><div className="landing-hero-copy"><p className="landing-eyebrow">Your week, working better</p><h1>Plan your week.<br /><em>Stay on top of the work.</em></h1><p className="landing-hero-text">WeekFlow brings your weekly plans, daily activity, follow-ups, review, and reporting into one simple workspace.</p><div className="landing-hero-actions"><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create a free account <AppIcon name="arrow-right" /></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div></div><div className="landing-preview-wrap"><span className="preview-float preview-float-week">Week of Aug 10-16</span><span className="preview-float preview-float-followups">5 follow-ups</span><div className="landing-product-preview" aria-label="WeekFlow product preview"><div className="preview-window-bar"><span className="preview-dots"><i /><i /><i /></span><span>WeekFlow</span><span className="preview-week">Aug 10 - Aug 16</span></div><div className="preview-body"><aside><strong>WeekFlow</strong><span className="preview-active">Overview</span><span>Weekly Plan</span><span>Daily Activity</span><span>Follow-ups</span><span>Report</span></aside><div className="preview-main"><div className="preview-heading"><div><small>Current work week</small><h2>Your week at a glance.</h2></div><b>Ready to review</b></div><div className="preview-metrics"><div><small>Planned</small><strong>12</strong></div><div><small>Activities</small><strong>18</strong></div><div><small>Follow-ups</small><strong>5</strong></div></div><div className="preview-content-grid"><div className="preview-plan"><small>Weekly Plan</small><strong>Priority accounts and next actions</strong><span className="preview-line" /><span className="preview-line short" /><span className="preview-line" /></div><div className="preview-followups"><small>Follow-through</small><strong>5 actions remain visible</strong><span className="preview-pill">On track</span></div></div></div></div></div></div></section>
-    <section className="landing-section landing-workflow" id="week-rhythm"><div className="landing-section-heading"><p className="landing-eyebrow">The WeekFlow rhythm</p><h2>One week. One clear rhythm.</h2><p>Plan. Work. Follow through. Review. Report.</p></div><div className="landing-orbit-window" aria-label="WeekFlow rhythm stages"><div className="landing-orbit-ring" aria-hidden="true" />{weekRhythm.map(([number, label, title, description], index) => <article className="landing-orbit-card" style={{ ['--orbit-delay' as string]: `${index * -4}s` }} key={number}><span>{number}</span><small>{label}</small><h3>{title}</h3><p>{description}</p></article>)}</div></section>
-        <section className="landing-story landing-story-activity landing-reveal"><div className="landing-story-visual landing-activity-visual"><div className="story-window-label">Planned work <span>Actual activity</span></div><div className="story-flow-step"><b>Weekly Plan</b><span>Planned priorities</span></div><div className="story-flow-arrow"><AppIcon name="arrow-down" /></div><div className="story-flow-step is-active"><b>Daily Activity</b><span>What actually happened</span></div><div className="story-outcome-row"><span>Outcome</span><span>Intelligence</span><span>Next Action</span></div></div><div className="landing-story-copy"><p className="landing-eyebrow">Product in action</p><h2>Turn the plan into real work.</h2><p>Start the week knowing what matters. Capture what actually happens as the work unfolds.</p></div></section>
-    <section className="landing-story landing-story-followups landing-reveal"><div className="landing-story-copy"><p className="landing-eyebrow">Follow-ups</p><h2>Don't let important work disappear.</h2><p>Keep unresolved actions visible until they're complete.</p></div><div className="landing-story-visual landing-followups-visual"><div className="story-window-label">Follow-ups <span>Open work</span></div><div className="story-followup-row"><span className="story-dot is-open" /><strong>Confirm account next action</strong><small>Priority</small></div><div className="story-followup-row"><span className="story-dot is-open" /><strong>Share outcome with team</strong><small>Due this week</small></div><div className="story-followup-row is-complete"><span className="story-dot is-done"><AppIcon name="check" /></span><strong>Complete follow-up</strong><small>Completed</small></div></div></section>
+    <section className="landing-hero"><div className="landing-hero-copy"><p className="landing-eyebrow">Your week, working better</p><h1>Plan your week.<br /><em>Stay on top of the work.</em></h1><p className="landing-hero-text">WeekFlow brings your weekly plans, daily activity, follow-ups, review, and reporting into one simple workspace.</p><div className="landing-hero-actions"><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create a free account <AppIcon name="arrow-right" /></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div></div><div className="landing-hero-inner-balance"><div className="landing-hero-story" aria-hidden="true"><article className="landing-hero-card landing-hero-card-plan"><span className="landing-hero-card-mark">P</span><strong>Weekly Plan</strong><p>3 priorities planned</p></article><article className="landing-hero-card landing-hero-card-activity"><span className="landing-hero-card-mark">A</span><strong>Activity captured</strong><p>Client meeting</p><small>Outcome recorded</small></article><article className="landing-hero-card landing-hero-card-followup"><span className="landing-hero-card-mark">F</span><strong>Follow-up added</strong><p>Confirm next action</p><small>Due Friday</small></article><article className="landing-hero-card landing-hero-card-report"><span className="landing-hero-card-mark">R</span><strong>Report ready</strong><p>Weekly report generated</p></article></div><div className="landing-preview-wrap"><span className="preview-float preview-float-week">Week of Aug 10-16</span><span className="preview-float preview-float-followups">5 follow-ups</span><div className="landing-product-preview" aria-label="WeekFlow product preview"><div className="preview-window-bar"><span className="preview-dots"><i /><i /><i /></span><span>WeekFlow</span><span className="preview-week">Aug 10 - Aug 16</span></div><div className="preview-body"><aside><strong>WeekFlow</strong><span className="preview-active">Overview</span><span>Weekly Plan</span><span>Daily Activity</span><span>Follow-ups</span><span>Report</span></aside><div className="preview-main"><div className="preview-heading"><div><small>Current work week</small><h2>Your week at a glance.</h2></div><b>Ready to review</b></div><div className="preview-metrics"><div><small>Planned</small><strong>12</strong></div><div><small>Activities</small><strong>18</strong></div><div><small>Follow-ups</small><strong>5</strong></div></div><div className="preview-content-grid"><div className="preview-plan"><small>Weekly Plan</small><strong>Priority accounts and next actions</strong><span className="preview-line" /><span className="preview-line short" /><span className="preview-line" /></div><div className="preview-followups"><small>Follow-through</small><strong>5 actions remain visible</strong><span className="preview-pill">Review and align</span></div></div></div></div></div></div></div></section>
+    <section className="landing-section landing-workflow" id="week-rhythm"><div className="landing-section-heading"><p className="landing-eyebrow">The WeekFlow rhythm</p><h2>Turn a busy week into a clear rhythm.</h2><p>Plan. Work. Follow through. Review. Report.</p></div><div className="landing-orbit-window" aria-label="WeekFlow rhythm stages"><div className="landing-orbit-ring" aria-hidden="true" />{weekRhythm.map(([number, label, title, description], index) => <article className="landing-orbit-card" style={{ ['--orbit-delay' as string]: `${index * -4}s` }} key={number}><span>{number}</span><small>{label}</small><h3>{title}</h3><p>{description}</p></article>)}</div></section>
+        <LandingProductStorySection />
+    <section className="landing-story landing-story-followups landing-reveal"><div className="landing-story-copy"><p className="landing-eyebrow">Follow-ups</p><h2>Keep the next move in sight.</h2><p>Keep unresolved actions visible until they're complete.</p></div><div className="landing-story-visual landing-followups-visual"><div className="story-window-label">Follow-ups <span>Open work</span></div><div className="story-followup-row"><span className="story-dot is-open" /><strong>Confirm account next action</strong><small>Priority</small></div><div className="story-followup-row"><span className="story-dot is-open" /><strong>Share outcome with team</strong><small>Due this week</small></div><div className="story-followup-row is-complete"><span className="story-dot is-done"><AppIcon name="check" /></span><strong>Complete follow-up</strong><small>Completed</small></div></div></section>
     <section className="landing-feature-band landing-reveal"><div><p className="landing-eyebrow">Smart Start</p><h2>Start the next week with less work to rebuild.</h2><p>Carry forward the unfinished work that still matters. Leave completed work behind.</p></div><div className="landing-smart-visual"><div><small>Last week</small><span>[done] Completed work</span><span>[done] Completed follow-ups</span><b>-&gt; Unfinished priorities</b></div><div className="smart-start-bridge"><span>Smart Start</span><b>select what still matters</b></div><div><small>New week</small><b>-&gt; Carry forward what still matters</b></div></div></section>
     <section className="landing-section landing-reporting landing-reveal"><div className="landing-section-heading"><p className="landing-eyebrow">Reporting</p><h2>Turn the week's work into a finished report.</h2><p>Bring together what you planned, what happened, what changed, and what still needs attention.</p></div><div className="landing-report-preview"><div><strong>Weekly Activity</strong><span>Activities Summary</span><span>Daily Activity Breakdown</span><span>Key Outcomes</span></div><div className="report-transform"><b>WeekFlow Review</b><span>-&gt;</span><strong>Professional Report</strong><small>Export professional Word documents.</small></div></div></section>
-    <section className="landing-section landing-templates landing-reveal" id="templates"><div className="landing-section-heading"><p className="landing-eyebrow">Built for different kinds of work</p><h2>One platform. Different kinds of work.</h2><p>Choose a workflow that fits how you work.</p></div><div className="landing-template-groups">{templateGroups.map((group) => <div className="landing-template-group landing-stagger" key={group.label}><h3>{group.label}</h3><div>{group.ids.map((id) => { const template = templateById.get(id); return template ? <article key={id}><span className="landing-template-icon"><TemplateIcon templateId={template.id} /></span><strong>{template.name}</strong><p>{template.description}</p></article> : null })}</div></div>)}</div></section>
-    <section className="landing-section landing-workspaces landing-reveal"><div className="landing-split-copy"><p className="landing-eyebrow">Your work. Your workspaces.</p><h2>Keep every workflow in its place.</h2><p>Keep different kinds of work organised without mixing their workflows.</p></div><div className="landing-workspace-examples"><article><span>Waheed's Field Work</span><strong>Pharma Field Sales</strong><small>Plans, activity, accounts, follow-ups</small></article><article><span>Benazir's</span><strong>Small Business</strong><small>Customers, sales, orders, priorities</small></article><article><span>Personal Goals</span><strong>Personal Productivity</strong><small>Goals, tasks, routines, next actions</small></article></div></section>
-    <section className="landing-final-cta"><h2>Make every week easier to run.</h2><p>Start with a free WeekFlow account.</p><div><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create a free account <AppIcon name="arrow-right" /></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div></section>
-    <footer className="landing-footer"><div><div className="landing-footer-brand"><img src={logoImage} alt="WeekFlow mark" /><span className="landing-wordmark">WeekFlow</span></div><p>Plan your week. Stay on top of the work.</p></div><div><a href="#workflow">The rhythm</a><a href="#templates">Workflows</a><a href="/workspaces">Your Workflows</a></div><small>(c) {new Date().getFullYear()} WeekFlow</small></footer>
+    <section className="landing-section landing-templates landing-reveal" id="templates"><div className="landing-section-heading"><p className="landing-eyebrow">Built for different kinds of work</p><h2>Built for the work you actually do.</h2><p>Choose a workflow that fits how you work.</p></div><div className="landing-template-groups">{templateGroups.map((group) => <div className="landing-template-group landing-stagger" key={group.label}><h3>{group.label}</h3><div>{group.ids.map((id) => { const template = templateById.get(id); return template ? <article key={id}><span className="landing-template-icon"><TemplateIcon templateId={template.id} /></span><strong>{template.name}</strong><p>{template.description}</p></article> : null })}</div></div>)}</div></section>
+    <section className="landing-section landing-workspaces landing-reveal"><div className="landing-split-copy"><p className="landing-eyebrow">Your work. Your workspaces.</p><h2>Give every kind of work a clear home.</h2><p>Keep different kinds of work organised without mixing their workflows.</p></div><div className="landing-workspace-examples"><article><span>Field Sales Workspace</span><strong>Pharma Field Sales</strong><small>Plans, activity, accounts, follow-ups</small></article><article><span>Small Business Workspace</span><strong>Small Business</strong><small>Customers, sales, orders, priorities</small></article><article><span>Personal Goals</span><strong>Personal Productivity</strong><small>Goals, tasks, routines, next actions</small></article></div></section>
+    <section className="landing-final-cta"><h2>Run a better week, every week.</h2><p>Start with a free WeekFlow account.</p><div><button type="button" className="button button-primary landing-large-cta" onClick={onCreateAccount}>Create a free account <AppIcon name="arrow-right" /></button><button type="button" className="landing-secondary-cta" onClick={onSignIn}>Sign In</button></div></section>
+    <footer className="landing-footer"><div><div className="landing-footer-brand"><img src={logoImage} alt="WeekFlow mark" /><span className="landing-wordmark">WeekFlow</span></div><p>Plan your week. Stay on top of the work.</p></div><div><a href="#workflow">The rhythm</a><a href="#templates">Workflows</a><a href="/workspaces">Your Workflows</a><a href="/guides">Guides</a><a href="/support">Support</a><a href="/contact">Contact</a></div><small>(c) {new Date().getFullYear()} WeekFlow</small></footer>
+    </div>
   </main>
 }
 
@@ -399,13 +542,6 @@ function getUserInitials(user: UserProfile | null) {
   return words.length > 1 ? `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase() : (words[0]?.slice(0, 2) || 'WF').toUpperCase()
 }
 
-function getTimeAwareGreeting(name: string) {
-  const hour = new Date().getHours()
-  const displayName = name.trim() || 'there'
-  const greeting = hour >= 5 && hour < 12 ? 'Good morning' : hour >= 12 && hour < 18 ? 'Good afternoon' : 'Good evening'
-  return `${greeting}, ${displayName}`
-}
-
 function Header({
   selectedWeek,
   currentWorkspace,
@@ -495,6 +631,7 @@ function WorkspaceCreateDialog({
   workspaceName,
   onClose,
   onCreate,
+  onCustomTemplate,
   validationMessage,
 }: {
   isOpen: boolean
@@ -504,6 +641,7 @@ function WorkspaceCreateDialog({
   workspaceName: string
   onClose: () => void
   onCreate: () => void
+  onCustomTemplate: () => void
   validationMessage: string
 }) {
   if (!isOpen) return null
@@ -536,7 +674,7 @@ function WorkspaceCreateDialog({
                 const template = templates.find((candidate) => candidate.id === id)
                 if (!template) return null
                 const isSelected = template.id === selectedTemplate.id
-                return <button type="button" className={`workspace-template-option${isSelected ? ' is-selected' : ''}`} key={template.id} onClick={() => onTemplateChange(template.id)} aria-pressed={isSelected}>
+                return <button type="button" className={`workspace-template-option${isSelected ? ' is-selected' : ''}`} key={template.id} onClick={() => template.id === 'custom' ? onCustomTemplate() : onTemplateChange(template.id)} aria-pressed={isSelected}>
                   <span className="workspace-template-option-icon"><TemplateIcon templateId={template.id} /></span>
                   <span className="workspace-template-option-copy"><strong>{template.name}</strong><span>{template.description}</span></span>
                   {isSelected && <span className="workspace-template-option-check" aria-label="Selected"><AppIcon name="check" /></span>}
@@ -595,12 +733,15 @@ function WorkspaceDeleteDialog({ workspace, isDeleting, errorMessage, onClose, o
   )
 }
 
-function WorkspaceRenameDialog({ workspace, name, isSaving, errorMessage, onNameChange, onClose, onConfirm, onRequestDelete }: {
+function WorkspaceRenameDialog({ workspace, name, metadataFields, metadataValues, isSaving, errorMessage, onNameChange, onMetadataChange, onClose, onConfirm, onRequestDelete }: {
   workspace: ReturnType<typeof getCurrentWorkspace> | null
   name: string
+  metadataFields: readonly { id: keyof ReportMetadata; label: string }[]
+  metadataValues: Record<string, string>
   isSaving: boolean
   errorMessage: string
   onNameChange: (name: string) => void
+  onMetadataChange: (field: keyof ReportMetadata, value: string) => void
   onClose: () => void
   onConfirm: () => void
   onRequestDelete: () => void
@@ -623,6 +764,16 @@ function WorkspaceRenameDialog({ workspace, name, isSaving, errorMessage, onName
           <input autoFocus value={name} onChange={(event) => onNameChange(event.target.value)} aria-invalid={Boolean(errorMessage)} />
           {errorMessage && <span className="workspace-field-error" role="alert">{errorMessage}</span>}
         </label>
+        <fieldset className="workspace-fieldset">
+          <legend>Report Identity</legend>
+          <p className="workspace-modal-intro">Optional identity shown in reports generated from this workspace.</p>
+          {metadataFields.length === 0 ? <p className="workspace-modal-intro">This template does not define any report identity fields.</p> : metadataFields.map((field) => (
+            <label key={field.id} className="workspace-field">
+              <span>{field.label}</span>
+              <input value={metadataValues[field.id] ?? ''} onChange={(event) => onMetadataChange(field.id, event.target.value)} placeholder={field.label} />
+            </label>
+          ))}
+        </fieldset>
         <div className="workspace-modal-actions">
           <button type="button" className="button button-secondary" onClick={onClose} disabled={isSaving}>Cancel</button>
           <button type="button" className="button button-primary" onClick={onConfirm} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Name'}</button>
@@ -639,7 +790,7 @@ function WorkspaceRenameDialog({ workspace, name, isSaving, errorMessage, onName
   )
 }
 
-function AppNavigation({ activeScreen, templateName, onSwitchTemplate, onNavigate, collapsed, mobileOpen, onToggleCollapse, onClose }: { activeScreen: string; templateName: string; onSwitchTemplate: () => void; onNavigate: (path: string) => void; collapsed: boolean; mobileOpen: boolean; onToggleCollapse: () => void; onClose: () => void }) {
+function AppNavigation({ activeScreen, templateName, onSwitchTemplate, onEditCustomTemplate, onNavigate, collapsed, mobileOpen, onToggleCollapse, onClose }: { activeScreen: string; templateName: string; onSwitchTemplate: () => void; onEditCustomTemplate: () => void; onNavigate: (path: string) => void; collapsed: boolean; mobileOpen: boolean; onToggleCollapse: () => void; onClose: () => void }) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     workspace: true,
     history: false,
@@ -656,13 +807,19 @@ function AppNavigation({ activeScreen, templateName, onSwitchTemplate, onNavigat
     setExpandedSections((current) => ({ ...current, [sectionId]: !current[sectionId] }))
   }
 
+  const visibleNavigationGroups = templateName === 'Education'
+    ? navigationGroups.map((group) => group.id === 'workspace'
+      ? { ...group, items: [...group.items.slice(0, 3), { label: 'Education Records', path: '/education-records', icon: 'report' as const }, ...group.items.slice(3)] }
+      : group)
+    : navigationGroups
+
   return (
     <nav className={`app-navigation${collapsed ? ' is-collapsed' : ''}${mobileOpen ? ' is-mobile-open' : ''}`} id="main-navigation" aria-label="Main navigation">
       <div className="navigation-brand"><img src={logoImage} alt="WeekFlow" /><span>WeekFlow</span></div>
       <button className="navigation-close-button" type="button" onClick={onClose} aria-label="Close navigation"><AppIcon name="close" /></button>
-      <div className="navigation-topline"><div className="navigation-template"><span className="navigation-template-label">Template</span><strong>{templateName}</strong><button type="button" onClick={onSwitchTemplate}>Switch template</button></div><button className="navigation-collapse-button" type="button" onClick={onToggleCollapse} aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!collapsed}><AppIcon name={collapsed ? 'expand' : 'collapse'} /></button></div>
+      <div className="navigation-topline"><div className="navigation-template"><span className="navigation-template-label">Template</span><strong>{templateName}</strong><button type="button" onClick={onSwitchTemplate}>Switch template</button>{templateName !== 'Education' && templateName !== 'Personal Productivity' && templateName !== 'Project Management' && templateName !== 'Pharma Field Sales' && templateName !== 'Field Operations' && templateName !== 'NGO & Community Work' && <button type="button" onClick={onEditCustomTemplate}>Edit Template Configuration</button>}</div><button className="navigation-collapse-button" type="button" onClick={onToggleCollapse} aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!collapsed}><AppIcon name={collapsed ? 'expand' : 'collapse'} /></button></div>
       <div className="navigation-groups">
-        {navigationGroups.map((group) => {
+        {visibleNavigationGroups.map((group) => {
           const groupId = group.id
           const isExpanded = !!expandedSections[groupId]
           const groupControlId = `${groupId}-navigation-group`
@@ -726,16 +883,17 @@ function WorkspaceHomeScreen({
       <div className="workspace-home-grid">
         {workspaces.map((workspace) => {
           const template = getAvailableTemplates().find((candidate) => candidate.id === workspace.templateId) ?? getAvailableTemplates()[0]
+          const customConfig = workspace.templateId === 'custom' ? loadCustomTemplateConfig(workspace.id) : null
           const isCurrent = workspace.id === currentWorkspaceId
 
           return (
             <article className={`workspace-home-card${isCurrent ? ' is-current' : ''}`} key={workspace.id}>
               <div className="workspace-home-card-top">
-                <span className="workspace-home-icon"><TemplateIcon templateId={workspace.templateId} /></span>
+                <span className="workspace-home-icon" style={customConfig ? { color: customConfig.accent, backgroundColor: `${customConfig.accent}18` } : undefined}><TemplateIcon templateId={customConfig?.icon ?? workspace.templateId} /></span>
                 {isCurrent && <span className="workspace-home-state">Current workspace</span>}
               </div>
               <h3>{workspace.name}</h3>
-              <p className="workspace-home-template">{template.name}</p>
+              <p className="workspace-home-template">{customConfig ? `${template.name} · ${customConfig.purpose}${customConfig.categories.length ? ` · ${customConfig.categories.length} categor${customConfig.categories.length === 1 ? 'y' : 'ies'}` : ''}` : template.name}</p>
               <div className="workspace-home-card-actions">
                 <button type="button" className="button button-primary" onClick={() => onOpenWorkspace(workspace.id)}>Open Workspace</button>
                 <button type="button" className="button button-secondary" onClick={() => onRequestRename(workspace.id)}>Edit</button>
@@ -2299,11 +2457,20 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
   const [weekStart, setWeekStart] = useState(getSelectedWeekStart)
   const [plan, setPlan] = useState<WeeklyPlan>(() => loadWeeklyPlan(getSelectedWeekStart()))
   const [cloudStatus, setCloudStatus] = useState('')
+  const [cloudError, setCloudError] = useState('')
+  const saveQueueRef = useRef(Promise.resolve())
+  const saveSequenceRef = useRef(0)
+  const confirmedPlanRef = useRef<WeeklyPlan | null>(null)
+  const retryPlanRef = useRef<(() => Promise<void>) | null>(null)
+  const suppressNextPlanSaveRef = useRef(false)
   const [expandedDayIds, setExpandedDayIds] = useState<DayId[]>([])
   const previousWeekStart = useMemo(() => getPreviousWeekStart(weekStart), [weekStart])
   const previousPlan = useMemo(() => loadWeeklyPlan(previousWeekStart), [previousWeekStart])
   const previousFollowUps = useMemo(() => loadFollowUps(previousWeekStart), [previousWeekStart])
-  const smartStartCandidates = useMemo(() => getSmartStartCandidates(previousPlan, previousFollowUps, template.id), [previousPlan, previousFollowUps, template.id])
+  const [previousCloudData, setPreviousCloudData] = useState<{ plan: WeeklyPlan; followUps: FollowUp[] } | null>(null)
+  const smartStartSourcePlan = previousCloudData?.plan ?? previousPlan
+  const smartStartSourceFollowUps = previousCloudData?.followUps ?? previousFollowUps
+  const smartStartCandidates = useMemo(() => getSmartStartCandidates(smartStartSourcePlan, smartStartSourceFollowUps, template.id), [smartStartSourcePlan, smartStartSourceFollowUps, template.id])
   const carryForwardSelectionKeys = useMemo(() => {
     if (template.id !== 'project-management') return []
     const sessionKey = `weekflow-carry-forward-selection:${getCurrentWorkspaceId()}`
@@ -2317,6 +2484,11 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
   }, [template.id])
   const carryForwardCandidateKeys = useMemo(() => getSmartStartCandidateKeysFromCarryForwardSelection(smartStartCandidates, carryForwardSelectionKeys), [smartStartCandidates, carryForwardSelectionKeys])
   const hasPreviousWeekData = previousPlan.weeklyStrategicObjectives.some((item) => item.text.trim())
+    || Boolean(previousPlan.educationWeeklyFocus?.trim())
+    || (previousPlan.educationLearningObjectives ?? []).some((item) => item.objective.trim() || item.successMeasure?.trim())
+    || (previousPlan.educationTeachingPlan ?? []).some((item) => item.topic.trim() || item.teachingActivity?.trim() || item.learningActivity?.trim() || item.duration?.trim())
+    || (previousPlan.educationWeeklyTargets ?? []).some((item) => item.target.trim() || item.measure?.trim())
+    || Object.values(previousPlan.educationContext ?? {}).some((value) => typeof value === 'string' && value.trim())
     || previousPlan.days.some((day) => Object.values(day.categories).some((items) => items.some((item) => item.text.trim())))
     || previousPlan.keyAccountObjectives.some((item) => item.account.trim() && item.objectives.some((objective) => objective.text.trim()))
     || previousPlan.commercialPriorities.some((item) => item.text.trim())
@@ -2332,6 +2504,9 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     || (previousPlan.monitoringImpactTargets ?? []).some((item) => item.text.trim())
     || previousFollowUps.some((followUp) => followUp.task.trim())
     || loadDailyActivities(previousWeekStart).length > 0
+    || (previousPlan.fieldJobs ?? []).some((item) => item.jobId.trim() || item.customer.trim() || item.location.trim())
+    || (previousPlan.fieldServiceIssues ?? []).some((item) => item.issueId.trim() || item.customer.trim() || item.problem.trim())
+    || (previousPlan.fieldEquipment ?? []).some((item) => item.equipmentId.trim() || item.customerSite.trim())
   const [smartStartState, setSmartStartState] = useState<{ selected: string[]; showReview: boolean; completion: SmartStartCompletion | null; result: number | null }>({
     selected: carryForwardCandidateKeys.length > 0 ? carryForwardCandidateKeys : smartStartCandidates.map((candidate) => candidate.key),
     showReview: carryForwardCandidateKeys.length > 0,
@@ -2353,6 +2528,11 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     'ngo-monitoring': 'Monitoring & Impact',
   }
   const hasPlanContent = plan.weeklyStrategicObjectives.some((item) => item.text.trim())
+    || Boolean(plan.educationWeeklyFocus?.trim())
+    || (plan.educationLearningObjectives ?? []).some((item) => item.objective.trim() || item.successMeasure?.trim())
+    || (plan.educationTeachingPlan ?? []).some((item) => item.topic.trim() || item.teachingActivity?.trim() || item.learningActivity?.trim() || item.duration?.trim())
+    || (plan.educationWeeklyTargets ?? []).some((item) => item.target.trim() || item.measure?.trim())
+    || Object.values(plan.educationContext ?? {}).some((value) => typeof value === 'string' && value.trim())
     || plan.days.some((day) => Object.values(day.categories).some((items) => items.some((item) => item.text.trim())))
     || plan.keyAccountObjectives.some((item) => item.account.trim() && item.objectives.some((objective) => objective.text.trim()))
     || plan.commercialPriorities.some((item) => item.text.trim())
@@ -2367,6 +2547,9 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     || (plan.communicationsPlan ?? []).some((item) => item.communication.trim() || item.audience?.trim() || item.channel?.trim() || item.date?.trim() || item.status?.trim())
     || (plan.documentationPlan ?? []).some((item) => item.documentation.trim() || item.required?.trim() || item.responsible?.trim() || item.status?.trim())
     || (plan.monitoringImpactTargets ?? []).some((item) => item.text.trim())
+    || (plan.fieldJobs ?? []).some((item) => item.jobId.trim() || item.customer.trim() || item.location.trim())
+    || (plan.fieldServiceIssues ?? []).some((item) => item.issueId.trim() || item.customer.trim() || item.problem.trim())
+    || (plan.fieldEquipment ?? []).some((item) => item.equipmentId.trim() || item.customerSite.trim())
   const planHydrated = useRef(false)
   const planIntelligence = useMemo(() => deriveWeeklyIntelligence({
     selectedWeek: weekStart,
@@ -2378,12 +2561,69 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
 
   useEffect(() => {
     if (!planHydrated.current) return
-    let active = true
-    saveWeeklyPlanAsync(plan).then((savedToCloud) => {
-      if (active && savedToCloud) setCloudStatus('Saved to cloud')
+    if (suppressNextPlanSaveRef.current) {
+      suppressNextPlanSaveRef.current = false
+      return
+    }
+    const planToSave = plan
+    const sequence = ++saveSequenceRef.current
+    setCloudStatus('Saving…')
+    setCloudError('')
+    const save = async () => {
+      const savedToCloud = await saveWeeklyPlanAsync(planToSave)
+      if (sequence !== saveSequenceRef.current) return
+      if (savedToCloud) {
+        confirmedPlanRef.current = planToSave
+        retryPlanRef.current = null
+        setCloudStatus('Saved')
+      } else {
+        const confirmedPlan = confirmedPlanRef.current
+        if (confirmedPlan) {
+          suppressNextPlanSaveRef.current = true
+          setPlan(confirmedPlan)
+        }
+        setCloudStatus('')
+        setCloudError('Couldn’t save changes')
+        retryPlanRef.current = async () => { queuePlanSave(planToSave) }
+      }
+    }
+    saveQueueRef.current = saveQueueRef.current.then(save).catch(() => {
+      if (sequence !== saveSequenceRef.current) return
+      const confirmedPlan = confirmedPlanRef.current
+      if (confirmedPlan) {
+        suppressNextPlanSaveRef.current = true
+        setPlan(confirmedPlan)
+      }
+      setCloudStatus('')
+      setCloudError('Couldn’t save changes')
+      retryPlanRef.current = async () => { queuePlanSave(planToSave) }
     })
-    return () => { active = false }
   }, [plan])
+
+  function queuePlanSave(planToSave: WeeklyPlan) {
+    const sequence = ++saveSequenceRef.current
+    setCloudStatus('Saving…')
+    setCloudError('')
+    const save = async () => {
+      const savedToCloud = await saveWeeklyPlanAsync(planToSave)
+      if (sequence !== saveSequenceRef.current) return
+      if (savedToCloud) {
+        confirmedPlanRef.current = planToSave
+        retryPlanRef.current = null
+        setCloudStatus('Saved')
+      } else {
+        setCloudStatus('')
+        setCloudError('Couldn’t save changes')
+        retryPlanRef.current = async () => { queuePlanSave(planToSave) }
+      }
+    }
+    saveQueueRef.current = saveQueueRef.current.then(save).catch(() => {
+      if (sequence !== saveSequenceRef.current) return
+      setCloudStatus('')
+      setCloudError('Couldn’t save changes')
+      retryPlanRef.current = async () => { queuePlanSave(planToSave) }
+    })
+  }
 
   useEffect(() => {
     let active = true
@@ -2391,22 +2631,42 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     loadWeeklyPlanAsync(weekStart).then((loadedPlan) => {
       if (active) {
         setPlan(loadedPlan)
+        confirmedPlanRef.current = loadedPlan
         planHydrated.current = true
+        setCloudError('')
       }
+    }).catch((error: unknown) => {
+      if (active) setCloudError(error instanceof Error ? error.message : 'Weekly Plan could not be loaded.')
     })
     return () => { active = false }
   }, [weekStart])
 
-  function markSmartStart(completion: SmartStartCompletion) {
-    saveSmartStartCompletion(weekStart, completion)
+  useEffect(() => {
+    let active = true
+    Promise.all([loadWeeklyPlanAsync(previousWeekStart), loadFollowUpsAsync(previousWeekStart)]).then(([plan, followUps]) => {
+      if (active) setPreviousCloudData({ plan, followUps })
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [previousWeekStart])
+
+  useEffect(() => {
+    let active = true
+    loadSmartStartCompletionAsync(weekStart).then((completion) => {
+      if (active) setSmartStartState((current) => ({ ...current, completion }))
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [weekStart])
+
+  async function markSmartStart(completion: SmartStartCompletion) {
+    await saveSmartStartCompletionAsync(weekStart, completion)
     setSmartStartState((current) => ({ ...current, completion, showReview: false, result: completion === 'started' ? 0 : null }))
   }
 
-  function startFromPreviousWeek() {
+  async function startFromPreviousWeek() {
     const result = mergeSmartStartSelections(plan, weekStart, loadFollowUps(weekStart), smartStartCandidates, smartStartState.selected)
     setPlan(result.plan)
     void saveFollowUpsAsync(weekStart, result.followUps)
-    saveSmartStartCompletion(weekStart, 'started')
+    await saveSmartStartCompletionAsync(weekStart, 'started')
     setSmartStartState((current) => ({ ...current, completion: 'started', showReview: false, result: result.added }))
   }
 
@@ -2417,7 +2677,7 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
     // Persist the active week's plan before the week transition and let the selected-week effect
     // load the destination week. This avoids the stale plan-overwrite race where the prior week's
     // PM fields could be replaced by the target week's state before the correct week was restored.
-    saveWeeklyPlan(plan)
+    void saveWeeklyPlanAsync(plan)
     setSelectedWeekStart(nextWeekStart)
     setWeekStart(nextWeekStart)
     setExpandedDayIds([])
@@ -2453,7 +2713,7 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
         <div className="week-selector">
           <label htmlFor="reporting-week">Reporting week</label>
           <input id="reporting-week" type="week" value={toWeekInput(weekStart)} onChange={(event) => changeWeek(event.target.value)} />
-          <span role={cloudStatus ? 'status' : undefined}>{formatWeekRange(weekStart).replace(' - ', ' – ')}{cloudStatus ? ` · ${cloudStatus}` : ''}</span>
+          <span role={cloudStatus || cloudError ? 'status' : undefined}>{formatWeekRange(weekStart).replace(' - ', ' – ')}{cloudStatus ? ` · ${cloudStatus}` : ''}{cloudError ? ` · ${cloudError}` : ''}</span>{cloudError && <button type="button" className="text-button" onClick={() => { const retry = retryPlanRef.current; if (retry) void retry() }}>Retry</button>}
         </div>
       </div>
       {weekStart !== getCurrentWeekStart() && hasPreviousWeekData && smartStartState.completion === null && smartStartCandidates.length > 0 && (
@@ -2523,7 +2783,39 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
         </section>
       )}
       <div className="weekly-plan-top-level">
-        {template.id === 'ngo-community' ? (
+        {template.id === 'custom' ? (
+          <CustomTargetsSummary config={loadCustomTemplateConfig()} activities={loadDailyActivities(weekStart)} />
+        ) : template.schema?.planning.fieldOperations ? (
+          <FieldOperationsPlanning
+            objectives={plan.weeklyStrategicObjectives}
+            jobs={plan.fieldJobs ?? []}
+            issues={plan.fieldServiceIssues ?? []}
+            equipment={plan.fieldEquipment ?? []}
+            teamPlan={plan.fieldTeamPlan ?? []}
+            schedule={plan.fieldDailySchedule ?? []}
+            partsResources={plan.fieldPartsResources ?? []}
+            onObjectivesChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, weeklyStrategicObjectives: items }))}
+            onJobsChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, fieldJobs: items }))}
+            onIssuesChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, fieldServiceIssues: items }))}
+            onEquipmentChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, fieldEquipment: items }))}
+            onTeamPlanChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, fieldTeamPlan: items }))}
+            onScheduleChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, fieldDailySchedule: items }))}
+            onPartsResourcesChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, fieldPartsResources: items }))}
+          />
+        ) : template.id === 'education' ? (
+          <EducationWeeklyPlan
+            focus={plan.educationWeeklyFocus}
+            objectives={plan.educationLearningObjectives ?? []}
+            teachingPlan={plan.educationTeachingPlan ?? []}
+            targets={plan.educationWeeklyTargets ?? []}
+            context={plan.educationContext}
+            onFocusChange={(value) => setPlan((currentPlan) => ({ ...currentPlan, educationWeeklyFocus: value || undefined }))}
+            onObjectivesChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, educationLearningObjectives: items }))}
+            onTeachingPlanChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, educationTeachingPlan: items }))}
+            onTargetsChange={(items) => setPlan((currentPlan) => ({ ...currentPlan, educationWeeklyTargets: items }))}
+            onContextChange={(value) => setPlan((currentPlan) => ({ ...currentPlan, educationContext: value }))}
+          />
+        ) : template.id === 'ngo-community' ? (
           <>
             <ProgrammeContextSection
               context={plan.programmeContext}
@@ -2721,33 +3013,70 @@ function WeeklyPlanScreen({ template = FIELD_SALES_TEMPLATE }: { template?: Week
   )
 }
 
-function getWeekYear(weekStart: string) {
-  return Number(toWeekInput(weekStart).slice(0, 4))
-}
-
 function getWeekNumber(weekStart: string) {
   return toWeekInput(weekStart).split('-W')[1]
 }
 
-function ReportHistory({ selectedWeek, onSelectWeek, onOpenReport, template = FIELD_SALES_TEMPLATE }: { selectedWeek: string; onSelectWeek: (weekStart: string) => void; onOpenReport: (report: ReportHistoryEntry) => void; template?: WeekFlowTemplate }) {
+function ReportHistory({ onSelectWeek, onOpenReport, onCompare = () => undefined, template = FIELD_SALES_TEMPLATE }: { onSelectWeek: (weekStart: string) => void; onOpenReport: (report: ReportHistoryEntry) => void; onCompare?: (baseline: ReportHistoryEntry, comparison: ReportHistoryEntry) => void; template?: WeekFlowTemplate }) {
   const [exportingWeek, setExportingWeek] = useState<string | null>(null)
   const [exportMessage, setExportMessage] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [templateFilter, setTemplateFilter] = useState('')
+  const [weekFilter, setWeekFilter] = useState('')
+  const [selectedReportWeeks, setSelectedReportWeeks] = useState<string[]>([])
+  const [selectionMessage, setSelectionMessage] = useState('')
   const currentWorkspaceId = getCurrentWorkspaceId()
   const entries = loadReportHistoryEntries(currentWorkspaceId)
-
-  const historicalReports = entries
-    .filter((entry) => entry.weekKey !== selectedWeek)
-    .sort((left, right) => right.weekKey.localeCompare(left.weekKey))
-
   const currentWeek = getCurrentWeekStart()
   const currentReport = entries.find((entry) => entry.weekKey === currentWeek) ?? null
-  const currentYear = new Date().getFullYear()
-  const years = [...new Set([
-    ...historicalReports.map((report) => getWeekYear(report.weekKey)),
-    ...Array.from({ length: 11 }, (_, index) => currentYear - 5 + index),
-  ])].sort((left, right) => right - left)
-  const [selectedYear, setSelectedYear] = useState(getWeekYear(selectedWeek))
-  const filteredReports = historicalReports.filter((report) => getWeekYear(report.weekKey) === selectedYear)
+
+  const historicalReports = entries
+    .filter((entry) => entry.weekKey !== currentReport?.weekKey)
+    .sort((left, right) => right.weekKey.localeCompare(left.weekKey))
+
+  const templateOptions = [...new Map(historicalReports
+    .filter((report) => report.template)
+    .map((report) => [report.template?.id ?? '', report.template?.name ?? report.template?.id ?? '']))]
+    .filter(([id, name]) => Boolean(id && name))
+    .sort((left, right) => left[1].localeCompare(right[1]))
+  const weekOptions = historicalReports.map((report) => ({ value: report.weekKey, label: formatWeekRange(report.weekKey) }))
+  const normalizedSearch = searchQuery.trim().toLowerCase()
+  const filteredReports = historicalReports.filter((report) => {
+    const searchableText = [
+      report.template?.name,
+      report.template?.report.title,
+      report.weekLabel,
+      formatWeekRange(report.weekKey),
+    ].filter(Boolean).join(' ').toLowerCase()
+    return (!normalizedSearch || searchableText.includes(normalizedSearch))
+      && (!templateFilter || report.template?.id === templateFilter)
+      && (!weekFilter || report.weekKey === weekFilter)
+  })
+  const filtersActive = Boolean(normalizedSearch || templateFilter || weekFilter)
+
+  function clearFilters() {
+    setSearchQuery('')
+    setTemplateFilter('')
+    setWeekFilter('')
+  }
+
+  function toggleReportSelection(report: ReportHistoryEntry) {
+    setSelectionMessage('')
+    setSelectedReportWeeks((current) => {
+      if (current.includes(report.weekKey)) return current.filter((weekKey) => weekKey !== report.weekKey)
+      if (current.length >= 2) {
+        setSelectionMessage('Select two reports from the same template to compare.')
+        return current
+      }
+      return [...current, report.weekKey]
+    })
+  }
+
+  const selectedReports = selectedReportWeeks.map((weekKey) => historicalReports.find((report) => report.weekKey === weekKey) ?? null)
+  const selectedBaseline = selectedReports[0]
+  const selectedComparison = selectedReports[1]
+  const selectionValidation = selectedBaseline && selectedComparison ? validateReportComparison(selectedBaseline, selectedComparison, currentWorkspaceId) : null
+  const comparisonReady = selectionValidation?.valid === true
 
   function openWeek(weekStart: string) {
     onSelectWeek(weekStart)
@@ -2761,8 +3090,9 @@ function ReportHistory({ selectedWeek, onSelectWeek, onOpenReport, template = FI
   function renderReport(report: typeof historicalReports[number], current = false) {
     const readiness = deriveWeeklyIntelligence({ selectedWeek: report.weekKey, plan: report.plan, activities: report.activities, followUps: report.followUps, template }).reportReadiness
     const statusLabel = readinessLabel(readiness.status)
-    return <article className={`report-history-item${current ? ' is-current' : ''}`} key={report.weekKey} role="listitem">
-      <div><strong>{current ? 'Current Week' : `Week ${getWeekNumber(report.weekKey)}`}</strong><span>{formatWeekRange(report.weekKey)}</span><small>{current ? 'Current reporting period' : `Generated ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(report.generatedAt))}`}</small></div>
+    const selected = selectedReportWeeks.includes(report.weekKey)
+    return <article className={`report-history-item${current ? ' is-current' : ''}${selected ? ' is-selected' : ''}`} key={report.weekKey} role="listitem">
+      <div className="report-history-primary"><label className="report-history-selection"><input type="checkbox" aria-label={`Select ${current ? 'current week' : `week ${getWeekNumber(report.weekKey)}`} for comparison`} checked={selected} disabled={current} onChange={() => toggleReportSelection(report)} /><span aria-hidden="true" /></label><div><strong>{current ? 'Current Week' : `Week ${getWeekNumber(report.weekKey)}`}</strong><span>{formatWeekRange(report.weekKey)}</span><small>{current ? 'Current reporting period' : `Generated ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(report.generatedAt))}`}</small></div></div>
       <div className="report-history-details"><span>{report.template?.name ?? template.name}</span><strong className={`report-history-readiness is-${readiness.status}`}>{statusLabel}</strong><div className="report-history-status"><span>{report.activities.length} activit{report.activities.length === 1 ? 'y' : 'ies'}</span><span>{report.followUps.length} follow-ups</span><span>{report.followUps.filter((followUp) => followUp.status === 'completed').length} completed</span></div></div>
       <div className="report-history-actions"><button type="button" onClick={() => { onSelectWeek(report.weekKey); onOpenReport(report) }}>Open Report</button>{!current && <button type="button" onClick={() => openWeek(report.weekKey)}>Open Week</button>}<button type="button" onClick={() => exportHistoricalReport(report.weekKey)} disabled={exportingWeek !== null}>{exportingWeek === report.weekKey ? 'Exporting...' : 'Export Word'}</button></div>
     </article>
@@ -2784,7 +3114,8 @@ function ReportHistory({ selectedWeek, onSelectWeek, onOpenReport, template = FI
     }
   }
 
-  const hasHistory = currentReport || filteredReports.length > 0
+  const hasHistory = Boolean(currentReport || filteredReports.length > 0)
+  const hasEntries = entries.length > 0
 
   return (
     <section className="report-history" aria-labelledby="report-history-heading">
@@ -2795,25 +3126,50 @@ function ReportHistory({ selectedWeek, onSelectWeek, onOpenReport, template = FI
         </div>
         <p>Review reports from previous weeks and keep track of your work over time.</p>
       </div>
-      {hasHistory && <label className="history-year-selector" htmlFor="history-year">Year
-        <select id="history-year" value={selectedYear} onChange={(event) => setSelectedYear(Number(event.target.value))}>
-          {years.map((year) => <option value={year} key={year}>{year}</option>)}
-        </select>
-      </label>}
+      {hasEntries && <div className="report-history-toolbar" aria-label="Report history filters">
+        <label className="report-history-filter report-history-search" htmlFor="report-history-search">
+          <span>Search reports</span>
+          <input id="report-history-search" type="search" placeholder="Search reports..." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+        </label>
+        <label className="report-history-filter" htmlFor="report-history-template">
+          <span>Template</span>
+          <select id="report-history-template" value={templateFilter} onChange={(event) => setTemplateFilter(event.target.value)}>
+            <option value="">All Templates</option>
+            {templateOptions.map(([id, name]) => <option value={id} key={id}>{name}</option>)}
+          </select>
+        </label>
+        <label className="report-history-filter" htmlFor="report-history-week">
+          <span>Week</span>
+          <select id="report-history-week" value={weekFilter} onChange={(event) => setWeekFilter(event.target.value)}>
+            <option value="">All Weeks</option>
+            {weekOptions.map((week) => <option value={week.value} key={week.value}>{week.label}</option>)}
+          </select>
+        </label>
+        {filtersActive && <button className="report-history-clear" type="button" onClick={clearFilters}>Clear filters</button>}
+      </div>}
+      {hasEntries && <p className="report-history-result-count" role="status">Showing {filteredReports.length} of {historicalReports.length} reports</p>}
+      {hasEntries && <div className="report-history-comparison-bar"><span>{selectedReportWeeks.length} of 2 reports selected</span><button className="button button-primary" type="button" disabled={!comparisonReady} onClick={() => { if (selectedBaseline && selectedComparison) onCompare(selectedBaseline, selectedComparison) }}>Compare</button>{selectionMessage && <p role="alert">{selectionMessage}</p>}{selectionValidation && !selectionValidation.valid && <p role="alert">{selectionValidation.message}</p>}</div>}
       {currentReport ? <div className="report-history-current" aria-label="Current reporting week"><div className="report-history-list" role="list">{renderReport(currentReport, true)}</div></div> : null}
-      {filteredReports.length > 0 ? <div className="report-history-list" role="list">{filteredReports.map((report) => renderReport(report))}</div> : !hasHistory ? <div className="report-history-empty-state"><h3>No reports yet</h3><p>Generate your first weekly report and it will appear here.</p><button className="button button-primary" type="button" onClick={() => navigateTo('/report')}>Go to Generate Report</button></div> : <p className="report-history-empty">No previous reports yet. Completed weekly activity will appear here.</p>}
+      {filteredReports.length > 0 ? <div className="report-history-list" role="list">{filteredReports.map((report) => renderReport(report))}</div> : !hasEntries ? <div className="report-history-empty-state"><h3>No reports yet</h3><p>Generate your first weekly report and it will appear here.</p><button className="button button-primary" type="button" onClick={() => navigateTo('/report')}>Go to Generate Report</button></div> : filtersActive ? <div className="report-history-filtered-empty"><p>No reports match these filters.</p><button className="report-history-clear" type="button" onClick={clearFilters}>Clear filters</button></div> : !hasHistory ? <p className="report-history-empty">No previous reports yet. Completed weekly activity will appear here.</p> : null}
       {exportMessage && <p className="export-message" role="status">{exportMessage}</p>}
     </section>
   )
 }
 
-function ReportHistoryScreen({ selectedWeek, onSelectWeek, onOpenReport, template = FIELD_SALES_TEMPLATE }: { selectedWeek: string; onSelectWeek: (weekStart: string) => void; onOpenReport: (report: ReportHistoryEntry) => void; template?: WeekFlowTemplate }) {
-  return <main className="report-history-screen"><ReportHistory selectedWeek={selectedWeek} onSelectWeek={onSelectWeek} onOpenReport={onOpenReport} template={template} /></main>
+function ReportHistoryScreen({ onSelectWeek, onOpenReport, onCompare = (baseline, comparison) => navigateTo(`/report-comparison?from=${encodeURIComponent(baseline.weekKey)}&to=${encodeURIComponent(comparison.weekKey)}`), template = FIELD_SALES_TEMPLATE }: { selectedWeek?: string; onSelectWeek: (weekStart: string) => void; onOpenReport: (report: ReportHistoryEntry) => void; onCompare?: (baseline: ReportHistoryEntry, comparison: ReportHistoryEntry) => void; template?: WeekFlowTemplate }) {
+  return <main className="report-history-screen"><ReportHistory onSelectWeek={onSelectWeek} onOpenReport={onOpenReport} onCompare={onCompare} template={template} /></main>
 }
 
 function getHistoricalReportWeek() {
   const week = new URLSearchParams(window.location.search).get('historyWeek')
   return week && /^\d{4}-\d{2}-\d{2}$/.test(week) ? week : null
+}
+
+function getComparisonWeeks() {
+  const params = new URLSearchParams(window.location.search)
+  const from = params.get('from')
+  const to = params.get('to')
+  return from && to && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) ? { from, to } : null
 }
 
 function getEntryWeekContext(screen: string) {
@@ -2828,6 +3184,13 @@ function getInitialWeekContext() {
   return getSelectedWeekStart()
 }
 
+function getActiveReportMetadata(user: UserProfile | null, workspace: Workspace | null): ReportMetadata | undefined {
+  const configured = workspace?.reportMetadata ?? {}
+  const preparedBy = configured.preparedBy?.trim() || user?.displayName?.trim() || user?.email?.trim()
+  const metadata = { ...configured, ...(preparedBy ? { preparedBy } : {}) }
+  return Object.values(metadata).some((value) => Boolean(value?.trim())) ? metadata : undefined
+}
+
 function App() {
   const [accountState, setAccountState] = useState<AccountState>(() => isSupabaseConfigured ? { status: 'loading', user: null } : { status: 'local-demo', user: null })
   const accountStatusRef = useRef<AccountState['status']>(isSupabaseConfigured ? 'loading' : 'local-demo')
@@ -2838,13 +3201,22 @@ function App() {
     const week = getHistoricalReportWeek()
     return week ? getReportHistoryEntry(week, getCurrentWorkspaceId()) : null
   })
+  const [comparisonReports, setComparisonReports] = useState<{ baseline: ReportHistoryEntry; comparison: ReportHistoryEntry } | null>(() => {
+    const weeks = getComparisonWeeks()
+    if (!weeks) return null
+    const baseline = getReportHistoryEntry(weeks.from, getCurrentWorkspaceId())
+    const comparison = getReportHistoryEntry(weeks.to, getCurrentWorkspaceId())
+    return baseline && comparison ? { baseline, comparison } : null
+  })
   const [selectedWeek, setSelectedWeek] = useState(getInitialWeekContext)
   const [selectedTemplate, setSelectedTemplate] = useState(getSelectedTemplate)
   const [currentWorkspace, setCurrentWorkspace] = useState(getCurrentWorkspace)
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false)
+  const [showCustomTemplateBuilder, setShowCustomTemplateBuilder] = useState(false)
   const [workspaceToRename, setWorkspaceToRename] = useState<ReturnType<typeof getCurrentWorkspace> | null>(null)
   const [workspaceRenameName, setWorkspaceRenameName] = useState('')
+  const [workspaceReportMetadata, setWorkspaceReportMetadata] = useState<Record<string, string>>({})
   const [workspaceRenamePending, setWorkspaceRenamePending] = useState(false)
   const [workspaceRenameError, setWorkspaceRenameError] = useState('')
   const [workspaceToDelete, setWorkspaceToDelete] = useState<ReturnType<typeof getCurrentWorkspace> | null>(null)
@@ -2911,6 +3283,12 @@ function App() {
     workspaceReadyOwnerRef.current = workspaceReadyOwnerId
   }, [workspaceReadyOwnerId])
 
+  useEffect(() => {
+    if (!historicalReportWeek) return
+    if (accountState.status === 'authenticated' && workspaceReadyOwnerId !== accountState.user.id) return
+          setHistoricalReportSnapshot(getReportHistoryEntry(historicalReportWeek, getCurrentWorkspaceId()))
+  }, [accountState, historicalReportWeek, workspaceReadyOwnerId, currentWorkspace?.id])
+
   async function initializeAuthenticatedWorkspace(user: UserProfile) {
     const ownerId = user.id
     logBootstrap('WORKSPACE_INIT_START', { existingInitialization: initializedWorkspaceOwnersRef.current.has(ownerId) })
@@ -2957,12 +3335,13 @@ function App() {
       setWorkspaceReadyOwnerId(ownerId)
       logBootstrap('WORKSPACE_INIT_SUCCESS')
     })().catch((error) => {
-      setWorkspaceInitializationError(error instanceof Error ? error.message : 'Workspace setup could not be completed. Your local workspace is still available.')
+      const message = error instanceof Error ? error.message : 'Workspace setup could not be completed. Your local workspace is still available.'
+      setWorkspaceInitializationError(message)
       setCurrentWorkspace(getCurrentWorkspace())
       setSelectedTemplate(getSelectedTemplate())
       setSelectedWeek(getSelectedWeekStart())
       setWorkspaceReadyOwnerId(ownerId)
-      logBootstrap('WORKSPACE_INIT_ERROR', { error: error instanceof Error ? error.message : 'unknown' })
+      logBootstrap('WORKSPACE_INIT_ERROR', { error: message })
     }).finally(() => {
       initializedWorkspaceOwnersRef.current.delete(ownerId)
       setWorkspaceInitializationPending(false)
@@ -2982,6 +3361,7 @@ function App() {
           logBootstrap('AUTH_GET_CURRENT_USER_RESOLVED', { authenticatedUserPresent: user !== null })
           setWorkspaceOwner(user?.id ?? null)
           setWorkspaceReadyOwnerId(null)
+          setWorkspaceInitializationError('')
           const nextState: AccountState = user ? { status: 'authenticated', user } : { status: 'unauthenticated', user: null }
           accountStatusRef.current = nextState.status
           accountStateRef.current = nextState
@@ -2992,10 +3372,12 @@ function App() {
           }
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (active) {
-          logBootstrap('AUTH_GET_CURRENT_USER_ERROR')
+          const message = error instanceof Error ? error.message : 'Authentication could not be completed.'
+          logBootstrap('AUTH_GET_CURRENT_USER_ERROR', { error: message })
           setWorkspaceOwner(null)
+          setWorkspaceInitializationError(message)
           setWorkspaceReadyOwnerId(null)
           accountStatusRef.current = 'unauthenticated'
           accountStateRef.current = { status: 'unauthenticated', user: null }
@@ -3026,7 +3408,9 @@ function App() {
       setAccountState(state)
       if (state.status === 'authenticated' && (previousStatus === 'unauthenticated' || window.location.pathname === '/auth/callback')) {
         if (window.location.pathname !== '/reset-password') {
-          void initializeAuthenticatedWorkspace(state.user)
+          window.setTimeout(() => {
+            if (active) void initializeAuthenticatedWorkspace(state.user)
+          }, 0)
           navigateTo('/workspaces')
         }
       }
@@ -3078,6 +3462,7 @@ function App() {
 
     const handleLocationChange = () => {
       const historicalWeek = getHistoricalReportWeek()
+      const comparisonWeeks = getComparisonWeeks()
       const nextScreen = getScreenFromPath()
       const entryContext = getEntryWeekContext(nextScreen)
       if (entryContext) {
@@ -3087,6 +3472,9 @@ function App() {
       setActiveScreen(nextScreen)
       setHistoricalReportWeek(historicalWeek)
       setHistoricalReportSnapshot(historicalWeek ? getReportHistoryEntry(historicalWeek, getCurrentWorkspaceId()) : null)
+      const baseline = comparisonWeeks ? getReportHistoryEntry(comparisonWeeks.from, getCurrentWorkspaceId()) : null
+      const comparison = comparisonWeeks ? getReportHistoryEntry(comparisonWeeks.to, getCurrentWorkspaceId()) : null
+      setComparisonReports(baseline && comparison ? { baseline, comparison } : null)
     }
     const handleTemplateChange = () => setSelectedTemplate(getSelectedTemplate())
     const handleWeekChange = (event: Event) => {
@@ -3125,6 +3513,19 @@ function App() {
     setShowCreateWorkspace(true)
   }
 
+  function openCustomTemplateBuilder() {
+    setShowCreateWorkspace(false)
+    setWorkspaceCreateValidation('')
+    setShowCustomTemplateBuilder(true)
+  }
+
+  function openCustomTemplateEditor() {
+    if (currentWorkspace?.templateId !== 'custom') return
+    setShowCreateWorkspace(false)
+    setWorkspaceCreateValidation('')
+    setShowCustomTemplateBuilder(true)
+  }
+
   function selectWorkspace(workspaceId: string) {
     const didSelect = setCurrentWorkspaceId(workspaceId)
     if (!didSelect) return
@@ -3133,6 +3534,7 @@ function App() {
     setSelectedTemplate(getSelectedTemplate())
     setHistoricalReportWeek(null)
     setHistoricalReportSnapshot(null)
+    setComparisonReports(null)
     setWorkspaceMenuOpen(false)
   }
 
@@ -3161,6 +3563,7 @@ function App() {
       }
     }
     setCurrentWorkspace(provisionedWorkspace)
+    setWorkspaceListVersion((current) => current + 1)
     setSelectedTemplate(getSelectedTemplate())
     setSelectedWeek(getSelectedWeekStart())
     setShowCreateWorkspace(false)
@@ -3169,6 +3572,44 @@ function App() {
     setWorkspaceCreateValidation('')
     setWorkspaceMenuOpen(false)
     navigateTo(workspaceCreateReturnPath)
+  }
+
+  async function createCustomWorkspace(config: CustomTemplateConfig) {
+    const trimmedName = normalizeWorkspaceName(config.name)
+    if (!trimmedName) return
+    if (isWorkspaceNameTaken(trimmedName)) return
+
+    const ownerId = accountState.status === 'authenticated' ? accountState.user.id : DEFAULT_ACCOUNT_ID
+    const workspace = createWorkspace(trimmedName, 'custom', ownerId)
+    saveCustomTemplateConfig({ ...config, name: trimmedName }, workspace.id)
+    let provisionedWorkspace = workspace
+    if (accountState.status === 'authenticated') {
+      try {
+        provisionedWorkspace = await provisionWorkspaceInCloud(workspace)
+      } catch {
+        setCurrentWorkspace(workspace)
+        setSelectedTemplate(getSelectedTemplate())
+        setWorkspaceListVersion((current) => current + 1)
+        setShowCustomTemplateBuilder(false)
+        navigateTo(workspaceCreateReturnPath)
+        return
+      }
+    }
+    setCurrentWorkspace(provisionedWorkspace)
+    setSelectedTemplate(getSelectedTemplate())
+    setSelectedWeek(getSelectedWeekStart())
+    setWorkspaceListVersion((current) => current + 1)
+    setShowCustomTemplateBuilder(false)
+    setWorkspaceMenuOpen(false)
+    navigateTo(workspaceCreateReturnPath)
+  }
+
+  function saveCustomTemplateEdit(config: CustomTemplateConfig) {
+    if (!currentWorkspace || currentWorkspace.templateId !== 'custom') return
+    saveCustomTemplateConfig(config, currentWorkspace.id)
+    setSelectedTemplate(getSelectedTemplate())
+    setWorkspaceListVersion((current) => current + 1)
+    setShowCustomTemplateBuilder(false)
   }
 
   async function confirmWorkspaceDeletion() {
@@ -3200,11 +3641,13 @@ function App() {
     setWorkspaceRenamePending(true)
     setWorkspaceRenameError('')
     try {
-      const renamedWorkspace = await renameWorkspace(workspaceToRename.id, workspaceRenameName)
+      const metadata = Object.fromEntries(Object.entries(workspaceReportMetadata).filter(([, value]) => typeof value === 'string' && value.trim())) as ReportMetadata
+      const renamedWorkspace = await renameWorkspace(workspaceToRename.id, workspaceRenameName, metadata)
       setWorkspaceListVersion((current) => current + 1)
       if (renamedWorkspace.id === currentWorkspace?.id) setCurrentWorkspace(renamedWorkspace)
       setWorkspaceToRename(null)
       setWorkspaceRenameName('')
+      setWorkspaceReportMetadata({})
     } catch (error) {
       setWorkspaceRenameError(error instanceof Error ? error.message : 'Workspace rename failed. Please try again.')
     } finally {
@@ -3245,15 +3688,35 @@ function App() {
 
   if (window.location.pathname === '/forgot-password') return <ForgotPasswordScreen />
   if (window.location.pathname === '/reset-password') return <ResetPasswordScreen />
-  if (accountState.status === 'loading' || workspaceInitializationPending || (accountState.status === 'authenticated' && workspaceReadyOwnerId !== accountState.user.id)) return <AuthLoadingScreen />
+  if (window.location.pathname === '/support') return <SupportScreen />
+  if (window.location.pathname === '/contact') return <ContactScreen />
+  if (window.location.pathname === '/guides') return <SupportGuidesPage />
+  if (window.location.pathname === '/guides/getting-started') return <SupportGettingStartedPage />
+  if (window.location.pathname === '/templates') return <SupportTemplatesPage />
+  const shouldBlockForAuthenticatedBootstrap = isAuthenticatedBootstrapBlocked({
+    accountStatus: accountState.status,
+    workspaceInitializationPending,
+    workspaceReadyOwnerId,
+    workspaceInitializationError,
+    authenticatedUserId: accountState.status === 'authenticated' ? accountState.user.id : null,
+  })
+  if (accountState.status === 'loading' || shouldBlockForAuthenticatedBootstrap) return <AuthLoadingScreen />
   if (accountState.status === 'unauthenticated') {
     if (window.location.pathname === '/auth/callback') return <AuthCallbackScreen />
     if (window.location.pathname === '/') return <PublicLandingScreen onSignIn={() => navigateTo('/sign-in')} onCreateAccount={() => navigateTo('/sign-up')} />
     return <AuthenticationScreen initialMode={window.location.pathname === '/sign-up' ? 'signup' : 'signin'} />
   }
 
+  const currentCustomConfig = currentWorkspace?.templateId === 'custom' && currentWorkspace ? loadCustomTemplateConfig(currentWorkspace.id) : null
+  if (activeScreen === 'report-comparison') {
+    const reports = comparisonReports
+    const validation = reports ? validateReportComparison(reports.baseline, reports.comparison, getCurrentWorkspaceId()) : { valid: false as const, message: 'The saved reports for this comparison could not be found in the active workspace.' }
+    if (!validation.valid) return <main className="report-comparison-screen"><section className="report-history-empty-state"><h1>Comparison unavailable</h1><p>{validation.message}</p><button className="button button-secondary" type="button" onClick={() => navigateTo('/report-history')}>Back to Report History</button></section></main>
+    if (!reports) return null
+    return <ReportComparisonScreen comparison={buildReportComparison(reports.baseline, reports.comparison, getCurrentWorkspaceId() as string)} />
+  }
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={currentCustomConfig ? { ['--color-accent' as string]: currentCustomConfig.accent, ['--color-accent-hover' as string]: currentCustomConfig.accent, ['--accent' as string]: currentCustomConfig.accent, ['--accent-dark' as string]: currentCustomConfig.accent } : undefined}>
       <Header
         selectedWeek={selectedWeek}
         currentWorkspace={currentWorkspace}
@@ -3268,7 +3731,7 @@ function App() {
       />
       {workspaceInitializationError && <p className="workspace-initialization-error" role="status">{workspaceInitializationError}</p>}
       <WorkspaceCreateDialog
-        isOpen={showCreateWorkspace}
+        isOpen={showCreateWorkspace && !showCustomTemplateBuilder}
         templateId={newWorkspaceTemplateId}
         onTemplateChange={(value) => {
           setNewWorkspaceTemplateId(value)
@@ -3286,6 +3749,7 @@ function App() {
           setWorkspaceCreateValidation('')
         }}
         onCreate={createWorkspaceFromDialog}
+        onCustomTemplate={openCustomTemplateBuilder}
         validationMessage={workspaceCreateValidation}
       />
       <WorkspaceDeleteDialog
@@ -3302,16 +3766,22 @@ function App() {
       <WorkspaceRenameDialog
         workspace={workspaceToRename}
         name={workspaceRenameName}
+        metadataFields={getReportMetadataFields(workspaceToRename?.templateId ?? currentWorkspace?.templateId ?? selectedTemplate.id)}
+        metadataValues={workspaceReportMetadata}
         isSaving={workspaceRenamePending}
         errorMessage={workspaceRenameError}
         onNameChange={(name) => {
           setWorkspaceRenameName(name)
           if (workspaceRenameError) setWorkspaceRenameError('')
         }}
+        onMetadataChange={(field, value) => {
+          setWorkspaceReportMetadata((current) => ({ ...current, [field]: value }))
+        }}
         onClose={() => {
           if (workspaceRenamePending) return
           setWorkspaceToRename(null)
           setWorkspaceRenameName('')
+          setWorkspaceReportMetadata({})
           setWorkspaceRenameError('')
         }}
         onConfirm={confirmWorkspaceRename}
@@ -3324,13 +3794,14 @@ function App() {
       />
       {activeScreen !== 'profile' && <WeekNavigation weekStart={selectedWeek} onChange={changeWeek} />}
       <div className="app-body">
-        <AppNavigation activeScreen={activeScreen} templateName={currentWorkspace ? selectedTemplate.name : 'No workspace selected'} onSwitchTemplate={openTemplateSelection} onNavigate={navigateTo} collapsed={navigationCollapsed} mobileOpen={navigationOpen} onToggleCollapse={() => setNavigationCollapsed((current) => !current)} onClose={() => setNavigationOpen(false)} />
+        <AppNavigation activeScreen={activeScreen} templateName={currentWorkspace ? selectedTemplate.name : 'No workspace selected'} onSwitchTemplate={openTemplateSelection} onEditCustomTemplate={openCustomTemplateEditor} onNavigate={navigateTo} collapsed={navigationCollapsed} mobileOpen={navigationOpen} onToggleCollapse={() => setNavigationCollapsed((current) => !current)} onClose={() => setNavigationOpen(false)} />
         {navigationOpen && <button className="navigation-overlay" type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />}
-        {activeScreen === 'profile' ? <ProfileSettingsScreen user={accountState.status === 'authenticated' ? accountState.user : { id: '', displayName: '', email: '', createdAt: '', updatedAt: '' }} workspaces={loadWorkspaces()} currentWorkspaceId={currentWorkspace?.id ?? null} onProfileUpdated={(profile) => setAccountState((state) => state.status === 'authenticated' ? { ...state, user: profile } : state)} onWorkspaceSelected={selectWorkspace} onSignOut={handleSignOut} onAccountDeleted={handleAccountDeleted} /> : activeScreen === 'workspaces' ? <WorkspaceHomeScreen key={workspaceListVersion} user={accountState.status === 'authenticated' ? accountState.user : null} currentWorkspaceId={currentWorkspace?.id ?? null} onOpenWorkspace={(workspaceId) => { selectWorkspace(workspaceId); navigateTo('/') }} onRequestRename={(workspaceId) => {
+        {showCustomTemplateBuilder ? <CustomTemplateBuilder mode={currentWorkspace?.templateId === 'custom' ? 'edit' : 'create'} initialConfig={currentWorkspace?.templateId === 'custom' ? loadCustomTemplateConfig(currentWorkspace.id) : undefined} onCancel={() => setShowCustomTemplateBuilder(false)} onCreate={currentWorkspace?.templateId === 'custom' ? saveCustomTemplateEdit : createCustomWorkspace} /> : activeScreen === 'profile' ? <ProfileSettingsScreen user={accountState.status === 'authenticated' ? accountState.user : { id: '', displayName: '', email: '', createdAt: '', updatedAt: '' }} workspaces={loadWorkspaces()} currentWorkspaceId={currentWorkspace?.id ?? null} onProfileUpdated={(profile) => setAccountState((state) => state.status === 'authenticated' ? { ...state, user: profile } : state)} onWorkspaceSelected={selectWorkspace} onSignOut={handleSignOut} onAccountDeleted={handleAccountDeleted} onClose={() => navigateTo('/')} /> : activeScreen === 'workspaces' ? <WorkspaceHomeScreen key={workspaceListVersion} user={accountState.status === 'authenticated' ? accountState.user : null} currentWorkspaceId={currentWorkspace?.id ?? null} onOpenWorkspace={(workspaceId) => { selectWorkspace(workspaceId); navigateTo('/') }} onRequestRename={(workspaceId) => {
           const workspace = loadWorkspaces().find((candidate) => candidate.id === workspaceId)
           if (!workspace) return
           setWorkspaceRenameError('')
           setWorkspaceRenameName(workspace.name)
+          setWorkspaceReportMetadata(Object.fromEntries(Object.entries(workspace.reportMetadata ?? {}).filter(([, value]) => typeof value === 'string').map(([key, value]) => [key, value])))
           setWorkspaceToRename(workspace)
         }} onCreateWorkspace={() => {
           setWorkspaceCreateReturnPath('/workspaces')
@@ -3344,7 +3815,7 @@ function App() {
           setNewWorkspaceName('')
           setNewWorkspaceTemplateId('field-sales')
           setShowCreateWorkspace(true)
-        }} /> : activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'report' ? historicalReportWeek && !historicalReportSnapshot ? <main className="generate-report-screen"><section className="report-readiness report-readiness-review" aria-label="Historical report unavailable"><h1>Historical report unavailable</h1><p>The saved report snapshot for this workspace and week could not be found.</p><a className="button button-secondary" href="/report-history" onClick={(event) => { event.preventDefault(); navigateTo('/report-history') }}>Back to Report History</a></section></main> : <Suspense fallback={<main className="auth-screen" aria-busy="true"><div className="auth-panel auth-loading"><img className="auth-logo" src={logoImage} alt="WeekFlow" /></div></main>}><GenerateReportScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}-${historicalReportWeek ?? 'live'}`} template={historicalReportSnapshot?.template ?? selectedTemplate} historicalSnapshot={historicalReportSnapshot} /></Suspense> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} onOpenReport={(report) => { setHistoricalReportWeek(report.weekKey); setHistoricalReportSnapshot(report); navigateTo(`/report?historyWeek=${encodeURIComponent(report.weekKey)}`) }} template={selectedTemplate} /> : <OverviewScreen selectedWeek={selectedWeek} template={selectedTemplate} workspaceName={currentWorkspace.name} onNavigate={(screen) => { navigateTo(`/${screen === 'overview' ? '' : screen}`) }} />}
+        }} /> : activeScreen === 'weekly-plan' ? <WeeklyPlanScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'daily-activity' ? <DailyActivityScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'education-records' && selectedTemplate.id === 'education' ? <EducationRecordsScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} weekStart={selectedWeek} /> : activeScreen === 'follow-ups' ? <FollowUpsScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}`} template={selectedTemplate} /> : activeScreen === 'report' ? historicalReportWeek && !historicalReportSnapshot ? <main className="generate-report-screen"><section className="report-readiness report-readiness-review" aria-label="Historical report unavailable"><h1>Historical report unavailable</h1><p>The saved report snapshot for this workspace and week could not be found.</p><a className="button button-secondary" href="/report-history" onClick={(event) => { event.preventDefault(); navigateTo('/report-history') }}>Back to Report History</a></section></main> : <Suspense fallback={<main className="auth-screen" aria-busy="true"><div className="auth-panel auth-loading"><img className="auth-logo" src={logoImage} alt="WeekFlow" /></div></main>}><GenerateReportScreen key={`${currentWorkspace.id}-${selectedWeek}-${selectedTemplate.id}-${historicalReportWeek ?? 'live'}`} template={historicalReportSnapshot?.template ?? selectedTemplate} historicalSnapshot={historicalReportSnapshot} reportMetadata={getActiveReportMetadata(accountState.status === 'authenticated' ? accountState.user : null, currentWorkspace)} /></Suspense> : activeScreen === 'report-history' ? <ReportHistoryScreen selectedWeek={selectedWeek} onSelectWeek={changeWeek} onOpenReport={(report) => { setHistoricalReportWeek(report.weekKey); setHistoricalReportSnapshot(report); navigateTo(`/report?historyWeek=${encodeURIComponent(report.weekKey)}`) }} template={selectedTemplate} /> : <OverviewScreen selectedWeek={selectedWeek} template={selectedTemplate} userName={accountState.status === 'authenticated' ? accountState.user.displayName || accountState.user.email || '' : ''} onNavigate={(screen) => { navigateTo(`/${screen === 'overview' ? '' : screen}`) }} />}
       </div>
     </div>
   )

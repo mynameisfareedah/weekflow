@@ -7,9 +7,13 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "validate:intelligence": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/validate-intelligence.ts",
-    "validate:report-mapping": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/validate-report-mapping.ts",
-    "validate:narrative": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/validate-report-narrative.ts",
+    "validate:intelligence": "npx vite-node scripts/validate-intelligence.ts",
+    "validate:report-mapping": "npx vite-node scripts/validate-report-mapping.ts",
+    "validate:narrative": "npx vite-node scripts/validate-report-narrative.ts",
+    "validate:report-comparison": "npx vite-node scripts/validate-report-comparison.ts",
+    "validate:storage-isolation": "npx vite-node scripts/validate-storage-isolation.ts",
+    "validate:auth-bootstrap": "npx vite-node scripts/validate-auth-bootstrap.ts",
+    "validate:custom-template": "npx vite-node scripts/validate-custom-template-guard.ts",
     "preview": "vite preview"
   },
   "dependencies": {

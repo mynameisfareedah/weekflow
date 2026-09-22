@@ -1,9 +1,11 @@
 {
   "name": "WeekFlow",
   "short_name": "WeekFlow",
+  "id": "/",
   "description": "Weekly field activity planning and reporting with WeekFlow.",
   "start_url": "/",
   "scope": "/",
+  "display_override": ["window-controls-overlay", "standalone"],
   "display": "standalone",
   "orientation": "portrait",
   "theme_color": "#f5f6f1",

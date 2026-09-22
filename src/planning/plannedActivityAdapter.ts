@@ -11,6 +11,17 @@ export interface PlannedActivity {
   activityType: ActivityType
   programmeArea?: string
   location?: string
+  jobId?: string
+  customer?: string
+  technician?: string
+  priority?: string
+  educationCourseProgramme?: string
+  educationClassGroup?: string
+  educationTopic?: string
+  educationInstructor?: string
+  educationLearningObjectiveId?: string
+  educationTeachingActivity?: string
+  educationStudentActivity?: string
 }
 
 export function getExecutablePlannedActivities(day: DayPlan, template: WeekFlowTemplate = FIELD_SALES_TEMPLATE, weeklyPlan?: WeeklyPlan): PlannedActivity[] {
@@ -28,6 +39,22 @@ export function getExecutablePlannedActivities(day: DayPlan, template: WeekFlowT
         location: item.location,
       }))
   }
+  if (template.id === 'field-service') {
+    return (weeklyPlan?.fieldJobs ?? [])
+      .filter((item) => !item.scheduledDay || item.scheduledDay.toLowerCase() === day.label.toLowerCase() || item.scheduledDate === day.date)
+      .map((item) => ({
+        id: `field-job:${item.id}`,
+        label: `${item.jobId || 'Planned job'}${item.customer ? ` - ${item.customer}` : ''}`,
+        account: item.location || item.customer,
+        focus: [item.jobType, item.assignedTechnician, item.status, item.issue].filter(Boolean).join(' | '),
+        activityType: activityTypes.includes(item.jobType as ActivityType) ? item.jobType as ActivityType : (activityTypes[0] ?? 'Other'),
+        location: item.location,
+        jobId: item.jobId,
+        customer: item.customer,
+        technician: item.assignedTechnician,
+        priority: item.priority,
+      }))
+  }
   if (template.id === 'project-management') {
     const projectWork = day.categories.facilities.map((item) => ({ id: `project:${item.id}`, label: item.text, account: item.text, focus: [...day.categories.primaryObjectives, ...day.categories.commercialPriorities].map((focus) => focus.text).join(' | '), activityType: 'Project Work' as ActivityType }))
     const deliverables = day.categories.accountObjectives.map((item) => ({ id: `deliverable:${item.id}`, label: item.text, account: item.text, focus: item.text, activityType: 'Review / Approval' as ActivityType }))
@@ -35,6 +62,25 @@ export function getExecutablePlannedActivities(day: DayPlan, template: WeekFlowT
     const stakeholders = day.categories.hcps.map((item) => ({ id: `stakeholder:${item.id}`, label: item.text, account: item.text, focus: item.text, activityType: 'Client / Stakeholder Meeting' as ActivityType }))
     const priorities = day.categories.commercialPriorities.map((item) => ({ id: `priority:${item.id}`, label: item.text, account: item.text, focus: item.text, activityType: 'Problem Solving' as ActivityType }))
     return [...projectWork, ...deliverables, ...keyActivities, ...stakeholders, ...priorities]
+  }
+  if (template.id === 'education') {
+    const objectives = weeklyPlan?.educationLearningObjectives ?? []
+    return (weeklyPlan?.educationTeachingPlan ?? [])
+      .filter((item) => item.day === day.id)
+      .map((item) => ({
+        id: `education-teaching:${item.id}`,
+        label: item.topic || 'Planned learning activity',
+        account: weeklyPlan?.educationContext?.classGroup || weeklyPlan?.educationContext?.courseProgramme || 'Education activity',
+        focus: [item.teachingActivity, item.learningActivity, item.duration].filter(Boolean).join(' | '),
+        activityType: 'Lesson' as ActivityType,
+        educationCourseProgramme: weeklyPlan?.educationContext?.courseProgramme,
+        educationClassGroup: weeklyPlan?.educationContext?.classGroup,
+        educationTopic: item.topic,
+        educationInstructor: weeklyPlan?.educationContext?.instructor,
+        educationTeachingActivity: item.teachingActivity,
+        educationStudentActivity: item.learningActivity,
+        educationLearningObjectiveId: objectives[0]?.id,
+      }))
   }
   const facilities = day.categories.facilities.map((item) => ({
     id: `facility:${item.id}`,

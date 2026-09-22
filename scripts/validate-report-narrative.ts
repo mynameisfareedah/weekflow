@@ -21,7 +21,7 @@ const personalSnapshot = {
   activities: [
     {
       id: 'a1',
-      date: '2026-09-12',
+      date: '2026-09-07',
       weekStart: '2026-09-07',
       plannedActivityId: null,
       account: 'TAILORS',
@@ -60,6 +60,36 @@ if (!personalReport.title.includes('Weekly Review')) throw new Error('Personal r
 if (personalReport.sections.some((section) => section.items.some((item) => item.title.includes('|')))) throw new Error('Narrative formatter should not include pipe-delimited raw strings')
 if (personalReport.sections.some((section) => section.items.some((item) => item.summary.includes('TAILORS')))) throw new Error('Narrative formatter should not expose raw uppercase location strings verbatim')
 if (personalReport.summaryText.length === 0) throw new Error('Narrative summary should not be empty for populated personal report')
+const personalNarrativeText = personalReport.sections.flatMap((section) => section.items.flatMap((item) => [item.title, item.summary, item.detail ?? ''])).join(' ')
+if (/\bcompleted\b/i.test(personalNarrativeText)) throw new Error('Recorded Personal activity must not be described as completed without explicit completion evidence')
+if (!/Recorded activity:/i.test(personalNarrativeText)) throw new Error('Recorded Personal activity should use neutral evidence-based wording')
+
+const completedPersonalActivity = {
+  ...personalSnapshot.activities[0],
+  id: 'a-completed',
+  account: 'Weekly task',
+  activityType: 'Task' as const,
+  workPerformed: 'Finished the weekly task',
+  actualResults: 'The task was completed.',
+  progressStatus: 'completed',
+}
+const completedPersonalReport = buildNarrativeReport({ ...personalSnapshot, activities: [completedPersonalActivity], followUps: [] })
+const completedPersonalText = completedPersonalReport.sections.flatMap((section) => section.items.flatMap((item) => [item.title, item.summary, item.detail ?? ''])).join(' ')
+if (!/Meaningful activity completed/i.test(completedPersonalText)) throw new Error('Explicitly completed Personal activity should remain eligible for completion reporting')
+
+const plannedOnlyPersonalReport = buildNarrativeReport({
+  ...personalSnapshot,
+  activities: [],
+  followUps: [],
+  plan: { ...personalSnapshot.plan, weeklyStrategicObjectives: [{ id: 'goal-only', text: 'Finish the planned weekly task' }] },
+})
+const plannedOnlyPersonalText = plannedOnlyPersonalReport.sections.flatMap((section) => section.items.flatMap((item) => [item.title, item.summary, item.detail ?? ''])).join(' ')
+if (/\bcompleted\b/i.test(plannedOnlyPersonalText)) throw new Error('Planned-only Personal work must not be described as completed')
+
+const historicalPersonalReport = buildNarrativeReport({ ...personalSnapshot, activities: [{ ...personalSnapshot.activities[1], date: '2026-09-07' }], followUps: [] })
+const historicalPersonalText = historicalPersonalReport.sections.flatMap((section) => section.items.flatMap((item) => [item.title, item.summary, item.detail ?? ''])).join(' ')
+if (/\bcompleted\b/i.test(historicalPersonalText)) throw new Error('Historical Personal snapshots must preserve their original lack of completion evidence')
+if (!/Recorded activity:/i.test(historicalPersonalText)) throw new Error('Historical Personal snapshots should render from their stored activity evidence')
 
 const fieldSalesTemplate = getWorkflowTemplateById('field-sales')
 const fieldSalesSnapshot = {
@@ -99,6 +129,26 @@ const fieldSalesSnapshot = {
 
 const fieldSalesReport = buildNarrativeReport(fieldSalesSnapshot)
 if (!fieldSalesReport.sections.some((section) => section.items.some((item) => item.title.includes('Dr. Smith') || item.summary.includes('ZYTIGA')))) throw new Error('Field sales narrative should preserve medical terminology and person names')
+
+const fieldServiceTemplate = getWorkflowTemplateById('field-service')
+const fieldServiceSnapshot = {
+  weekKey: '2026-09-07',
+  weekLabel: '7–13 September 2026',
+  template: fieldServiceTemplate,
+  plan: { ...fieldSalesSnapshot.plan, weekStart: '2026-09-07' },
+  activities: [{
+    id: 'service-1', date: '2026-09-09', weekStart: '2026-09-07', plannedActivityId: null, account: 'Site Beta', activityType: 'Repair' as const, hcpNames: [], outcome: '', intelligence: 'Engineering escalation required.', nextAction: 'Install fan assembly and verify operation.', workOrderJob: 'J-502', jobCustomer: 'Beta Customer', equipmentAsset: 'Generator-B', issueProblem: 'Overheating', resolution: '', serviceStatus: 'Awaiting Verification', downtime: '5 hours', customerSignOff: 'Confirmation Pending', partsUsed: '', structuredOutcomes: [
+      { id: 'service-outcome-1', type: 'Issue Unresolved' as const, details: 'Issue remains unresolved.' },
+      { id: 'service-outcome-2', type: 'Parts Required' as const, details: 'Fan assembly required.' },
+      { id: 'service-outcome-3', type: 'Escalation Required' as const, details: 'Escalation required.' },
+    ], createdAt: '2026-09-09T00:00:00.000Z', updatedAt: '2026-09-09T00:00:00.000Z',
+  }],
+  followUps: [{ id: 'service-follow-up', weekKey: '2026-09-07', task: 'Install fan assembly and verify operation', facility: 'Site Beta', dueDate: '2026-09-12', priority: 'high' as const, status: 'open' as const, createdAt: '2026-09-09T00:00:00.000Z', updatedAt: '2026-09-09T00:00:00.000Z' }],
+}
+const fieldServiceReport = buildNarrativeReport(fieldServiceSnapshot)
+const fieldServiceSectionIds = fieldServiceReport.sections.map((section) => section.id)
+if (!fieldServiceSectionIds.includes('operational-intelligence') || !fieldServiceSectionIds.includes('parts-resources') || !fieldServiceSectionIds.includes('customer-site-issues')) throw new Error('Field Operations report sections were not mapped')
+if (!fieldServiceReport.sections.some((section) => section.items.some((item) => item.summary.includes('Awaiting Verification') || item.summary.includes('Parts Required') || item.summary.includes('5 hours')))) throw new Error('Field Operations narrative omitted evidence-backed resolution, parts, or downtime data')
 
 const projectManagementTemplate = getWorkflowTemplateById('project-management')
 const projectManagementSnapshot = {

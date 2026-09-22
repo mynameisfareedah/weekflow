@@ -29,7 +29,7 @@ function readableDeletionError(error: unknown) {
   return 'Your account could not be deleted. Please try again.'
 }
 
-export default function ProfileSettingsScreen({ user, workspaces, currentWorkspaceId, onProfileUpdated, onWorkspaceSelected, onSignOut, onAccountDeleted }: {
+export default function ProfileSettingsScreen({ user, workspaces, currentWorkspaceId, onProfileUpdated, onWorkspaceSelected, onSignOut, onAccountDeleted, onClose }: {
   user: UserProfile
   workspaces: Workspace[]
   currentWorkspaceId: string | null
@@ -37,6 +37,7 @@ export default function ProfileSettingsScreen({ user, workspaces, currentWorkspa
   onWorkspaceSelected: (workspaceId: string) => void
   onSignOut: () => void
   onAccountDeleted: () => void
+  onClose: () => void
 }) {
   const [username, setUsername] = useState(user.displayName)
   const [profileError, setProfileError] = useState('')
@@ -153,7 +154,7 @@ export default function ProfileSettingsScreen({ user, workspaces, currentWorkspa
   }
 
   return <main className="profile-settings-screen" aria-labelledby="profile-settings-title">
-    <div className="profile-settings-header"><p className="eyebrow">Account</p><h1 id="profile-settings-title">Profile Settings</h1><p>Manage your WeekFlow account and personal preferences.</p></div>
+    <div className="profile-settings-header"><div><p className="eyebrow">Account</p><h1 id="profile-settings-title">Profile Settings</h1><p>Manage your WeekFlow account and personal preferences.</p></div><button className="button button-secondary profile-settings-close" type="button" onClick={onClose} aria-label="Close Profile Settings">Close</button></div>
     <div className="profile-settings-grid">
       <section className="profile-settings-section profile-identity-section" aria-labelledby="profile-section-title"><div className="profile-settings-section-heading"><div><p className="eyebrow">Profile</p><h2 id="profile-section-title">Your profile</h2></div><div className="profile-avatar-large" aria-hidden="true">{getInitials(user)}</div></div><form className="profile-settings-form" onSubmit={saveProfile} noValidate><label className="profile-field"><span>Username</span><input value={username} maxLength={80} onChange={(event) => { setUsername(event.target.value); setProfileStatus('idle'); setProfileError('') }} autoComplete="name" aria-invalid={Boolean(profileError)} /><small>This is the name WeekFlow uses to greet you.</small></label><label className="profile-field"><span>Email address</span><input value={user.email} readOnly aria-describedby="profile-email-note" /><small id="profile-email-note">This is your WeekFlow account login email.</small></label>{profileError && <p className="profile-message profile-error" role="alert">{profileError}</p>}<div className="profile-action-row"><button className="button button-primary" type="submit" disabled={profileStatus === 'saving'}>{profileStatus === 'saving' ? 'Saving...' : 'Save Changes'}</button>{profileStatus === 'saved' && <span className="profile-saved" role="status">Saved</span>}</div></form></section>
       <section className="profile-settings-section" aria-labelledby="security-section-title"><div className="profile-settings-section-heading"><div><p className="eyebrow">Account &amp; Security</p><h2 id="security-section-title">Security</h2></div></div><p className="profile-section-intro">Update your password, request a reset link, or sign out of your WeekFlow account.</p><form className="profile-settings-form" onSubmit={changePassword} noValidate><label className="profile-field"><span>New password</span><input type="password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setPasswordStatus('idle'); setPasswordError('') }} autoComplete="new-password" /></label><label className="profile-field"><span>Confirm new password</span><input type="password" value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); setPasswordStatus('idle'); setPasswordError('') }} autoComplete="new-password" /></label>{passwordError && <p className="profile-message profile-error" role="alert">{passwordError}</p>}<div className="profile-action-row"><button className="button button-secondary" type="submit" disabled={passwordStatus === 'saving'}>{passwordStatus === 'saving' ? 'Saving...' : 'Change Password'}</button>{passwordStatus === 'saved' && <span className="profile-saved" role="status">Saved</span>}</div></form><div className="profile-account-actions"><button className="button button-secondary" type="button" onClick={sendPasswordReset} disabled={resetStatus === 'sending'}>{resetStatus === 'sending' ? 'Sending...' : 'Send reset link'}</button><button className="button button-ghost" type="button" onClick={onSignOut}>Sign out</button></div>{resetMessage && <p className={resetStatus === 'sent' ? 'profile-message profile-success' : 'profile-message profile-error'} role={resetStatus === 'sent' ? 'status' : 'alert'}>{resetMessage}</p>}</section>

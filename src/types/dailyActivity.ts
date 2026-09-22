@@ -18,6 +18,14 @@ export const ACTIVITY_TYPES = [
   'Remote Support',
   'Dispatch / Team Coordination',
   'Customer Support',
+  'Installation',
+  'Maintenance',
+  'Inspection',
+  'Repair',
+  'Service Issue',
+  'Equipment Check',
+  'Customer Visit',
+  'Follow-up Visit',
   'Maintenance',
   'Repair',
   'Customer Call',
@@ -82,6 +90,9 @@ export const STRUCTURED_OUTCOME_TYPES = [
   'Parts Required',
   'Escalation Required',
   'Equipment Fault Identified',
+  'Job Completed',
+  'Awaiting Verification',
+  'Customer Confirmation Pending',
 ] as const
 
 export type StructuredOutcomeType = (typeof STRUCTURED_OUTCOME_TYPES)[number]
@@ -153,6 +164,35 @@ export interface DailyActivity {
   slaPriority?: string
   downtime?: string
   customerSignOff?: string
+  jobCustomer?: string
+  jobPriority?: string
+  assignedTechnician?: string
+  contactPerson?: string
+  arrivalTime?: string
+  departureTime?: string
+  actionsTaken?: string
+  partsUsed?: string
+  findings?: string
+  condition?: string
+  servicePerformed?: string
+  nextServiceDate?: string
+  followUpRequired?: string
+  followUpDate?: string
+  issuePriority?: string
+  educationCourseProgramme?: string
+  educationClassGroup?: string
+  educationTopic?: string
+  educationInstructor?: string
+  educationLearningObjectiveId?: string
+  educationTeachingActivity?: string
+  educationStudentActivity?: string
+  educationLearnerCount?: string
+  educationExpectedOutput?: string
+  educationLearningResult?: string
+  educationStatus?: string
+  customCategoryId?: string
+  customStatusId?: string
+  customFieldValues?: Record<string, unknown>
   createdAt: string
   updatedAt: string
 }

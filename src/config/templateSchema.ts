@@ -8,6 +8,16 @@ export interface PlanningCategorySchema {
   order: number
 }
 
+export interface FieldOperationsPlanningSchema {
+  objectives: { label: string; enabled: boolean }
+  jobs: { label: string; enabled: boolean }
+  serviceIssues: { label: string; enabled: boolean }
+  equipment: { label: string; enabled: boolean }
+  teamPlan: { label: string; enabled: boolean }
+  dailySchedule: { label: string; enabled: boolean }
+  partsResources: { label: string; enabled: boolean }
+}
+
 export interface ActivityFieldSchema {
   key: string
   label: string
@@ -32,6 +42,11 @@ export interface ReportSectionSchema {
   presentation?: ReportSectionPresentation
 }
 
+export interface ReportMetadataField {
+  id: keyof import('../report/reportMetadata').ReportMetadata
+  label: string
+}
+
 export type ReportSectionDisplayType = 'summary' | 'activity-table' | 'activity-list' | 'outcomes' | 'intelligence' | 'follow-ups' | 'unsupported'
 
 export interface ReportSectionPresentation {
@@ -46,6 +61,7 @@ export interface TemplateSchema {
   templateId: string
   planning: {
     categories: readonly PlanningCategorySchema[]
+    fieldOperations?: FieldOperationsPlanningSchema
   }
   activities: {
     types: readonly string[]
@@ -61,6 +77,7 @@ export interface TemplateSchema {
     textRules?: readonly { pattern: string; category: string }[]
   }
   report: {
+    reportMetadata?: { fields: readonly ReportMetadataField[] }
     sections: readonly ReportSectionSchema[]
   }
 }
@@ -74,6 +91,17 @@ const REPORT_PRESENTATION_BY_TEMPLATE: Record<string, Record<string, ReportSecti
     'strategic-account-intelligence': { displayType: 'unsupported', emptyState: 'This section requires strategic-account data that is not currently available in the shared report data.', showWhenEmpty: true, preferredLayout: 'stack', presentationVariant: 'field-sales-intelligence' },
     'priorities-coming-week': { displayType: 'follow-ups', emptyState: 'No open priorities or follow-ups recorded.', showWhenEmpty: true, preferredLayout: 'columns', presentationVariant: 'field-sales-follow-ups' },
     'completed-follow-ups': { displayType: 'follow-ups', emptyState: 'No completed follow-ups recorded.', showWhenEmpty: true, preferredLayout: 'stack', presentationVariant: 'field-sales-completed-follow-ups' },
+  },
+  'field-service': {
+    'weekly-summary': { displayType: 'summary', emptyState: 'No actual Field Operations activity was recorded for this reporting week.', showWhenEmpty: true, preferredLayout: 'cards', presentationVariant: 'field-service-summary' },
+    'daily-activity-breakdown': { displayType: 'activity-table', emptyState: 'No actual Field Operations activity was recorded.', showWhenEmpty: true, preferredLayout: 'table', presentationVariant: 'field-service-activity-table' },
+    'job-assignment-outcomes': { displayType: 'outcomes', emptyState: 'No actual job or assignment outcomes were recorded.', showWhenEmpty: true, preferredLayout: 'cards', presentationVariant: 'field-service-outcomes' },
+    'service-resolution-status': { displayType: 'summary', emptyState: 'No service resolution evidence was recorded.', showWhenEmpty: true, preferredLayout: 'stack', presentationVariant: 'field-service-resolution' },
+    'operational-intelligence': { displayType: 'intelligence', emptyState: 'No evidence-backed operational intelligence was recorded.', showWhenEmpty: true, preferredLayout: 'stack', presentationVariant: 'field-service-intelligence' },
+    'parts-resources': { displayType: 'summary', emptyState: 'No parts or resource evidence was recorded.', showWhenEmpty: true, preferredLayout: 'stack', presentationVariant: 'field-service-parts' },
+    'customer-site-issues': { displayType: 'summary', emptyState: 'No customer or site issues were recorded.', showWhenEmpty: true, preferredLayout: 'stack', presentationVariant: 'field-service-customer-issues' },
+    'priorities-coming-week': { displayType: 'follow-ups', emptyState: 'No Field Operations priorities or open follow-ups recorded.', showWhenEmpty: true, preferredLayout: 'columns', presentationVariant: 'field-service-priorities' },
+    'completed-follow-ups': { displayType: 'follow-ups', emptyState: 'No completed Field Operations follow-ups recorded.', showWhenEmpty: true, preferredLayout: 'stack', presentationVariant: 'field-service-completed-follow-ups' },
   },
   'project-management': {
     'weekly-summary': { displayType: 'summary', emptyState: 'No project activity recorded for this reporting week.', showWhenEmpty: true, preferredLayout: 'cards', presentationVariant: 'project-summary' },
@@ -201,13 +229,19 @@ export const FIELD_SALES_TEMPLATE_SCHEMA: TemplateSchema = {
     },
   },
   report: {
+    reportMetadata: { fields: [
+      { id: 'preparedBy', label: 'Prepared by' },
+      { id: 'role', label: 'Role' },
+      { id: 'company', label: 'Company' },
+      { id: 'portfolio', label: 'Portfolio' },
+    ] },
     sections: [
       { id: 'activities-summary', title: 'Activities Summary', enabled: true, order: 1, dataGroups: ['dailyActivities', 'outcomes'] },
       { id: 'daily-activity-breakdown', title: 'Daily Activity Breakdown', enabled: true, order: 2, dataGroups: ['dailyActivities', 'intelligence'] },
       { id: 'virtual-engagements', title: 'Virtual Engagements', enabled: true, order: 3, dataGroups: ['virtualEngagements'] },
       { id: 'commercial-patient-journey-outcomes', title: 'Key Commercial / Patient-Journey Outcomes', enabled: true, order: 4, dataGroups: ['commercialOutcomes', 'patientJourney'] },
       { id: 'strategic-account-intelligence', title: 'Strategic Account Intelligence', enabled: true, order: 5, dataGroups: ['strategicAccounts', 'intelligence'] },
-      { id: 'priorities-coming-week', title: 'Priorities for Coming Week', enabled: true, order: 6, dataGroups: ['priorities', 'followUps'] },
+      { id: 'priorities-coming-week', title: 'Priorities for the Coming Week', enabled: true, order: 6, dataGroups: ['priorities', 'followUps'] },
       { id: 'completed-follow-ups', title: 'Completed Follow-ups', enabled: true, order: 7, dataGroups: ['followUps'] },
     ],
   },
@@ -298,7 +332,15 @@ export const PROJECT_MANAGEMENT_TEMPLATE_SCHEMA: TemplateSchema = {
 export const FOUNDATION_TEMPLATE_SCHEMAS: Record<string, TemplateSchema> = {
   'field-service': {
     templateId: 'field-service',
-    planning: { categories: [
+    planning: { fieldOperations: {
+      objectives: { label: 'Weekly Objectives', enabled: true },
+      jobs: { label: 'Jobs / Field Assignments', enabled: true },
+      serviceIssues: { label: 'Service Issues', enabled: true },
+      equipment: { label: 'Equipment', enabled: true },
+      teamPlan: { label: 'Technician / Field Team Plan', enabled: true },
+      dailySchedule: { label: 'Daily Field Schedule', enabled: true },
+      partsResources: { label: 'Parts & Resources', enabled: true },
+    }, categories: [
       { key: 'facilities', label: 'Sites / Service Locations', enabled: true, required: true, order: 1 },
       { key: 'accountObjectives', label: 'Work Orders / Jobs', enabled: true, required: true, order: 2 },
       { key: 'hcps', label: 'Customer Contact', enabled: true, required: false, order: 3 },
@@ -308,24 +350,35 @@ export const FOUNDATION_TEMPLATE_SCHEMAS: Record<string, TemplateSchema> = {
       { key: 'virtualEngagements', label: 'Preventive Maintenance', enabled: true, required: false, order: 7 },
     ] },
     activities: {
-      types: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support', 'Other'],
+      types: ['Installation', 'Maintenance', 'Inspection', 'Repair', 'Service Issue', 'Equipment Check', 'Customer Visit', 'Follow-up Visit', 'Other'],
       fields: [
-        { key: 'account', label: 'Site / Location', state: 'required', order: 1, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support', 'Other'] },
-        { key: 'hcpNames', label: 'Customer / Contact', state: 'optional', order: 2, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support', 'Other'] },
-        { key: 'workOrderJob', label: 'Work Order / Job', state: 'conditional', order: 3, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support', 'Other'] },
-        { key: 'equipmentAsset', label: 'Equipment / Asset', state: 'conditional', order: 4, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support'] },
-        { key: 'issueProblem', label: 'Issue / Problem', state: 'conditional', order: 5, applicableActivityTypes: ['Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Customer Support'] },
-        { key: 'outcome', label: 'Outcome', state: 'optional', order: 6, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support', 'Other'] },
-        { key: 'resolution', label: 'Resolution', state: 'conditional', order: 7, applicableActivityTypes: ['Installation', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Customer Support'] },
-        { key: 'serviceStatus', label: 'Service Status', state: 'conditional', order: 8, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Customer Support'] },
-        { key: 'partsMaterialsUsed', label: 'Parts / Materials Used', state: 'conditional', order: 9, applicableActivityTypes: ['Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Customer Support'] },
-        { key: 'escalation', label: 'Escalation', state: 'conditional', order: 10, applicableActivityTypes: ['Repair / Troubleshooting', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support'] },
-        { key: 'slaPriority', label: 'SLA / Priority', state: 'conditional', order: 11, applicableActivityTypes: ['Repair / Troubleshooting', 'Remote Support', 'Dispatch / Team Coordination'] },
-        { key: 'downtime', label: 'Downtime', state: 'conditional', order: 12, applicableActivityTypes: ['Repair / Troubleshooting'] },
-        { key: 'customerSignOff', label: 'Customer Sign-off', state: 'conditional', order: 13, applicableActivityTypes: ['Service Visit', 'Installation', 'Repair / Troubleshooting'] },
-        { key: 'intelligence', label: 'Service Notes', state: 'optional', order: 14, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support', 'Other'] },
-        { key: 'nextAction', label: 'Next Action', state: 'optional', order: 15, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support', 'Other'] },
-        { key: 'structuredOutcomes', label: 'Service Outcomes', state: 'optional', order: 16, applicableActivityTypes: ['Service Visit', 'Installation', 'Preventive Maintenance', 'Repair / Troubleshooting', 'Inspection', 'Remote Support', 'Dispatch / Team Coordination', 'Customer Support', 'Other'] },
+        { key: 'account', label: 'Location', state: 'required', order: 1 },
+        { key: 'jobCustomer', label: 'Customer', state: 'optional', order: 2 },
+        { key: 'contactPerson', label: 'Contact Person', state: 'optional', order: 3 },
+        { key: 'workOrderJob', label: 'Job ID', state: 'optional', order: 4 },
+        { key: 'jobPriority', label: 'Priority', state: 'optional', order: 5 },
+        { key: 'assignedTechnician', label: 'Assigned Technician', state: 'optional', order: 5.5 },
+        { key: 'equipmentAsset', label: 'Equipment / Asset', state: 'conditional', order: 6 },
+        { key: 'issueProblem', label: 'Issue / Problem', state: 'conditional', order: 7 },
+        { key: 'issuePriority', label: 'Issue Priority', state: 'conditional', order: 8 },
+        { key: 'arrivalTime', label: 'Arrival Time', state: 'optional', order: 9 },
+        { key: 'departureTime', label: 'Departure Time', state: 'optional', order: 10 },
+        { key: 'workPerformed', label: 'Description', state: 'optional', order: 11 },
+        { key: 'actionsTaken', label: 'Actions Taken', state: 'optional', order: 12 },
+        { key: 'partsUsed', label: 'Parts Used', state: 'optional', order: 13 },
+        { key: 'findings', label: 'Findings', state: 'optional', order: 14 },
+        { key: 'resolution', label: 'Resolution', state: 'optional', order: 15 },
+        { key: 'condition', label: 'Condition', state: 'conditional', order: 16 },
+        { key: 'servicePerformed', label: 'Service Performed', state: 'conditional', order: 17 },
+        { key: 'nextServiceDate', label: 'Next Service Date', state: 'conditional', order: 18 },
+        { key: 'serviceStatus', label: 'Service Status', state: 'optional', order: 19 },
+        { key: 'customerSignOff', label: 'Customer Confirmation', state: 'optional', order: 20 },
+        { key: 'followUpRequired', label: 'Follow-up Required', state: 'optional', order: 21 },
+        { key: 'followUpDate', label: 'Follow-up Date', state: 'optional', order: 22 },
+        { key: 'downtime', label: 'Downtime', state: 'optional', order: 22.5 },
+        { key: 'intelligence', label: 'Service Notes', state: 'optional', order: 23 },
+        { key: 'nextAction', label: 'Follow-up Action', state: 'optional', order: 24 },
+        { key: 'structuredOutcomes', label: 'Service Outcomes', state: 'optional', order: 25 },
       ],
     },
     followUps: {
@@ -353,6 +406,9 @@ export const FOUNDATION_TEMPLATE_SCHEMAS: Record<string, TemplateSchema> = {
         'Escalation Required': 'risks',
         'Follow-up Required': 'stakeholders',
         'Equipment Fault Identified': 'risks',
+        'Job Completed': 'progress',
+        'Awaiting Verification': 'risks',
+        'Customer Confirmation Pending': 'stakeholders',
       },
       scoreWeights: {
         'escalation required': 30,
@@ -375,9 +431,15 @@ export const FOUNDATION_TEMPLATE_SCHEMAS: Record<string, TemplateSchema> = {
       ],
     },
     report: { sections: [
-      { id: 'weekly-summary', title: 'Service Summary', enabled: true, order: 1, dataGroups: ['weeklyPlan', 'dailyActivities'] },
-      { id: 'daily-activity-breakdown', title: 'Daily Service Activity', enabled: true, order: 2, dataGroups: ['dailyActivities'] },
-      { id: 'priorities-coming-week', title: 'Priorities for Coming Week', enabled: true, order: 3, dataGroups: ['priorities', 'followUps'] },
+      { id: 'weekly-summary', title: 'Weekly Operations Summary', enabled: true, order: 1, dataGroups: ['weeklyPlan', 'dailyActivities', 'followUps'] },
+      { id: 'daily-activity-breakdown', title: 'Daily Field Activity Breakdown', enabled: true, order: 2, dataGroups: ['dailyActivities'] },
+      { id: 'job-assignment-outcomes', title: 'Job / Assignment Outcomes', enabled: true, order: 3, dataGroups: ['fieldOperationsOutcomes'] },
+      { id: 'service-resolution-status', title: 'Service & Resolution Status', enabled: true, order: 4, dataGroups: ['fieldOperationsResolution'] },
+      { id: 'operational-intelligence', title: 'Equipment & Operational Intelligence', enabled: true, order: 5, dataGroups: ['fieldOperationsIntelligence'] },
+      { id: 'parts-resources', title: 'Parts & Resource Requirements', enabled: true, order: 6, dataGroups: ['fieldOperationsParts'] },
+      { id: 'customer-site-issues', title: 'Customer / Site Issues', enabled: true, order: 7, dataGroups: ['fieldOperationsCustomerIssues'] },
+      { id: 'priorities-coming-week', title: 'Priorities for Coming Week', enabled: true, order: 8, dataGroups: ['priorities', 'followUps'] },
+      { id: 'completed-follow-ups', title: 'Completed Follow-ups', enabled: true, order: 9, dataGroups: ['followUps'] },
     ] },
   },
   'small-business': {
@@ -525,13 +587,13 @@ export const FOUNDATION_TEMPLATE_SCHEMAS: Record<string, TemplateSchema> = {
     templateId: 'education',
     planning: { categories: [
       { key: 'facilities', label: 'Classes / Subjects', enabled: true, required: false, order: 1 },
-      { key: 'hcps', label: 'Students / Teachers', enabled: true, required: false, order: 2 },
-      { key: 'primaryObjectives', label: 'Learning Objectives', enabled: true, required: false, order: 3 },
-      { key: 'commercialPriorities', label: 'Learning Priorities', enabled: true, required: false, order: 4 },
+      { key: 'primaryObjectives', label: 'Learning Objectives', enabled: true, required: false, order: 2 },
+      { key: 'virtualEngagements', label: 'Weekly Teaching Plan', enabled: true, required: false, order: 3 },
+      { key: 'commercialPriorities', label: 'Weekly Targets', enabled: true, required: false, order: 4 },
       { key: 'successMeasures', label: 'Learning Measures', enabled: true, required: false, order: 5 },
     ] },
     activities: {
-      types: ['Lesson', 'Student Support', 'Assessment', 'Parent / Guardian Meeting', 'Teacher Meeting', 'Planning', 'Other'],
+      types: ['Lesson', 'Student Activity', 'Classroom Activity', 'Group Work', 'Practical Work', 'Assessment', 'Student Support', 'Parent / Guardian Meeting', 'Teacher / Staff Meeting', 'Planning', 'Other'],
       fields: [
         { key: 'account', label: 'Class / Subject', state: 'required', order: 1 },
         { key: 'hcpNames', label: 'Student / Teacher', state: 'optional', order: 2 },
@@ -539,6 +601,15 @@ export const FOUNDATION_TEMPLATE_SCHEMAS: Record<string, TemplateSchema> = {
         { key: 'intelligence', label: 'Teaching Notes', state: 'optional', order: 4 },
         { key: 'nextAction', label: 'Next Action', state: 'optional', order: 5 },
         { key: 'structuredOutcomes', label: 'Learning Outcomes', state: 'optional', order: 6 },
+        { key: 'educationCourseProgramme', label: 'Course / Programme', state: 'optional', order: 7 },
+        { key: 'educationClassGroup', label: 'Class / Group', state: 'optional', order: 8 },
+        { key: 'educationInstructor', label: 'Instructor', state: 'optional', order: 10 },
+        { key: 'educationLearningObjectiveId', label: 'Learning Objective', state: 'optional', order: 11 },
+        { key: 'educationTeachingActivity', label: 'Teaching Activity', state: 'optional', order: 12 },
+        { key: 'educationStudentActivity', label: 'Student Activity', state: 'optional', order: 13 },
+        { key: 'educationExpectedOutput', label: 'Expected Output', state: 'optional', order: 15 },
+        { key: 'educationLearningResult', label: 'Learning Result / Outcome', state: 'optional', order: 16 },
+        { key: 'educationStatus', label: 'Activity Status', state: 'optional', order: 17 },
       ],
     },
     followUps: { fields: [

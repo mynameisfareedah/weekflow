@@ -161,24 +161,14 @@ function makeTitleFromActivity(activity: DailyActivity, template: WeekFlowTempla
 
 function buildPersonalSummary(activity: DailyActivity) {
   const text = cleanLabel(activity.outcome || activity.account || activity.activityType)
-  const account = cleanLabel(activity.account)
-  const lowerAccount = account.toLowerCase()
-  const lowerType = activity.activityType.toLowerCase()
+  if (text) return `Recorded activity: ${sentenceCase(text).toLowerCase()}.`
+  return 'Recorded activity without further detail.'
+}
 
-  if (lowerType.includes('appointment') || lowerAccount.includes('hair') || lowerAccount.includes('salon')) {
-    const sentence = text ? `Completed ${text.toLowerCase()} as planned.` : 'Completed the appointment as planned.'
-    return sentence
-  }
-
-  if (lowerAccount.includes('tailor') || lowerAccount.includes('tailors')) {
-    const adjusted = text ? `Dropped off clothing with the tailor for ${inflateValue(text).toLowerCase()}.` : 'Dropped off clothing with the tailor for adjustment.'
-    const balance = normalizeWhitespace(activity.intelligence || '')
-    const balanceSentence = balance ? ` A ${balance.replace(/^to\s+/i, '').replace(/^(balance\s+)?her\s+/i, '').replace(/^.*?\b(\d[0-9,]*)\b.*$/i, '$1')} balance was noted in relation to the adjustment.` : ''
-    return `${adjusted}${balanceSentence}`.replace(/\s+/g, ' ').trim()
-  }
-
-  if (text) return `Completed ${sentenceCase(text).toLowerCase()} as planned.`
-  return 'Completed the activity as planned.'
+function hasExplicitPersonalCompletionEvidence(activity: DailyActivity) {
+  const status = normalizeWhitespace(activity.progressStatus || '').toLowerCase()
+  if (['complete', 'completed', 'done', 'achieved', 'finished', 'resolved'].includes(status)) return true
+  return activity.structuredOutcomes.some((outcome) => ['Deliverable Completed', 'Job Completed'].includes(outcome.type))
 }
 
 function buildFieldSalesSummary(activity: DailyActivity) {
@@ -226,6 +216,27 @@ function buildGenericSummary(activity: DailyActivity) {
   return withFinalPeriod(sentenceParts.join(' ') || 'No details recorded.')
 }
 
+function buildFieldServiceSummary(activity: DailyActivity) {
+  const evidence = [
+    activity.workPerformed ? `Work: ${activity.workPerformed}` : '',
+    activity.jobCustomer ? `Customer: ${activity.jobCustomer}` : '',
+    activity.location ? `Location: ${activity.location}` : '',
+    activity.workOrderJob ? `Job ID: ${activity.workOrderJob}` : '',
+    activity.equipmentAsset ? `Equipment: ${activity.equipmentAsset}` : '',
+    activity.issueProblem ? `Issue: ${activity.issueProblem}` : '',
+    activity.actionsTaken ? `Actions taken: ${activity.actionsTaken}` : '',
+    activity.findings ? `Findings: ${activity.findings}` : '',
+    activity.resolution ? `Resolution: ${activity.resolution}` : '',
+    activity.serviceStatus ? `Service status: ${activity.serviceStatus}` : '',
+    activity.customerSignOff ? `Customer confirmation: ${activity.customerSignOff}` : '',
+    activity.downtime ? `Downtime: ${activity.downtime}` : '',
+    activity.partsUsed ? `Parts used: ${activity.partsUsed}` : '',
+    activity.servicePerformed ? `Service performed: ${activity.servicePerformed}` : '',
+    activity.intelligence ? `Service notes: ${activity.intelligence}` : '',
+  ].filter(Boolean).map((value) => humanizeText(value))
+  return withFinalPeriod(evidence.join(' ') || 'No Field Operations evidence was recorded.')
+}
+
 function buildActivityNarrative(activity: DailyActivity, template: WeekFlowTemplate, plan?: WeeklyPlan) {
   const title = makeTitleFromActivity(activity, template)
   if (template.id === 'personal') {
@@ -251,6 +262,14 @@ function buildActivityNarrative(activity: DailyActivity, template: WeekFlowTempl
       title,
       summary: buildNgoCommunitySummary(activity, plan),
       detail: activity.nextAction ? `Next Action: ${withFinalPeriod(activity.nextAction)}` : undefined,
+    }
+  }
+
+  if (template.id === 'field-service') {
+    return {
+      title,
+      summary: buildFieldServiceSummary(activity),
+      detail: activity.nextAction ? `Follow-up Action: ${withFinalPeriod(activity.nextAction)}` : undefined,
     }
   }
 
@@ -613,6 +632,13 @@ function buildSummaryText(snapshot: { activities: DailyActivity[]; followUps: Fo
     return `The week included ${activities.length} recorded field activity${activities.length === 1 ? '' : 'ies'} across ${accounts.length || 1} account${accounts.length === 1 ? '' : 's'}.`
   }
 
+  if (template.id === 'field-service') {
+    const sites = [...new Set(activities.map((activity) => cleanLabel(activity.account)).filter(Boolean))]
+    const equipment = [...new Set(activities.map((activity) => cleanLabel(activity.equipmentAsset ?? '')).filter(Boolean))]
+    const openFollowUps = followUps.length
+    return `The week included ${activities.length} actual Field Operations activit${activities.length === 1 ? 'y' : 'ies'} across ${sites.length || 1} site${sites.length === 1 ? '' : 's'}${equipment.length > 0 ? `, addressing ${equipment.length} equipment asset${equipment.length === 1 ? '' : 's'}` : ''}. ${openFollowUps > 0 ? `${openFollowUps} open follow-up${openFollowUps === 1 ? '' : 's'} remain.` : 'No open follow-ups were recorded.'}`
+  }
+
   if (template.id === 'project-management') {
     const performance = (snapshot as { performance?: ProjectPerformance }).performance
     if (performance) return performance.summary
@@ -625,6 +651,80 @@ function buildSummaryText(snapshot: { activities: DailyActivity[]; followUps: Fo
   }
 
   return `The week included ${activities.length} recorded activity items.`
+}
+
+function buildFieldServiceReportItems(sectionId: string, snapshot: { weekKey: string; activities: DailyActivity[]; followUps: FollowUp[]; plan: WeeklyPlan; template?: WeekFlowTemplate }, template: WeekFlowTemplate): NarrativeItem[] {
+  const activities = snapshot.activities
+  const intelligence = deriveWeeklyIntelligence({ selectedWeek: snapshot.weekKey, plan: snapshot.plan, activities, followUps: snapshot.followUps, template })
+  const supportedSignalTitles = ['Unresolved Service Issue', 'Repeat Fault', 'Recurring Equipment Problem', 'Escalation Required', 'Downtime', 'Preventive Maintenance', 'Parts Required', 'Customer Concern']
+
+  if (sectionId === 'weekly-summary') {
+    const jobs = activities.filter((activity) => activity.workOrderJob?.trim()).length
+    const resolved = activities.filter((activity) => ['Resolved', 'Closed'].includes(activity.serviceStatus ?? '') && activity.resolution?.trim()).length
+    const statuses = [...new Set(activities.map((activity) => activity.serviceStatus).filter(Boolean))]
+    return activities.length > 0 ? [
+      { title: 'Actual activity', summary: `${activities.length} Field Operations activit${activities.length === 1 ? 'y' : 'ies'} recorded across ${new Set(activities.map((activity) => activity.account)).size} site${new Set(activities.map((activity) => activity.account)).size === 1 ? '' : 's'}.` },
+      ...(jobs > 0 ? [{ title: 'Jobs / assignments', summary: `${jobs} actual activit${jobs === 1 ? 'y includes' : 'ies include'} a Job ID.` }] : []),
+      ...(resolved > 0 ? [{ title: 'Resolution evidence', summary: `${resolved} activit${resolved === 1 ? 'y has' : 'ies have'} explicit resolution evidence with Resolved or Closed status.` }] : []),
+      ...(statuses.length > 0 ? [{ title: 'Operational status', summary: statuses.join(', ') }] : []),
+    ] : [{ title: 'No actual Field Operations activity', summary: 'No actual Field Operations activity was recorded for this reporting week.' }]
+  }
+
+  if (sectionId === 'daily-activity-breakdown') {
+    return snapshot.plan.days.flatMap((day) => {
+      const dayActivities = activities.filter((activity) => activity.date === day.date)
+      return dayActivities.length > 0
+        ? dayActivities.map((activity) => ({ ...buildActivityNarrative(activity, template, snapshot.plan), title: `${day.label} — ${buildActivityNarrative(activity, template, snapshot.plan).title}` }))
+        : [{ title: `${day.label}, ${formatDateLabel(day.date)}`, summary: 'No Field Operations activity recorded.' }]
+    })
+  }
+
+  if (sectionId === 'job-assignment-outcomes') {
+    const items = activities.flatMap((activity) => activity.structuredOutcomes.map((outcome) => ({ title: `${titleCasePhrase(cleanLabel(activity.account))} — ${outcome.type}`, summary: withFinalPeriod(outcome.details || outcome.type) })))
+    return items.length > 0 ? items : [{ title: 'No actual job outcomes', summary: 'No structured job or assignment outcomes were recorded.' }]
+  }
+
+  if (sectionId === 'service-resolution-status') {
+    return activities.filter((activity) => activity.serviceStatus || activity.resolution || activity.customerSignOff || activity.followUpRequired).map((activity) => ({
+      title: `${titleCasePhrase(cleanLabel(activity.account))}${activity.workOrderJob ? ` — ${activity.workOrderJob}` : ''}`,
+      summary: [activity.serviceStatus ? `Service Status: ${activity.serviceStatus}` : '', activity.resolution ? `Resolution: ${activity.resolution}` : '', activity.customerSignOff ? `Customer Confirmation: ${activity.customerSignOff}` : '', activity.followUpRequired && activity.followUpRequired !== 'Not required' ? `Follow-up Required: ${activity.followUpRequired}` : ''].filter(Boolean).join(' '),
+      detail: activity.nextAction ? `Next action: ${withFinalPeriod(activity.nextAction)}` : undefined,
+    }))
+  }
+
+  if (sectionId === 'operational-intelligence') {
+    const items = Object.values(intelligence.insights).flat().filter((item) => supportedSignalTitles.includes(item.title)).map((item) => ({ title: item.title, summary: withFinalPeriod(item.detail), detail: item.account ? `Site: ${item.account}` : undefined }))
+    return items.length > 0 ? items : [{ title: 'No operational intelligence', summary: 'No evidence-backed operational intelligence was recorded.' }]
+  }
+
+  if (sectionId === 'parts-resources') {
+    const items = activities.flatMap((activity) => {
+      const parts = [activity.partsUsed ? `Parts Used: ${activity.partsUsed}` : '', activity.partsMaterialsUsed ? `Materials: ${activity.partsMaterialsUsed}` : '', ...activity.structuredOutcomes.filter((outcome) => outcome.type === 'Parts Required').map((outcome) => `Parts Required: ${outcome.details || outcome.type}`)].filter(Boolean)
+      return parts.length > 0 ? [{ title: titleCasePhrase(cleanLabel(activity.account)), summary: withFinalPeriod(parts.join(' ')) }] : []
+    })
+    return items.length > 0 ? items : [{ title: 'No parts or resource evidence', summary: 'No Parts Used or Parts Required evidence was recorded.' }]
+  }
+
+  if (sectionId === 'customer-site-issues') {
+    const items = activities.flatMap((activity) => {
+      const details = [activity.issueProblem ? `Issue: ${activity.issueProblem}` : '', activity.customerSignOff ? `Customer Confirmation: ${activity.customerSignOff}` : '', activity.jobCustomer ? `Customer: ${activity.jobCustomer}` : '', activity.nextAction ? `Next action: ${activity.nextAction}` : ''].filter(Boolean)
+      return details.length > 0 ? [{ title: titleCasePhrase(cleanLabel(activity.account)), summary: withFinalPeriod(details.join(' ')) }] : []
+    })
+    return items.length > 0 ? items : [{ title: 'No customer or site issues', summary: 'No customer or site issue evidence was recorded.' }]
+  }
+
+  if (sectionId === 'priorities-coming-week') {
+    const priorities = snapshot.plan.commercialPriorities.map((item) => item.text.trim()).filter(Boolean).map((text) => ({ title: 'Planned priority', summary: withFinalPeriod(text) }))
+    const followUps = snapshot.followUps.filter((followUp) => followUp.status === 'open').map((followUp) => buildFollowUpNarrative(followUp, template))
+    return [...priorities, ...followUps].slice(0, 8).length > 0 ? [...priorities, ...followUps].slice(0, 8) : [{ title: 'No coming-week priorities', summary: 'No explicit Field Operations priorities or open follow-ups were recorded.' }]
+  }
+
+  if (sectionId === 'completed-follow-ups') {
+    const completed = snapshot.followUps.filter((followUp) => followUp.status === 'completed')
+    return completed.length > 0 ? completed.map((followUp) => buildFollowUpNarrative(followUp, template)) : [{ title: 'No completed follow-ups', summary: 'No completed Field Operations follow-ups were recorded.' }]
+  }
+
+  return []
 }
 
 function formatHours(value: number | null) {
@@ -664,10 +764,7 @@ function sectionItemsForSection(sectionId: string, snapshot: { weekKey: string; 
   if (template.id === 'ngo-community') return buildNgoReportItems(sectionId, snapshot)
 
   if (template.id === 'personal') {
-    const personalMeaningfulActivities = activities.filter((activity) => {
-      const actualResults = normalizeWhitespace(activity.actualResults || '')
-      return Boolean(actualResults) && !/^((complete|completed|done|finished)(\s+(the\s+)?(task|activity|work|workday|goal))?)$/i.test(actualResults)
-    })
+    const personalMeaningfulActivities = activities.filter(hasExplicitPersonalCompletionEvidence)
 
     switch (sectionId) {
       case 'weekly-summary': {
@@ -699,7 +796,7 @@ function sectionItemsForSection(sectionId: string, snapshot: { weekKey: string; 
             humanizeText(activity.actualResults || ''),
           ].filter(Boolean).join('. ')),
         }))
-        return items.length > 0 ? items : [{ title: 'No meaningful accomplishments', summary: 'No meaningful completed activity was recorded this week.' }]
+        return items.length > 0 ? items : [{ title: 'No meaningful accomplishments', summary: 'No meaningful activity was recorded this week.' }]
       }
       case 'progress-against-goals': {
         const items: NarrativeItem[] = []
@@ -859,7 +956,7 @@ export function buildNarrativeReport(snapshot: {
     title: section.title,
     order: section.order,
     emptyText: section.presentation.emptyState,
-    items: sectionItemsForSection(section.sectionId, snapshot, template),
+    items: template.id === 'field-service' ? buildFieldServiceReportItems(section.sectionId, snapshot, template) : sectionItemsForSection(section.sectionId, snapshot, template),
   }))
 
   return {

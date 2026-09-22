@@ -5,7 +5,7 @@ import {
   type FollowUpPriority,
   type FollowUpStatus,
 } from '../types/followUp'
-import { getCurrentCloudWorkspaceId, getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getLegacyCompatibleWorkspaceId, getWorkspaceScopedStorageKey } from './workspaceStorage'
+import { getCurrentCloudWorkspaceId, getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getWorkspaceScopedStorageKey, shouldUseLegacyStorageFallback, hasAuthenticatedCloudWorkspace } from './workspaceStorage'
 import { supabase } from '../lib/supabase'
 
 const STORAGE_PREFIX = 'weekflow-follow-ups:'
@@ -16,7 +16,7 @@ function getWorkspaceStorageKey(weekKey: string, workspaceId = getCurrentWorkspa
 }
 
 function getLegacyCompatibleStorageValue(weekKey: string, workspaceId = getCurrentWorkspaceId()) {
-  if (workspaceId !== getLegacyCompatibleWorkspaceId()) return null
+  if (!shouldUseLegacyStorageFallback() || workspaceId === null) return null
   return window.localStorage.getItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekKey))
 }
 
@@ -50,6 +50,14 @@ function normalizeFollowUp(value: unknown): FollowUp | null {
     status: candidate.status,
     ...(typeof candidate.notes === 'string' && candidate.notes ? { notes: candidate.notes } : {}),
     ...(typeof candidate.sourceActivityId === 'string' ? { sourceActivityId: candidate.sourceActivityId } : {}),
+    ...(candidate.sourceContext && typeof candidate.sourceContext === 'object' ? {
+      sourceContext: {
+        ...(typeof candidate.sourceContext.workOrderJob === 'string' && candidate.sourceContext.workOrderJob ? { workOrderJob: candidate.sourceContext.workOrderJob } : {}),
+        ...(typeof candidate.sourceContext.customer === 'string' && candidate.sourceContext.customer ? { customer: candidate.sourceContext.customer } : {}),
+        ...(typeof candidate.sourceContext.equipmentAsset === 'string' && candidate.sourceContext.equipmentAsset ? { equipmentAsset: candidate.sourceContext.equipmentAsset } : {}),
+        ...(typeof candidate.sourceContext.issueProblem === 'string' && candidate.sourceContext.issueProblem ? { issueProblem: candidate.sourceContext.issueProblem } : {}),
+      },
+    } : {}),
     createdAt: typeof candidate.createdAt === 'string' ? candidate.createdAt : new Date().toISOString(),
     updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : new Date().toISOString(),
   }
@@ -57,6 +65,7 @@ function normalizeFollowUp(value: unknown): FollowUp | null {
 
 function loadFollowUpsLocal(weekKey: string): FollowUp[] {
   try {
+    if (hasAuthenticatedCloudWorkspace()) return []
     const workspaceId = getCurrentWorkspaceId()
     const key = getWorkspaceStorageKey(weekKey, workspaceId)
     const saved = (key ? window.localStorage.getItem(key) : null) ?? getLegacyCompatibleStorageValue(weekKey, workspaceId)
@@ -76,7 +85,7 @@ function saveFollowUpsLocal(weekKey: string, followUps: FollowUp[]) {
     const workspaceKey = getWorkspaceStorageKey(weekKey, workspaceId)
     if (!workspaceId || !workspaceKey) return
     window.localStorage.setItem(workspaceKey, JSON.stringify(followUps))
-    if (workspaceId === getLegacyCompatibleWorkspaceId()) {
+    if (shouldUseLegacyStorageFallback()) {
       window.localStorage.setItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekKey), JSON.stringify(followUps))
     }
   } catch {
@@ -94,9 +103,10 @@ export function saveFollowUps(weekKey: string, followUps: FollowUp[]) {
 
 export async function loadFollowUpsAsync(weekKey: string): Promise<FollowUp[]> {
   const localFollowUps = loadFollowUpsLocal(weekKey)
+  if (!supabase) return localFollowUps
   try {
     const workspaceId = await getCurrentCloudWorkspaceId()
-    if (!workspaceId || !supabase) return localFollowUps
+    if (!workspaceId) return localFollowUps
 
     const { data, error } = await supabase
       .from('follow_ups')
@@ -113,15 +123,21 @@ export async function loadFollowUpsAsync(weekKey: string): Promise<FollowUp[]> {
     saveFollowUpsLocal(weekKey, cloudFollowUps)
     return cloudFollowUps
   } catch {
-    return localFollowUps
+    throw new Error('Follow-ups could not be loaded from the workspace.')
   }
 }
 
 export async function saveFollowUpsAsync(weekKey: string, followUps: FollowUp[]): Promise<boolean> {
-  saveFollowUpsLocal(weekKey, followUps)
+  if (!supabase) {
+    saveFollowUpsLocal(weekKey, followUps)
+    return true
+  }
   try {
     const workspaceId = await getCurrentCloudWorkspaceId()
-    if (!workspaceId || !supabase) return false
+    if (!workspaceId) {
+      saveFollowUpsLocal(weekKey, followUps)
+      return true
+    }
 
     const weekRecord = await supabase
       .from('workspace_weeks')
@@ -132,6 +148,7 @@ export async function saveFollowUpsAsync(weekKey: string, followUps: FollowUp[])
       .from('follow_ups')
       .upsert({ workspace_id: workspaceId, week_start: weekKey, data: followUps }, { onConflict: 'workspace_id,week_start' })
     if (followUpRecord.error) throw followUpRecord.error
+    saveFollowUpsLocal(weekKey, followUps)
     return true
   } catch {
     return false

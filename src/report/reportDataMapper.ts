@@ -1,6 +1,8 @@
 import type { ReportSectionPresentation, ReportSectionSchema } from '../config/templateSchema.ts'
 import type { WeekFlowTemplate } from '../config/templates.ts'
 import type { ReportSnapshot } from '../utils/reportDocx.ts'
+import { deriveWeeklyIntelligence } from '../intelligence/intelligenceEngine.ts'
+import { deriveCustomTargetProgress } from '../customTargets.ts'
 
 export type ReportDataGroupValue = unknown
 
@@ -17,6 +19,10 @@ export interface MappedReportSection {
 export type ReportDataMappingResult = MappedReportSection
 
 function getSupportedGroup(snapshot: ReportSnapshot, group: string): ReportDataGroupValue | undefined {
+  const fieldServiceActivities = snapshot.template?.id === 'field-service' ? snapshot.activities : []
+  const fieldServiceIntelligence = snapshot.template?.id === 'field-service'
+    ? Object.values(deriveWeeklyIntelligence({ selectedWeek: snapshot.weekKey, plan: snapshot.plan, activities: snapshot.activities, followUps: snapshot.followUps, template: snapshot.template })).flat()
+    : []
   switch (group) {
     case 'weeklyPlan':
       return snapshot.plan
@@ -39,6 +45,16 @@ function getSupportedGroup(snapshot: ReportSnapshot, group: string): ReportDataG
         ...activity.structuredOutcomes.map((outcome) => ({ account: activity.account, type: outcome.type, details: outcome.details })),
         ...(activity.intelligence.trim() ? [{ account: activity.account, type: 'Business Notes', details: activity.intelligence }] : []),
       ])
+    case 'fieldOperationsOutcomes':
+      return fieldServiceActivities.flatMap((activity) => activity.structuredOutcomes.map((outcome) => ({ activity, outcome })))
+    case 'fieldOperationsResolution':
+      return fieldServiceActivities.filter((activity) => activity.serviceStatus?.trim() || activity.resolution?.trim() || activity.customerSignOff?.trim() || activity.followUpRequired?.trim())
+    case 'fieldOperationsIntelligence':
+      return fieldServiceIntelligence
+    case 'fieldOperationsParts':
+      return fieldServiceActivities.filter((activity) => activity.partsUsed?.trim() || activity.partsMaterialsUsed?.trim() || activity.structuredOutcomes.some((outcome) => outcome.type === 'Parts Required'))
+    case 'fieldOperationsCustomerIssues':
+      return fieldServiceActivities.filter((activity) => activity.customerSignOff?.trim() || activity.issueProblem?.trim() || activity.structuredOutcomes.some((outcome) => outcome.type === 'Customer Confirmation Pending'))
     case 'projectPerformance':
       return snapshot.performance
     case 'projectProgress':
@@ -53,7 +69,13 @@ function getSupportedGroup(snapshot: ReportSnapshot, group: string): ReportDataG
       return snapshot.performance ? snapshot.activities.filter((activity) => activity.decision?.trim()) : undefined
     case 'stakeholders':
       return snapshot.performance ? snapshot.activities.filter((activity) => activity.hcpNames.length > 0) : undefined
+    case 'custom-targets':
+      return snapshot.customReportConfig?.targets.map((target) => deriveCustomTargetProgress(target, snapshot.activities)) ?? undefined
     default:
+      if (group.startsWith('custom-category:')) {
+        const categoryId = group.slice('custom-category:'.length)
+        return snapshot.activities.filter((activity) => activity.customCategoryId === categoryId)
+      }
       return undefined
   }
 }

@@ -2,6 +2,8 @@ import type { Workspace, WorkspaceWeekIdentity } from '../types/workspace'
 import { createWorkspaceWeekIdentity, getWorkspaceWeekKey } from '../types/workspace'
 import { getCurrentUser } from '../account'
 import { supabase } from '../lib/supabase'
+import { canUseLegacyStorageFallback } from './legacyStoragePolicy'
+import type { ReportMetadata } from '../report/reportMetadata'
 
 export const WORKSPACES_STORAGE_KEY = 'weekflow-workspaces'
 export const CURRENT_WORKSPACE_STORAGE_KEY = 'weekflow-current-workspace'
@@ -13,6 +15,14 @@ let activeWorkspaceOwnerId: string | null = null
 
 export function setWorkspaceOwner(ownerId: string | null) {
   activeWorkspaceOwnerId = ownerId?.trim() || null
+}
+
+export function shouldUseLegacyStorageFallback() {
+  return canUseLegacyStorageFallback(Boolean(supabase), activeWorkspaceOwnerId)
+}
+
+export function hasAuthenticatedCloudWorkspace() {
+  return Boolean(supabase && activeWorkspaceOwnerId && getCurrentWorkspace()?.cloudId)
 }
 
 export function clearWorkspaceOwnerLocalData(ownerId: string) {
@@ -29,8 +39,10 @@ export function clearWorkspaceOwnerLocalData(ownerId: string) {
   const workspacePrefixes = workspaceIds.flatMap((workspaceId) => [
     `weekflow-weekly-plan:${workspaceId}:`,
     `weekflow-daily-activities:${workspaceId}:`,
+    `weekflow-education-records:${workspaceId}:`,
     `weekflow-follow-ups:${workspaceId}:`,
     `weekflow-smart-start:${workspaceId}:`,
+    `weekflow-custom-template:${workspaceId}`,
     `weekflow-report-history:${workspaceId}`,
     `weekflow-template:${workspaceId}`,
     `weekflow-selected-week:${workspaceId}`,
@@ -59,12 +71,17 @@ function normalizeWorkspace(value: unknown): Workspace | null {
     return null
   }
 
+  const reportMetadata = value && typeof value === 'object' && candidate.reportMetadata && typeof candidate.reportMetadata === 'object'
+    ? candidate.reportMetadata as ReportMetadata
+    : undefined
+
   return {
     id: candidate.id,
     ownerId: typeof candidate.ownerId === 'string' ? candidate.ownerId : DEFAULT_ACCOUNT_ID,
     ...(typeof candidate.cloudId === 'string' ? { cloudId: candidate.cloudId } : {}),
     name: candidate.name,
     templateId: candidate.templateId,
+    ...(reportMetadata ? { reportMetadata } : {}),
     createdAt: typeof candidate.createdAt === 'string' ? candidate.createdAt : createTimestamp(),
     updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : createTimestamp(),
     archived: typeof candidate.archived === 'boolean' ? candidate.archived : false,
@@ -110,6 +127,7 @@ export function loadWorkspaces(): Workspace[] {
   try {
     const saved = window.localStorage.getItem(getOwnerStorageKey(WORKSPACES_STORAGE_KEY))
     if (!saved) {
+      if (activeWorkspaceOwnerId) return []
       const defaultWorkspace = createDefaultWorkspace()
       saveWorkspaces([defaultWorkspace])
       return [defaultWorkspace]
@@ -135,6 +153,7 @@ export function loadWorkspaces(): Workspace[] {
 
     return workspaces
   } catch {
+    if (activeWorkspaceOwnerId) return []
     const fallbackWorkspace = createDefaultWorkspace()
     saveWorkspaces([fallbackWorkspace])
     return [fallbackWorkspace]
@@ -179,8 +198,10 @@ function removeWorkspaceLocalData(workspaceIds: string[]) {
   const localPrefixes = workspaceIds.flatMap((workspaceId) => [
     `weekflow-weekly-plan:${workspaceId}:`,
     `weekflow-daily-activities:${workspaceId}:`,
+    `weekflow-education-records:${workspaceId}:`,
     `weekflow-follow-ups:${workspaceId}:`,
     `weekflow-smart-start:${workspaceId}:`,
+    `weekflow-custom-template:${workspaceId}`,
     `weekflow-report-history:${workspaceId}`,
     `weekflow-template:${workspaceId}`,
     `weekflow-selected-week:${workspaceId}`,
@@ -288,7 +309,7 @@ export function upsertWorkspace(workspace: Workspace) {
   return workspace
 }
 
-export async function renameWorkspace(workspaceId: string, name: string) {
+export async function renameWorkspace(workspaceId: string, name: string, reportMetadata?: ReportMetadata) {
   const normalizedName = normalizeWorkspaceName(name)
   if (!normalizedName) throw new Error('Workspace name is required.')
 
@@ -297,20 +318,33 @@ export async function renameWorkspace(workspaceId: string, name: string) {
   if (isWorkspaceNameTaken(normalizedName, workspace.id)) throw new Error('A workspace with this name already exists.')
 
   const updatedAt = createTimestamp()
-  let nextWorkspace = { ...workspace, name: normalizedName, updatedAt }
+  const normalizedReportMetadata = Object.fromEntries(Object.entries(reportMetadata ?? {}).filter(([, value]) => typeof value === 'string' && value.trim())) as ReportMetadata
+  let nextWorkspace = { ...workspace, name: normalizedName, reportMetadata: Object.keys(normalizedReportMetadata).length > 0 ? normalizedReportMetadata : undefined, updatedAt }
 
   if (supabase) {
     const user = await getCurrentUser()
     if (!user || workspace.ownerId !== user.id) throw new Error('You can only rename a workspace you own.')
 
     if (workspace.cloudId) {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('workspaces')
-        .update({ name: normalizedName, updated_at: updatedAt })
+        .update({ name: normalizedName, updated_at: updatedAt, report_metadata: Object.keys(normalizedReportMetadata).length > 0 ? normalizedReportMetadata : null })
         .eq('id', workspace.cloudId)
         .eq('owner_id', user.id)
         .select('id, name, template_id, created_at, updated_at, archived')
         .maybeSingle()
+
+      if (error && /report_metadata|schema cache|column/i.test(error.message)) {
+        const fallback = await supabase
+          .from('workspaces')
+          .update({ name: normalizedName, updated_at: updatedAt })
+          .eq('id', workspace.cloudId)
+          .eq('owner_id', user.id)
+          .select('id, name, template_id, created_at, updated_at, archived')
+          .maybeSingle()
+        data = fallback.data
+        error = fallback.error
+      }
 
       if (error) throw error
       if (!data) throw new Error('The workspace could not be renamed in the account.')
@@ -320,6 +354,7 @@ export async function renameWorkspace(workspaceId: string, name: string) {
         ownerId: user.id,
         name: data.name,
         templateId: data.template_id,
+        reportMetadata: normalizedReportMetadata,
         createdAt: data.created_at,
         updatedAt: data.updated_at,
         archived: data.archived,
@@ -376,6 +411,7 @@ export async function ensureFirstWorkspaceForOwner(ownerId: string, defaultName 
           ownerId,
           name: cloudWorkspace.name,
           templateId: cloudWorkspace.template_id,
+          reportMetadata: localWorkspace?.reportMetadata,
           createdAt: cloudWorkspace.created_at,
           updatedAt: cloudWorkspace.updated_at,
           archived: cloudWorkspace.archived,
@@ -435,16 +471,24 @@ export async function provisionWorkspaceInCloud(workspace: Workspace): Promise<W
   if (existing.error) throw existing.error
   let cloudId = existing.data?.id
   if (!cloudId) {
-    const created = await supabase
+    let created = await supabase
       .from('workspaces')
       .insert({
         owner_id: user.id,
         name: workspace.name,
         template_id: workspace.templateId,
+        report_metadata: workspace.reportMetadata ?? null,
         archived: false,
       })
       .select('id')
       .single()
+    if (created.error && /report_metadata|schema cache|column/i.test(created.error.message)) {
+      created = await supabase
+        .from('workspaces')
+        .insert({ owner_id: user.id, name: workspace.name, template_id: workspace.templateId, archived: false })
+        .select('id')
+        .single()
+    }
     if (created.error) throw created.error
     cloudId = created.data?.id
   }

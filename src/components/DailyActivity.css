@@ -42,6 +42,7 @@
 .planned-activity small { color: var(--accent-dark); font-size: 11px; font-weight: 700; }
 .planned-activity small b { font-size: 15px; font-weight: 400; margin-left: 6px; }
 .empty-planned, .empty-activities { color: var(--muted); font-size: 13px; }
+.planned-loading { color: var(--muted); font-size: 13px; margin: 0; }
 .empty-planned p { margin: 0 0 8px; }
 .text-button { background: none; border: 0; color: var(--accent-dark); cursor: pointer; font-size: 12px; font-weight: 700; padding: 3px 0; }
 .text-button:hover { color: var(--ink); }
@@ -123,6 +124,16 @@
 .summary-actions { display: flex; flex: 0 0 auto; gap: 10px; }
 .summary-actions button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 11px; padding: 3px 0; }
 .summary-actions button:hover { color: var(--accent-dark); }
+.custom-activity-category, .custom-activity-grid label { display: flex; flex-direction: column; gap: 7px; }
+.custom-activity-controls { display: grid; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.custom-activity-category { margin-bottom: 18px; max-width: 420px; }
+.custom-activity-category > span, .custom-activity-grid label > span { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; }
+.custom-activity-category select, .custom-activity-grid input, .custom-activity-grid select, .custom-activity-grid textarea { background: var(--surface); border: 1px solid var(--line-dark); color: var(--ink); font-size: 13px; min-height: 39px; padding: 8px 10px; }
+.custom-activity-grid { display: grid; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.custom-activity-grid select[multiple] { min-height: 86px; }
+.custom-activity-checkbox { align-items: center; flex-direction: row !important; gap: 8px; padding-top: 25px; }
+.custom-activity-empty, .custom-activity-validation { background: var(--surface-tint); border-left: 2px solid var(--accent); color: var(--muted); font-size: 13px; margin: 0 0 20px; padding: 12px 14px; }
+.custom-activity-validation { border-left-color: var(--danger, #99422b); color: var(--danger, #99422b); }
 
 @media (max-width: 900px) {
   .daily-activity-screen { padding-left: 4vw; padding-right: 4vw; }
@@ -143,6 +154,7 @@
   .planned-activity span { font-size: 13px; }
   .activity-capture-form { padding: 20px 16px; }
   .capture-form-grid, .capture-text-grid { grid-template-columns: 1fr; }
+  .custom-activity-grid, .custom-activity-controls { grid-template-columns: 1fr; }
   .capture-text-grid { margin-top: 18px; }
   .structured-heading { align-items: flex-start; display: block; }
   .outcome-add-control { margin-top: 13px; }

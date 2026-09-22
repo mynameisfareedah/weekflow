@@ -17,86 +17,62 @@ function normalizeServiceValue(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ')
 }
 
-function hasFieldServiceEvidence(activity: DailyActivity): boolean {
-  if (activity.structuredOutcomes.some((outcome) => ['Issue Resolved', 'Issue Partially Resolved', 'Issue Unresolved', 'Installation Completed', 'Preventive Maintenance Completed', 'Inspection Completed', 'Customer Sign-off Obtained', 'Parts Required', 'Escalation Required', 'Follow-up Required', 'Equipment Fault Identified'].includes(outcome.type))) {
-    return true
-  }
-
-  return Boolean(
-    activity.workOrderJob?.trim()
-    || activity.equipmentAsset?.trim()
-    || activity.issueProblem?.trim()
-    || activity.resolution?.trim()
-    || activity.serviceStatus?.trim()
-    || activity.partsMaterialsUsed?.trim()
-    || activity.escalation?.trim()
-    || activity.slaPriority?.trim()
-    || activity.downtime?.trim()
-    || activity.customerSignOff?.trim(),
-  )
+function addFieldInsight(result: Record<IntelligenceCategory, WeeklyInsight[]>, activity: DailyActivity, category: IntelligenceCategory, title: string, detail: string) {
+  if (detail.trim()) result[category].push({ category, title, detail, account: activity.account, evidence: [evidence(activity, detail)] })
 }
 
-function addServiceRepeatSignals(signals: OpportunitySignal[], activities: DailyActivity[]) {
-  const byAsset = new Map<string, DailyActivity[]>()
-  const byIssue = new Map<string, DailyActivity[]>()
-
+function addFieldOperationsInsights(result: Record<IntelligenceCategory, WeeklyInsight[]>, activities: DailyActivity[]) {
+  const repeatedFaultGroups = new Map<string, DailyActivity[]>()
   for (const activity of activities) {
-    const asset = (activity.equipmentAsset ?? '').trim()
-    const issue = (activity.issueProblem ?? '').trim()
-    if (asset) {
-      const key = normalizeServiceValue(asset)
-      if (key) {
-        const existing = byAsset.get(key) ?? []
-        existing.push(activity)
-        byAsset.set(key, existing)
-      }
+    const serviceContext = Boolean(
+      activity.equipmentAsset?.trim()
+      || activity.issueProblem?.trim()
+      || activity.workOrderJob?.trim()
+      || activity.serviceStatus?.trim()
+      || activity.downtime?.trim()
+      || activity.escalation?.trim()
+      || activity.partsUsed?.trim()
+      || activity.partsMaterialsUsed?.trim()
+      || activity.followUpRequired?.trim()
+      || /repair|service|inspection|maintenance|install|troubleshooting|dispatch|support|visit|job/i.test(activity.activityType)
+      || activity.structuredOutcomes.some((outcome) => ['Issue Unresolved', 'Issue Partially Resolved', 'Escalation Required', 'Parts Required', 'Preventive Maintenance Completed', 'Customer Sign-off Obtained', 'Equipment Fault Identified'].includes(outcome.type)),
+    )
+    const issue = activity.issueProblem?.trim()
+    const equipment = activity.equipmentAsset?.trim()
+    if (equipment && issue) {
+      const key = `${normalizeServiceValue(equipment)}::${normalizeServiceValue(issue)}`
+      repeatedFaultGroups.set(key, [...(repeatedFaultGroups.get(key) ?? []), activity])
     }
-    if (issue) {
-      const key = normalizeServiceValue(issue)
-      if (key) {
-        const existing = byIssue.get(key) ?? []
-        existing.push(activity)
-        byIssue.set(key, existing)
-      }
+    const outcomeTypes = new Set(activity.structuredOutcomes.map((outcome) => outcome.type))
+    const status = activity.serviceStatus?.trim()
+    const resolution = activity.resolution?.trim() ?? ''
+    if (status === 'Awaiting Verification' || activity.followUpRequired === 'Required' || activity.followUpRequired === 'Pending' || outcomeTypes.has('Issue Unresolved') || outcomeTypes.has('Issue Partially Resolved') || (issue && (!resolution || /pending|incomplete|unresolved|awaiting/i.test(resolution)))) {
+      const detail = status === 'Awaiting Verification' ? `Service Status: ${status}` : activity.followUpRequired === 'Required' || activity.followUpRequired === 'Pending' ? `Follow-up Required: ${activity.followUpRequired}` : issue ? `Issue / Problem: ${issue}; Resolution: ${resolution || 'not recorded'}` : 'Structured unresolved issue outcome recorded.'
+      addFieldInsight(result, activity, 'risks', 'Unresolved Service Issue', detail)
+    }
+    if (outcomeTypes.has('Escalation Required') || activity.escalation?.trim()) addFieldInsight(result, activity, 'risks', 'Escalation Required', outcomeTypes.has('Escalation Required') ? 'Structured outcome: Escalation Required' : `Escalation: ${activity.escalation!.trim()}`)
+    if (activity.downtime?.trim()) addFieldInsight(result, activity, 'risks', 'Downtime', `Downtime: ${activity.downtime.trim()}`)
+    if (outcomeTypes.has('Parts Required')) addFieldInsight(result, activity, 'deliverables', 'Parts Required', `Structured outcome: Parts Required${activity.partsUsed?.trim() ? `; Parts Used: ${activity.partsUsed.trim()}` : ''}`)
+    const preventiveMaintenanceEvidence = outcomeTypes.has('Preventive Maintenance Completed') || activity.activityType === 'Preventive Maintenance' || activity.activityType === 'Maintenance' || /preventive|scheduled|maintenance due|routine service|service check/i.test(`${activity.servicePerformed ?? ''} ${activity.outcome} ${activity.intelligence ?? ''}`)
+    if (preventiveMaintenanceEvidence && (activity.nextServiceDate?.trim() || /preventive|scheduled|maintenance due|routine service|service check/i.test(`${activity.servicePerformed ?? ''} ${activity.outcome} ${activity.intelligence ?? ''}`))) {
+      addFieldInsight(result, activity, 'progress', 'Preventive Maintenance', activity.nextServiceDate?.trim() ? `Next Service Date: ${activity.nextServiceDate.trim()}` : `Service Performed: ${(activity.servicePerformed || activity.outcome || activity.intelligence).trim()}`)
+    }
+    const customerConcernEvidence = outcomeTypes.has('Customer Confirmation Pending') || activity.customerSignOff === 'Confirmation Pending' || activity.customerSignOff === 'Customer Not Available' || activity.customerSignOff === 'Requires Follow-up' || (serviceContext && /customer concern|service quality|customer complaint|customer dissatisfied|customer issue|customer requested|customer raised/i.test(`${activity.intelligence} ${activity.outcome} ${activity.nextAction}`))
+    if (customerConcernEvidence) {
+      const detail = activity.customerSignOff && activity.customerSignOff !== 'Confirmed Operational'
+        ? `Customer Confirmation: ${activity.customerSignOff}`
+        : activity.intelligence.trim()
+          ? `Customer concern evidence: ${activity.intelligence.trim()}`
+          : 'Structured outcome: Customer Confirmation Pending'
+      addFieldInsight(result, activity, 'stakeholders', 'Customer Concern', detail)
     }
   }
-
-  for (const [key, items] of byAsset.entries()) {
-    if (items.length > 1) {
-      const assets = items.filter((activity) => activity.equipmentAsset && normalizeServiceValue(activity.equipmentAsset) === key)
-      if (assets.length > 1) {
-        const account = assets[0].account
-        const reason = assets.map((activity) => `${activity.account} / ${activity.equipmentAsset}`).join('; ')
-        signals.push({
-          type: 'commercial-opportunity',
-          account,
-          title: 'Repeat fault',
-          reason,
-          strength: 'moderate',
-          category: 'risks',
-          evidence: assets.map((activity) => evidence(activity, `${activity.equipmentAsset ?? 'Equipment'} repeated service issue`, activity.structuredOutcomes[0] ?? undefined)),
-        })
-      }
-    }
-  }
-
-  for (const [key, items] of byIssue.entries()) {
-    if (items.length > 1) {
-      const issues = items.filter((activity) => activity.issueProblem && normalizeServiceValue(activity.issueProblem) === key)
-      if (issues.length > 1) {
-        const account = issues[0].account
-        const reason = issues.map((activity) => `${activity.account} / ${activity.issueProblem}`).join('; ')
-        signals.push({
-          type: 'commercial-opportunity',
-          account,
-          title: 'Recurring equipment problem',
-          reason,
-          strength: 'moderate',
-          category: 'risks',
-          evidence: issues.map((activity) => evidence(activity, `${activity.issueProblem ?? 'Issue'} recurred`, activity.structuredOutcomes[0] ?? undefined)),
-        })
-      }
-    }
+  for (const group of repeatedFaultGroups.values()) {
+    if (group.length < 2) continue
+    const first = group[0]
+    const evidenceItems = group.map((activity) => evidence(activity, `Equipment / Asset: ${activity.equipmentAsset}; Issue / Problem: ${activity.issueProblem}`))
+    result.risks.push({ category: 'risks', title: 'Repeat Fault', detail: `${first.equipmentAsset}: ${first.issueProblem} was captured in ${group.length} actual activities.`, account: first.account, evidence: evidenceItems })
+    result.risks.push({ category: 'risks', title: 'Recurring Equipment Problem', detail: `${first.equipmentAsset} has repeated issue evidence across ${group.length} actual activities.`, account: first.account, evidence: evidenceItems })
   }
 }
 
@@ -338,6 +314,7 @@ export function deriveWeeklyInsights(activities: DailyActivity[], template: Week
     addPersonalInsights(result, activities, plan ?? { weekStart: '', weeklyStrategicObjectives: [], days: [], virtualEngagementPlan: [], keyAccountObjectives: [], commercialPriorities: [], successMeasures: [] }, followUps)
   }
   if (template.id === 'ngo-community') addNgoInsights(result, activities, plan ?? { weekStart: '', weeklyStrategicObjectives: [], days: [], virtualEngagementPlan: [], keyAccountObjectives: [], commercialPriorities: [], successMeasures: [] }, followUps)
+  if (template.id === 'field-service') addFieldOperationsInsights(result, activities)
   for (const activity of activities) {
     for (const outcome of activity.structuredOutcomes) {
       const isConfigured = Object.prototype.hasOwnProperty.call(template.intelligence.structuredOutcomeCategories, outcome.type)
@@ -351,22 +328,7 @@ export function deriveWeeklyInsights(activities: DailyActivity[], template: Week
       result[category].push({ category, title: 'Captured intelligence', detail: text, account: activity.account, evidence: [evidence(activity, text)] })
     }
 
-    if (template.id === 'field-service') {
-      if (!hasFieldServiceEvidence(activity)) continue
-      const serviceText = `${activity.activityType ?? ''} ${activity.issueProblem ?? ''} ${activity.outcome} ${activity.intelligence} ${activity.resolution ?? ''} ${activity.escalation ?? ''} ${activity.downtime ?? ''} ${activity.partsMaterialsUsed ?? ''} ${activity.slaPriority ?? ''} ${activity.equipmentAsset ?? ''} ${activity.serviceStatus ?? ''} ${activity.customerSignOff ?? ''}`.trim()
-      if (serviceText) {
-        const lower = serviceText.toLowerCase()
-        if (/unresolved issue|still unresolved|issue remains unresolved|not resolved/i.test(lower)) result.risks.push({ category: 'risks', title: 'Unresolved service issue', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-        if (/repeat fault|repeated fault|same fault|recurring issue|recurring equipment/i.test(lower)) result.risks.push({ category: 'risks', title: 'Repeat fault', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-        if (/escalation required|escalation|engineering escalation|urgent escalation/i.test(lower)) result.risks.push({ category: 'risks', title: 'Escalation required', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-        if (/downtime|outage|equipment down|service interruption|\d+\s*(hour|hr|minute|min|day)/i.test(lower)) result.risks.push({ category: 'risks', title: 'Downtime requiring attention', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-        if (/safety concern|unsafe|hazard|risk to safety/i.test(lower)) result.risks.push({ category: 'risks', title: 'Safety concern', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-        if (/preventive maintenance|pm opportunity|routine service|maintenance opportunity/i.test(lower)) result.progress.push({ category: 'progress', title: 'Preventive maintenance opportunity', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-        if (/parts required|parts needed|replacement required|spare parts|parts used|materials used/i.test(lower)) result.deliverables.push({ category: 'deliverables', title: 'Parts required', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-        if (/customer concern|customer complaint|service quality|customer satisfaction|customer sign-off|customer sign off/i.test(lower)) result.stakeholders.push({ category: 'stakeholders', title: 'Customer concern', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-        if (/sla risk|critical priority|service level|breached sla/i.test(lower)) result.risks.push({ category: 'risks', title: 'SLA risk', detail: serviceText, account: activity.account, evidence: [evidence(activity, serviceText)] })
-      }
-    }
+    if (template.id === 'field-service') continue
     if (template.id === 'small-business') {
       const text = smallBusinessText(activity)
       if (text) {
@@ -395,19 +357,7 @@ export function deriveOpportunitySignals(activities: DailyActivity[], template: 
       }
     }
 
-    if (template.id === 'field-service') {
-      if (!hasFieldServiceEvidence(activity)) continue
-      const lowerText = `${activity.activityType ?? ''} ${activity.issueProblem ?? ''} ${activity.intelligence ?? ''} ${activity.outcome ?? ''} ${activity.resolution ?? ''} ${activity.escalation ?? ''} ${activity.downtime ?? ''} ${activity.partsMaterialsUsed ?? ''} ${activity.slaPriority ?? ''} ${activity.equipmentAsset ?? ''} ${activity.serviceStatus ?? ''} ${activity.customerSignOff ?? ''}`.toLowerCase()
-      if (/unresolved issue|still unresolved|issue remains unresolved|not resolved/i.test(lowerText)) signals.push({ type: 'commercial-opportunity', account: activity.account, title: 'Unresolved service issue', reason: lowerText, strength: 'moderate', category: 'risks', evidence: [evidence(activity, lowerText)] })
-      if (/escalation required|escalation|engineering escalation/i.test(lowerText)) signals.push({ type: 'commercial-opportunity', account: activity.account, title: 'Escalation required', reason: lowerText, strength: 'moderate', category: 'risks', evidence: [evidence(activity, lowerText)] })
-      if (/downtime|outage|service interruption|equipment down|\d+\s*(hour|hr|minute|min|day)/i.test(lowerText)) signals.push({ type: 'commercial-opportunity', account: activity.account, title: 'Downtime', reason: lowerText, strength: 'moderate', category: 'risks', evidence: [evidence(activity, lowerText)] })
-      if (/safety concern|unsafe|hazard|risk to safety/i.test(lowerText)) signals.push({ type: 'commercial-opportunity', account: activity.account, title: 'Safety concern', reason: lowerText, strength: 'moderate', category: 'risks', evidence: [evidence(activity, lowerText)] })
-      if (/preventive maintenance|maintenance opportunity|routine service/i.test(lowerText)) signals.push({ type: 'commercial-opportunity', account: activity.account, title: 'Preventive maintenance opportunity', reason: lowerText, strength: 'moderate', category: 'progress', evidence: [evidence(activity, lowerText)] })
-      if (/parts required|parts needed|replacement required|spare parts|parts used|materials used/i.test(lowerText)) signals.push({ type: 'commercial-opportunity', account: activity.account, title: 'Parts required', reason: lowerText, strength: 'low', category: 'deliverables', evidence: [evidence(activity, lowerText)] })
-      if (/customer concern|customer complaint|service quality|customer satisfaction|customer sign-off|customer sign off/i.test(lowerText)) signals.push({ type: 'commercial-opportunity', account: activity.account, title: 'Customer concern', reason: lowerText, strength: 'low', category: 'stakeholders', evidence: [evidence(activity, lowerText)] })
-      if (/sla risk|service level|critical priority|breached sla/i.test(lowerText)) signals.push({ type: 'commercial-opportunity', account: activity.account, title: 'SLA risk', reason: lowerText, strength: 'moderate', category: 'risks', evidence: [evidence(activity, lowerText)] })
-      continue
-    }
+    if (template.id === 'field-service') continue
     if (template.id === 'project-management' && `${activity.outcome} ${activity.intelligence}`.trim()) {
       const text = [activity.outcome, activity.intelligence].filter(Boolean).join(' ')
       const category = classifyIntelligenceText(template, text)
@@ -426,6 +376,5 @@ export function deriveOpportunitySignals(activities: DailyActivity[], template: 
       if (!signals.some((signal) => signal.account === activity.account && signal.title === title && signal.evidence[0].activityId === activity.id)) signals.push({ type: 'commercial-opportunity', account: activity.account, title, reason: text, strength: 'moderate', category, evidence: [evidence(activity, text)] })
     }
   }
-  if (template.id === 'field-service') addServiceRepeatSignals(signals, activities)
   return signals
 }

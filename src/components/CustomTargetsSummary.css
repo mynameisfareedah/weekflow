@@ -1,0 +1,15 @@
+.custom-target-summary { background: var(--surface-strong); border: 1px solid var(--line); box-shadow: var(--shadow-subtle); padding: 22px; }
+.custom-target-summary-heading { align-items: end; display: flex; justify-content: space-between; gap: 16px; }
+.custom-target-summary-heading h2 { font-family: var(--heading); font-size: 22px; margin: 0; }
+.custom-target-summary-heading > span { color: var(--muted); font-size: 12px; }
+.custom-target-summary-empty { color: var(--muted); font-size: 13px; margin: 18px 0 0; }
+.custom-target-summary-list { display: grid; gap: 10px; margin-top: 18px; }
+.custom-target-summary-card { background: var(--surface); border: 1px solid var(--line); padding: 14px; }
+.custom-target-summary-card-heading { align-items: start; display: flex; gap: 12px; justify-content: space-between; }
+.custom-target-summary-card h3 { font-family: var(--heading); font-size: 15px; margin: 0; }
+.custom-target-summary-card p { color: var(--muted); font-size: 12px; margin: 5px 0 0; }
+.custom-target-summary-card-heading strong { color: var(--accent-dark); font-size: 11px; white-space: nowrap; }
+.custom-target-summary-values { color: var(--ink-soft); display: flex; flex-wrap: wrap; font-size: 12px; gap: 14px; margin-top: 12px; }
+.custom-target-progress-track { background: var(--line); height: 6px; margin-top: 12px; overflow: hidden; }
+.custom-target-progress-track span { background: var(--accent); display: block; height: 100%; }
+@media (max-width: 520px) { .custom-target-summary { padding: 17px; } .custom-target-summary-card-heading { display: block; } .custom-target-summary-card-heading strong { display: block; margin-top: 8px; } }

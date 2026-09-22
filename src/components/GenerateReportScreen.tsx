@@ -1,7 +1,7 @@
-import { useMemo, useState, type MouseEvent } from 'react'
-import { loadDailyActivities } from '../storage/dailyActivityStorage'
-import { loadFollowUps } from '../storage/followUpsStorage'
-import { getSelectedWeekStart, loadWeeklyPlan } from '../storage/weeklyPlanStorage'
+import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { loadDailyActivities, loadDailyActivitiesAsync } from '../storage/dailyActivityStorage'
+import { loadFollowUps, loadFollowUpsAsync } from '../storage/followUpsStorage'
+import { getSelectedWeekStart, loadWeeklyPlan, loadWeeklyPlanAsync } from '../storage/weeklyPlanStorage'
 import { deriveWeeklyIntelligence } from '../intelligence/intelligenceEngine'
 import type { WeeklyIntelligence } from '../intelligence/intelligenceTypes'
 import { exportReportWord, getFixedReportWeekLabel } from '../utils/reportDocx'
@@ -16,10 +16,13 @@ import type { DailyActivity } from '../types/dailyActivity'
 import type { FollowUp } from '../types/followUp'
 import type { WeeklyPlan } from '../types/weeklyPlan'
 import type { ReportSnapshot } from '../utils/reportDocx'
+import { getReportMetadataFields, getReportMetadataLines, type ReportMetadata } from '../report/reportMetadata'
 import { navigateTo } from '../utils/navigation'
 import { upsertReportHistoryEntry } from '../storage/reportHistoryStorage'
-import { getCurrentWorkspaceId } from '../storage/workspaceStorage'
+import { getCurrentWorkspace, getCurrentWorkspaceId } from '../storage/workspaceStorage'
 import { AppIcon } from './TemplateIcon'
+import CustomReportSections from './CustomReportSections'
+import { loadCustomTemplateConfig } from '../storage/customTemplateStorage'
 import './GenerateReport.css'
 
 function formatCompactWeekRange(weekStart: string) {
@@ -35,11 +38,15 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00`))
 }
 
-function ReportHeader({ weekKey, template }: { weekKey: string; template: WeekFlowTemplate }) {
+function ReportHeader({ weekKey, template, workspaceName, reportMetadata }: { weekKey: string; template: WeekFlowTemplate; workspaceName?: string; reportMetadata?: ReportMetadata }) {
+  const metadataFields = getReportMetadataFields(template.id)
   return (
     <header className="report-document-header">
       <h2>{template.report.title}</h2>
       <p className="report-document-meta">{formatCompactWeekRange(weekKey)} · {template.name}</p>
+      {workspaceName && <p className="report-document-meta">Workspace: {workspaceName}</p>}
+      {getReportMetadataLines(reportMetadata, metadataFields).map((line) => <p className="report-document-meta" key={line}>{line}</p>)}
+      <p className="report-document-meta">Reporting Week: {formatCompactWeekRange(weekKey)}</p>
     </header>
   )
 }
@@ -129,24 +136,44 @@ function EmptyReportDocument({ plan, template, sections }: { plan: WeeklyPlan; t
   )
 }
 
-export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, historicalSnapshot = null }: { template?: WeekFlowTemplate; historicalSnapshot?: ReportSnapshot | null }) {
+export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, historicalSnapshot = null, reportMetadata }: { template?: WeekFlowTemplate; historicalSnapshot?: ReportSnapshot | null; reportMetadata?: ReportMetadata }) {
   const [liveWeekKey] = useState(getSelectedWeekStart)
   const isHistorical = historicalSnapshot !== null
   const weekKey = historicalSnapshot?.weekKey ?? liveWeekKey
   const [isExporting, setIsExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState('')
+  const [isSavingHistory, setIsSavingHistory] = useState(false)
+  const [historyMessage, setHistoryMessage] = useState('')
   const [isExportingPdf, setIsExportingPdf] = useState(false)
   const [pdfExportMessage, setPdfExportMessage] = useState('')
   const [isExportingPlan, setIsExportingPlan] = useState(false)
   const [planExportMessage, setPlanExportMessage] = useState('')
   const [selectedCarryForward, setSelectedCarryForward] = useState<string[]>([])
-  const plan = useMemo(() => historicalSnapshot?.plan ?? loadWeeklyPlan(weekKey), [historicalSnapshot, weekKey])
-  const activities = useMemo(() => historicalSnapshot?.activities ?? loadDailyActivities(weekKey), [historicalSnapshot, weekKey])
-  const followUps = useMemo(() => historicalSnapshot?.followUps ?? loadFollowUps(weekKey), [historicalSnapshot, weekKey])
+  const [liveData, setLiveData] = useState<{ plan: WeeklyPlan; activities: DailyActivity[]; followUps: FollowUp[] } | null>(null)
+  const [loadError, setLoadError] = useState('')
+  const workspaceName = historicalSnapshot?.workspaceName ?? getCurrentWorkspace()?.name
+  useEffect(() => {
+    if (historicalSnapshot) return
+    let active = true
+    setLiveData(null)
+    Promise.all([loadWeeklyPlanAsync(weekKey), loadDailyActivitiesAsync(weekKey), loadFollowUpsAsync(weekKey)]).then(([plan, activities, followUps]) => {
+      if (active) {
+        setLiveData({ plan, activities, followUps })
+        setLoadError('')
+      }
+    }).catch((error: unknown) => {
+      if (active) setLoadError(error instanceof Error ? error.message : 'Report data could not be loaded from the workspace.')
+    })
+    return () => { active = false }
+  }, [historicalSnapshot, weekKey])
+  const plan = useMemo(() => historicalSnapshot?.plan ?? liveData?.plan ?? loadWeeklyPlan(weekKey), [historicalSnapshot, liveData, weekKey])
+  const activities = useMemo(() => historicalSnapshot?.activities ?? liveData?.activities ?? loadDailyActivities(weekKey), [historicalSnapshot, liveData, weekKey])
+  const followUps = useMemo(() => historicalSnapshot?.followUps ?? liveData?.followUps ?? loadFollowUps(weekKey), [historicalSnapshot, liveData, weekKey])
   const intelligence = useMemo<WeeklyIntelligence>(() => deriveWeeklyIntelligence({ selectedWeek: weekKey, plan, activities, followUps, template }), [weekKey, plan, activities, followUps, template])
   const performance = useMemo(() => historicalSnapshot?.performance ?? (template.id === 'project-management' ? deriveProjectPerformance(plan, activities, followUps, intelligence) : undefined), [historicalSnapshot, template, plan, activities, followUps, intelligence])
-  const reportSnapshot = useMemo<ReportSnapshot>(() => historicalSnapshot ?? ({ weekKey, weekLabel: getFixedReportWeekLabel(weekKey), plan, activities, followUps, performance, template }), [historicalSnapshot, weekKey, plan, activities, followUps, performance, template])
-  const reportSections = useMemo(() => getReportSectionDescriptors(template).filter((section) => section.enabled).sort((left, right) => left.order - right.order), [template])
+  const customReportConfig = useMemo(() => template.id === 'custom' ? (() => { const config = loadCustomTemplateConfig(); return { categories: config.categories, statuses: config.statuses, targets: config.targets, reportSections: config.reportSections } })() : undefined, [template.id])
+  const reportSnapshot = useMemo<ReportSnapshot>(() => historicalSnapshot ?? ({ weekKey, weekLabel: getFixedReportWeekLabel(weekKey), workspaceName, plan, activities, followUps, performance, template, reportMetadata, customReportConfig }), [historicalSnapshot, weekKey, workspaceName, plan, activities, followUps, performance, template, reportMetadata, customReportConfig])
+  const reportSections = useMemo(() => getReportSectionDescriptors(template, reportSnapshot.customReportConfig?.reportSections).filter((section) => section.enabled).sort((left, right) => left.order - right.order), [template, reportSnapshot.customReportConfig])
   const mappedReportSections = useMemo(() => reportSections.map((section) => mapReportSectionData(reportSnapshot, section, template)), [reportSections, reportSnapshot, template])
   const narrativeReport = useMemo(() => buildNarrativeReport(reportSnapshot), [reportSnapshot])
   const getSectionDataByGroup = (...groups: string[]) => mappedReportSections.find((section) => groups.some((group) => section.groups[group] !== undefined || section.unsupportedGroups.includes(group)))
@@ -158,25 +185,32 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
   void summaryFollowUps
   const readiness = intelligence.reportReadiness
   const isEmptyReport = readiness.status === 'empty'
+  if (!historicalSnapshot && !liveData) return <main className="generate-report-screen"><p role="status">{loadError || 'Loading report data...'}</p></main>
   const primaryReportAction = !readiness.hasMeaningfulPlan
     ? { label: 'Review Weekly Plan', href: '/weekly-plan', onClick: (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); navigateTo('/weekly-plan') } }
     : readiness.activityCount === 0
       ? { label: 'Review Daily Activity', href: '/daily-activity', onClick: (event: MouseEvent<HTMLAnchorElement>) => { event.preventDefault(); navigateTo('/daily-activity') } }
       : { label: 'Review Report', href: '#report-preview-heading', onClick: undefined }
 
+  async function handleSaveHistory() {
+    if (isHistorical) return
+    setIsSavingHistory(true)
+    setHistoryMessage('')
+    try {
+      await upsertReportHistoryEntry(reportSnapshot, getCurrentWorkspaceId())
+      setHistoryMessage('Saved to Report History.')
+    } catch {
+      setHistoryMessage('Report could not be saved to history. Please try again.')
+    } finally {
+      setIsSavingHistory(false)
+    }
+  }
+
   async function handleExportWord() {
     setIsExporting(true)
     setExportMessage('')
     try {
-      const snapshot = {
-        weekKey,
-        weekLabel: getFixedReportWeekLabel(weekKey),
-        plan,
-        activities,
-        followUps,
-        performance,
-        template,
-      }
+      const snapshot = reportSnapshot
       if (!isHistorical) await upsertReportHistoryEntry(snapshot, getCurrentWorkspaceId())
       const result = await exportReportWord(snapshot)
       setExportMessage(`Downloaded ${result.filename}`)
@@ -204,7 +238,7 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
     setIsExportingPdf(true)
     setPdfExportMessage('')
     try {
-      const snapshot = { weekKey, weekLabel: getFixedReportWeekLabel(weekKey), plan, activities, followUps, performance, template }
+      const snapshot = reportSnapshot
       if (!isHistorical) await upsertReportHistoryEntry(snapshot, getCurrentWorkspaceId())
       const result = exportReportPdf(snapshot)
       setPdfExportMessage(`Downloaded ${result.filename}`)
@@ -249,18 +283,20 @@ export default function GenerateReportScreen({ template = FIELD_SALES_TEMPLATE, 
       {!isEmptyReport && intelligence.carryForwardCandidates.length > 0 && <section className="report-carry-forward" aria-labelledby="carry-forward-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Next week planning</p><h2 id="carry-forward-heading">Suggested Carry-Forward</h2><p>These unfinished items may be relevant to next week. Selecting one does not copy it automatically.</p></div><span>{intelligence.carryForwardCandidates.length}</span></div><ul>{intelligence.carryForwardCandidates.slice(0, 6).map((candidate) => { const key = carryForwardKey(candidate.title, candidate.account); return <li key={key}><label><input type="checkbox" checked={selectedCarryForward.includes(key)} onChange={(event) => setSelectedCarryForward((current) => event.target.checked ? [...current, key] : current.filter((item) => item !== key))} /><span><strong>{candidate.title}</strong><small>{candidate.reason}</small></span></label></li> })}</ul><button className="button button-secondary" type="button" disabled={selectedCarryForward.length === 0} onClick={reviewSelectedInWeeklyPlan}>Review Selected in Weekly Plan</button></section>}
       {template.id === 'project-management' && performance && <section className="report-project-performance" aria-labelledby="project-performance-heading"><div className="report-intelligence-section-heading"><div><p className="report-eyebrow">Project Performance</p><h2 id="project-performance-heading">How the project week performed</h2></div><strong>{performance.overallStatus}</strong></div><div className="report-performance-metrics"><div><span>Tasks completed</span><strong>{performance.completedTasks} / {performance.plannedTasks}</strong></div><div><span>Completion</span><strong>{performance.completionRate === null ? 'Not available' : `${performance.completionRate.toFixed(1)}%`}</strong></div><div><span>Actual vs planned</span><strong>{performance.actualHours === null || performance.plannedHours === null ? 'Not available' : `${performance.actualHours}h / ${performance.plannedHours}h`}</strong></div><div><span>Outstanding follow-ups</span><strong>{performance.followUpsOutstanding}</strong></div></div><p className="report-performance-summary">{performance.summary}</p></section>}
       <section className={`report-export-actions${isEmptyReport ? ' report-export-actions-empty' : ''}`} aria-label="Export options">
+        {!isHistorical && <button className="button button-primary" type="button" onClick={handleSaveHistory} disabled={isSavingHistory} aria-busy={isSavingHistory}>{isSavingHistory ? 'Saving...' : 'Save Report to History'} {!isSavingHistory && <AppIcon name="arrow-right" />}</button>}
         <button className="button button-primary" type="button" onClick={handleExportWord} disabled={isExporting} aria-busy={isExporting}>{isExporting ? 'Generating...' : 'Export Word Document'} {!isExporting && <AppIcon name="arrow-right" />}</button>
         <button className="button button-secondary" type="button" onClick={handleExportPdf} disabled={isExportingPdf} aria-busy={isExportingPdf}>{isExportingPdf ? 'Generating...' : 'Export PDF'} {!isExportingPdf && <AppIcon name="arrow-right" />}</button>
         <button className="report-quiet-button" type="button" onClick={handleExportWeeklyPlan} disabled={isExportingPlan} aria-busy={isExportingPlan}>{isExportingPlan ? 'Generating...' : 'Export Weekly Plan'}</button>
         <button className="report-quiet-button" type="button" onClick={() => window.print()}>Print</button>
         {exportMessage && <p className={`export-message ${exportMessage.toLowerCase().includes('could not') ? 'is-error' : 'is-success'}`} role="status" aria-live="polite">{exportMessage}</p>}
+        {historyMessage && <p className={`export-message ${historyMessage.toLowerCase().includes('could not') ? 'is-error' : 'is-success'}`} role="status" aria-live="polite">{historyMessage}</p>}
         {pdfExportMessage && <p className={`export-message ${pdfExportMessage.toLowerCase().includes('could not') ? 'is-error' : 'is-success'}`} role="status" aria-live="polite">{pdfExportMessage}</p>}
         {planExportMessage && <p className="export-message" role="status">{planExportMessage}</p>}
       </section>
       {!isEmptyReport && isHistorical && <div className="report-actions-historical"><a className="report-quiet-link" href="/report-history" onClick={(event) => { event.preventDefault(); navigateTo('/report-history') }}>Back to Report History</a></div>}
       <article className="report-preview">
-        {!isEmptyReport && <ReportHeader weekKey={weekKey} template={template} />}
-        {isEmptyReport ? <EmptyReportDocument plan={plan} template={template} sections={mappedReportSections} /> : <>
+        {!isEmptyReport && <ReportHeader weekKey={weekKey} template={template} workspaceName={workspaceName} reportMetadata={reportSnapshot.reportMetadata} />}
+        {template.id === 'custom' && reportSnapshot.customReportConfig ? <CustomReportSections sections={reportSnapshot.customReportConfig.reportSections} mappedSections={mappedReportSections} config={reportSnapshot.customReportConfig} activities={activities} followUps={followUps} plan={plan} /> : isEmptyReport ? <EmptyReportDocument plan={plan} template={template} sections={mappedReportSections} /> : <>
           <section className="report-section report-summary-section motion-fade-up" style={{ animationDelay: '140ms' }} aria-labelledby="report-preview-heading">
             <h3 id="report-preview-heading" className="report-section-title"><span className="report-section-number">01</span><span className="report-section-separator" aria-hidden="true">—</span><span className="report-section-heading-text">{narrativeReport.sections[0]?.title ?? summarySection?.title ?? 'Weekly Summary'}</span></h3>
             <p className="report-muted" style={{ marginBottom: '12px' }}>{narrativeReport.summaryText}</p>

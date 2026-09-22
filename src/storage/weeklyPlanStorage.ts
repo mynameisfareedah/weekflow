@@ -7,6 +7,12 @@ import {
   type DayCategories,
   type DayId,
   type DocumentationPlanItem,
+  type FieldDailyScheduleItem,
+  type FieldEquipment,
+  type FieldJob,
+  type FieldPartResource,
+  type FieldServiceIssue,
+  type FieldTeamPlan,
   type MonitoringImpactTarget,
   type PlanItem,
   type ProgrammeActivity,
@@ -18,8 +24,12 @@ import {
   type VirtualEngagementPlanItem,
   type WeeklyPlan,
   type WeeklyProgrammeContext,
+  type EducationContext,
+  type EducationLearningObjective,
+  type EducationTeachingPlanItem,
+  type EducationWeeklyTarget,
 } from '../types/weeklyPlan'
-import { getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getLegacyCompatibleWorkspaceId, getWorkspaceScopedStorageKey, getCurrentCloudWorkspaceId } from './workspaceStorage'
+import { getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getWorkspaceScopedStorageKey, getCurrentCloudWorkspaceId, shouldUseLegacyStorageFallback, hasAuthenticatedCloudWorkspace } from './workspaceStorage'
 import { supabase } from '../lib/supabase'
 import { WEEK_DAY_IDS, WEEK_DAY_LABELS } from '../utils/week'
 
@@ -52,12 +62,57 @@ function normalizePlanItems(value: unknown): PlanItem[] {
     id: item.id,
     text: item.text,
     ...(typeof item.successMeasure === 'string' ? { successMeasure: item.successMeasure } : {}),
+    ...(typeof item.target === 'string' ? { target: item.target } : {}),
     ...(typeof item.priority === 'string' ? { priority: item.priority } : {}),
     ...(typeof item.owner === 'string' ? { owner: item.owner } : {}),
     ...(typeof item.plannedDate === 'string' ? { plannedDate: item.plannedDate } : {}),
     ...(typeof item.estimatedHours === 'string' ? { estimatedHours: item.estimatedHours } : {}),
     ...(typeof item.dependency === 'string' ? { dependency: item.dependency } : {}),
     ...(typeof item.status === 'string' ? { status: item.status } : {}),
+  }))
+}
+
+function normalizeEducationContext(value: unknown): EducationContext | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const candidate = value as Partial<EducationContext>
+  const context: EducationContext = {}
+  if (typeof candidate.courseProgramme === 'string') context.courseProgramme = candidate.courseProgramme
+  if (typeof candidate.classGroup === 'string') context.classGroup = candidate.classGroup
+  if (typeof candidate.instructor === 'string') context.instructor = candidate.instructor
+  if (typeof candidate.weeklyTheme === 'string') context.weeklyTheme = candidate.weeklyTheme
+  return Object.keys(context).length > 0 ? context : undefined
+}
+
+function normalizeEducationLearningObjectives(value: unknown): EducationLearningObjective[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is EducationLearningObjective => Boolean(item) && typeof item === 'object' && typeof (item as EducationLearningObjective).id === 'string' && typeof (item as EducationLearningObjective).objective === 'string').map((item: any) => ({
+    id: item.id,
+    objective: item.objective,
+    ...(typeof item.successMeasure === 'string' ? { successMeasure: item.successMeasure } : {}),
+    ...(typeof item.priority === 'string' ? { priority: item.priority } : {}),
+  }))
+}
+
+function normalizeEducationTeachingPlan(value: unknown): EducationTeachingPlanItem[] {
+  if (!Array.isArray(value)) return []
+  const validDays = new Set(DAY_IDS)
+  return value.filter((item): item is EducationTeachingPlanItem => Boolean(item) && typeof item === 'object' && typeof (item as EducationTeachingPlanItem).id === 'string' && validDays.has((item as EducationTeachingPlanItem).day)).map((item: any) => ({
+    id: item.id,
+    day: item.day,
+    topic: typeof item.topic === 'string' ? item.topic : '',
+    ...(typeof item.teachingActivity === 'string' ? { teachingActivity: item.teachingActivity } : {}),
+    ...(typeof item.learningActivity === 'string' ? { learningActivity: item.learningActivity } : {}),
+    ...(typeof item.duration === 'string' ? { duration: item.duration } : {}),
+  }))
+}
+
+function normalizeEducationWeeklyTargets(value: unknown): EducationWeeklyTarget[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is EducationWeeklyTarget => Boolean(item) && typeof item === 'object' && typeof (item as EducationWeeklyTarget).id === 'string' && typeof (item as EducationWeeklyTarget).target === 'string').map((item: any) => ({
+    id: item.id,
+    target: item.target,
+    ...(typeof item.measure === 'string' ? { measure: item.measure } : {}),
+    ...(typeof item.priority === 'string' ? { priority: item.priority } : {}),
   }))
 }
 
@@ -289,6 +344,39 @@ function normalizeMonitoringImpactTargets(value: unknown): MonitoringImpactTarge
   }))
 }
 
+function normalizeFieldJobs(value: unknown): FieldJob[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is FieldJob => Boolean(item) && typeof item === 'object' && typeof (item as FieldJob).id === 'string' && typeof (item as FieldJob).jobId === 'string').map((item: any) => ({
+    ...item,
+    ...(Array.isArray(item.photos) ? { photos: item.photos.filter((photo: unknown): photo is string => typeof photo === 'string') } : {}),
+  }))
+}
+
+function normalizeFieldServiceIssues(value: unknown): FieldServiceIssue[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is FieldServiceIssue => Boolean(item) && typeof item === 'object' && typeof (item as FieldServiceIssue).id === 'string' && typeof (item as FieldServiceIssue).issueId === 'string').map((item: any) => ({ ...item }))
+}
+
+function normalizeFieldEquipment(value: unknown): FieldEquipment[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is FieldEquipment => Boolean(item) && typeof item === 'object' && typeof (item as FieldEquipment).id === 'string' && typeof (item as FieldEquipment).equipmentId === 'string').map((item: any) => ({ ...item }))
+}
+
+function normalizeFieldTeamPlan(value: unknown): FieldTeamPlan[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is FieldTeamPlan => Boolean(item) && typeof item === 'object' && typeof (item as FieldTeamPlan).id === 'string' && typeof (item as FieldTeamPlan).technician === 'string').map((item: any) => ({ ...item }))
+}
+
+function normalizeFieldDailySchedule(value: unknown): FieldDailyScheduleItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is FieldDailyScheduleItem => Boolean(item) && typeof item === 'object' && typeof (item as FieldDailyScheduleItem).id === 'string' && typeof (item as FieldDailyScheduleItem).day === 'string').map((item: any) => ({ ...item }))
+}
+
+function normalizeFieldPartsResources(value: unknown): FieldPartResource[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is FieldPartResource => Boolean(item) && typeof item === 'object' && typeof (item as FieldPartResource).id === 'string' && typeof (item as FieldPartResource).partResource === 'string').map((item: any) => ({ ...item }))
+}
+
 export function getCurrentWeekStart() {
   const today = new Date()
   const dayOffset = today.getDay() === 0 ? 6 : today.getDay() - 1
@@ -331,7 +419,7 @@ export function getSelectedWeekStart() {
     const workspaceKey = getSelectedWeekStorageKey(workspaceId)
     const workspaceValue = workspaceKey ? window.localStorage.getItem(workspaceKey) : null
     if (workspaceValue) return workspaceValue
-    if (workspaceId === getLegacyCompatibleWorkspaceId()) {
+    if (shouldUseLegacyStorageFallback()) {
       const legacyValue = window.localStorage.getItem(SELECTED_WEEK_KEY)
       if (legacyValue) return legacyValue
     }
@@ -349,7 +437,7 @@ export function setSelectedWeekStart(weekStart: string, source: WeekSelectionSou
     if (!workspaceKey) return
     window.localStorage.setItem(workspaceKey, weekStart)
     if (sourceKey) window.localStorage.setItem(sourceKey, source)
-    if (workspaceId === getLegacyCompatibleWorkspaceId()) {
+    if (shouldUseLegacyStorageFallback()) {
       window.localStorage.setItem(SELECTED_WEEK_KEY, weekStart)
     }
     window.dispatchEvent(new CustomEvent('weekflow-week-change', { detail: weekStart }))
@@ -367,7 +455,7 @@ export function getStoredWeekStarts(workspaceId = getCurrentWorkspaceId()) {
       for (const prefix of STORAGE_PREFIXES) {
         const scopedPrefix = `${prefix}${workspaceId}:`
         const isScopedKey = key.startsWith(scopedPrefix)
-        const isLegacyKey = workspaceId === getLegacyCompatibleWorkspaceId() && key.startsWith(prefix) && !key.startsWith(`${prefix}${workspaceId}:`)
+        const isLegacyKey = shouldUseLegacyStorageFallback() && key.startsWith(prefix) && !key.startsWith(`${prefix}${workspaceId}:`)
         if (!isScopedKey && !isLegacyKey) continue
         const weekStart = key.slice(isScopedKey ? scopedPrefix.length : prefix.length)
         if (/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) weekStarts.add(weekStart)
@@ -418,6 +506,11 @@ export function createEmptyWeeklyPlan(weekStart: string): WeeklyPlan {
 
   return {
     weekStart,
+    educationWeeklyFocus: undefined,
+    educationLearningObjectives: [],
+    educationTeachingPlan: [],
+    educationWeeklyTargets: [],
+    educationContext: undefined,
     weeklyStrategicObjectives: [],
     days: DAY_IDS.map((id, index) => {
       const date = new Date(start)
@@ -442,6 +535,12 @@ export function createEmptyWeeklyPlan(weekStart: string): WeeklyPlan {
     keyAccountObjectives: [],
     commercialPriorities: [],
     successMeasures: [],
+    fieldJobs: [],
+    fieldServiceIssues: [],
+    fieldEquipment: [],
+    fieldTeamPlan: [],
+    fieldDailySchedule: [],
+    fieldPartsResources: [],
   }
 }
 
@@ -451,6 +550,11 @@ function normalizePlan(plan: unknown, weekStart: string): WeeklyPlan {
 
   return {
     ...emptyPlan,
+    educationWeeklyFocus: typeof (plan as WeeklyPlan).educationWeeklyFocus === 'string' ? (plan as WeeklyPlan).educationWeeklyFocus : undefined,
+    educationLearningObjectives: normalizeEducationLearningObjectives((plan as WeeklyPlan).educationLearningObjectives),
+    educationTeachingPlan: normalizeEducationTeachingPlan((plan as WeeklyPlan).educationTeachingPlan),
+    educationWeeklyTargets: normalizeEducationWeeklyTargets((plan as WeeklyPlan).educationWeeklyTargets),
+    educationContext: normalizeEducationContext((plan as WeeklyPlan).educationContext),
     weeklyStrategicObjectives: normalizePlanItems((plan as WeeklyPlan).weeklyStrategicObjectives),
     days: emptyPlan.days.map((day, index) => {
       const savedDay = (plan as WeeklyPlan).days[index]
@@ -481,14 +585,21 @@ function normalizePlan(plan: unknown, weekStart: string): WeeklyPlan {
     keyAccountObjectives: normalizeAccountObjectives((plan as WeeklyPlan).keyAccountObjectives),
     commercialPriorities: normalizeCommercialPriorities((plan as WeeklyPlan).commercialPriorities),
     successMeasures: normalizeSuccessMeasures((plan as WeeklyPlan).successMeasures),
+    fieldJobs: normalizeFieldJobs((plan as WeeklyPlan).fieldJobs),
+    fieldServiceIssues: normalizeFieldServiceIssues((plan as WeeklyPlan).fieldServiceIssues),
+    fieldEquipment: normalizeFieldEquipment((plan as WeeklyPlan).fieldEquipment),
+    fieldTeamPlan: normalizeFieldTeamPlan((plan as WeeklyPlan).fieldTeamPlan),
+    fieldDailySchedule: normalizeFieldDailySchedule((plan as WeeklyPlan).fieldDailySchedule),
+    fieldPartsResources: normalizeFieldPartsResources((plan as WeeklyPlan).fieldPartsResources),
   }
 }
 
 function loadWeeklyPlanLocal(weekStart: string): WeeklyPlan {
   try {
+    if (hasAuthenticatedCloudWorkspace()) return createEmptyWeeklyPlan(weekStart)
     const workspaceId = getCurrentWorkspaceId()
     const key = workspaceId ? getWorkspaceScopedStorageKey(STORAGE_PREFIX, weekStart, workspaceId) : null
-    const savedPlan = (key ? window.localStorage.getItem(key) : null) ?? (workspaceId === getLegacyCompatibleWorkspaceId() ? window.localStorage.getItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart)) : null)
+    const savedPlan = (key ? window.localStorage.getItem(key) : null) ?? (shouldUseLegacyStorageFallback() ? window.localStorage.getItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart)) : null)
     return savedPlan ? normalizePlan(JSON.parse(savedPlan), weekStart) : createEmptyWeeklyPlan(weekStart)
   } catch {
     return createEmptyWeeklyPlan(weekStart)
@@ -501,7 +612,7 @@ function saveWeeklyPlanLocal(plan: WeeklyPlan) {
     if (!workspaceId) return
     const workspaceKey = getWorkspaceScopedStorageKey(STORAGE_PREFIX, plan.weekStart, workspaceId)
     window.localStorage.setItem(workspaceKey, JSON.stringify(plan))
-    if (workspaceId === getLegacyCompatibleWorkspaceId()) {
+    if (shouldUseLegacyStorageFallback()) {
       window.localStorage.setItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, plan.weekStart), JSON.stringify(plan))
     }
   } catch {
@@ -523,9 +634,10 @@ async function getCloudWorkspaceId() {
 
 export async function loadWeeklyPlanAsync(weekStart: string): Promise<WeeklyPlan> {
   const localPlan = loadWeeklyPlanLocal(weekStart)
+  if (!supabase) return localPlan
   try {
     const workspaceId = await getCloudWorkspaceId()
-    if (!workspaceId || !supabase) return localPlan
+    if (!workspaceId) return localPlan
 
     const { data, error } = await supabase
       .from('weekly_plans')
@@ -537,15 +649,21 @@ export async function loadWeeklyPlanAsync(weekStart: string): Promise<WeeklyPlan
     if (error) throw error
     return data?.data ? normalizePlan(data.data, weekStart) : localPlan
   } catch {
-    return localPlan
+    throw new Error('Weekly Plan could not be loaded from the workspace.')
   }
 }
 
 export async function saveWeeklyPlanAsync(plan: WeeklyPlan): Promise<boolean> {
-  saveWeeklyPlanLocal(plan)
+  if (!supabase) {
+    saveWeeklyPlanLocal(plan)
+    return true
+  }
   try {
     const workspaceId = await getCloudWorkspaceId()
-    if (!workspaceId || !supabase) return false
+    if (!workspaceId) {
+      saveWeeklyPlanLocal(plan)
+      return true
+    }
 
     const weekRecord = await supabase
       .from('workspace_weeks')
@@ -557,6 +675,7 @@ export async function saveWeeklyPlanAsync(plan: WeeklyPlan): Promise<boolean> {
       .upsert({ workspace_id: workspaceId, week_start: plan.weekStart, data: plan }, { onConflict: 'workspace_id,week_start' })
 
     if (planRecord.error) throw planRecord.error
+    saveWeeklyPlanLocal(plan)
     return true
   } catch {
     return false

@@ -1,4 +1,4 @@
-import { getCurrentCloudWorkspaceId, getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getLegacyCompatibleWorkspaceId, getWorkspaceScopedStorageKey } from './workspaceStorage'
+import { getCurrentCloudWorkspaceId, getCurrentWorkspaceId, getLegacyCompatibleStorageKey, getWorkspaceScopedStorageKey, shouldUseLegacyStorageFallback, hasAuthenticatedCloudWorkspace } from './workspaceStorage'
 import { supabase } from '../lib/supabase'
 
 export type SmartStartCompletion = 'started' | 'fresh'
@@ -10,12 +10,13 @@ function getWorkspaceStorageKey(weekStart: string, workspaceId = getCurrentWorks
 }
 
 function getLegacyCompatibleStorageValue(weekStart: string, workspaceId = getCurrentWorkspaceId()) {
-  if (workspaceId !== getLegacyCompatibleWorkspaceId()) return null
+  if (!shouldUseLegacyStorageFallback() || workspaceId === null) return null
   return window.localStorage.getItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart))
 }
 
 function loadSmartStartCompletionLocal(weekStart: string): SmartStartCompletion | null {
   try {
+    if (hasAuthenticatedCloudWorkspace()) return null
     const workspaceId = getCurrentWorkspaceId()
     const key = getWorkspaceStorageKey(weekStart, workspaceId)
     const value = (key ? window.localStorage.getItem(key) : null) ?? getLegacyCompatibleStorageValue(weekStart, workspaceId)
@@ -31,7 +32,7 @@ function saveSmartStartCompletionLocal(weekStart: string, completion: SmartStart
     const workspaceKey = getWorkspaceStorageKey(weekStart, workspaceId)
     if (!workspaceId || !workspaceKey) return
     window.localStorage.setItem(workspaceKey, completion)
-    if (workspaceId === getLegacyCompatibleWorkspaceId()) {
+    if (shouldUseLegacyStorageFallback()) {
       window.localStorage.setItem(getLegacyCompatibleStorageKey(STORAGE_PREFIX, weekStart), completion)
     }
   } catch {
@@ -49,9 +50,10 @@ export function saveSmartStartCompletion(weekStart: string, completion: SmartSta
 
 export async function loadSmartStartCompletionAsync(weekStart: string): Promise<SmartStartCompletion | null> {
   const localCompletion = loadSmartStartCompletionLocal(weekStart)
+  if (!supabase) return localCompletion
   try {
     const workspaceId = await getCurrentCloudWorkspaceId()
-    if (!workspaceId || !supabase) return localCompletion
+    if (!workspaceId) return null
 
     const { data, error } = await supabase
       .from('smart_start')
@@ -63,17 +65,20 @@ export async function loadSmartStartCompletionAsync(weekStart: string): Promise<
 
     const completion = data?.data === 'started' || data?.data === 'fresh' ? data.data : null
     if (completion) saveSmartStartCompletionLocal(weekStart, completion)
-    return completion ?? localCompletion
+    return completion
   } catch {
-    return localCompletion
+    throw new Error('Smart Start state could not be loaded from the workspace.')
   }
 }
 
 export async function saveSmartStartCompletionAsync(weekStart: string, completion: SmartStartCompletion): Promise<boolean> {
-  saveSmartStartCompletionLocal(weekStart, completion)
+  if (!supabase) {
+    saveSmartStartCompletionLocal(weekStart, completion)
+    return true
+  }
   try {
     const workspaceId = await getCurrentCloudWorkspaceId()
-    if (!workspaceId || !supabase) return false
+    if (!workspaceId) return false
 
     const weekRecord = await supabase
       .from('workspace_weeks')
@@ -84,6 +89,7 @@ export async function saveSmartStartCompletionAsync(weekStart: string, completio
       .from('smart_start')
       .upsert({ workspace_id: workspaceId, week_start: weekStart, data: completion }, { onConflict: 'workspace_id,week_start' })
     if (smartStartRecord.error) throw smartStartRecord.error
+    saveSmartStartCompletionLocal(weekStart, completion)
     return true
   } catch {
     return false

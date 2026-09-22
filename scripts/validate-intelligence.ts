@@ -160,10 +160,10 @@ assert(populatedNgoPerformance.status === 'Attention required', 'NGO dashboard s
 const serviceWeek = '2026-09-09'
 const serviceActivities: DailyActivity[] = [
   {
-    id: 'service-1', date: serviceWeek, weekStart: serviceWeek, plannedActivityId: null, account: 'Benazir Org', activityType: 'Repair / Troubleshooting', hcpNames: ['Customer'], outcome: 'Issue unresolved', intelligence: 'Equipment is still down after reset and customer is concerned. SLA risk due to critical priority.', nextAction: 'Escalate to engineering and confirm SLA', structuredOutcomes: [{ id: 'so-1', type: 'Issue Unresolved', details: 'Issue remains unresolved', product: 'Other' }, { id: 'so-2', type: 'Escalation Required', details: 'Escalation required', product: 'Other' }], workOrderJob: 'WO-102', equipmentAsset: 'Generator-T12', issueProblem: 'Generator overheating', resolution: '', serviceStatus: 'Open', partsMaterialsUsed: 'No parts used', escalation: 'Engineering escalation pending', slaPriority: 'Critical priority', downtime: '6 hours', customerSignOff: '', createdAt: serviceWeek, updatedAt: serviceWeek,
+    id: 'service-1', date: serviceWeek, weekStart: serviceWeek, plannedActivityId: null, account: 'Benazir Org', activityType: 'Repair / Troubleshooting', hcpNames: ['Customer'], outcome: 'Issue unresolved', intelligence: 'Equipment is still down after reset and the customer requested a service follow-up.', nextAction: 'Escalate to engineering and confirm the next service step.', structuredOutcomes: [{ id: 'so-1', type: 'Issue Unresolved', details: 'Issue remains unresolved', product: 'Other' }, { id: 'so-2', type: 'Escalation Required', details: 'Escalation required', product: 'Other' }], workOrderJob: 'WO-102', equipmentAsset: 'Generator-T12', issueProblem: 'Generator overheating', resolution: '', serviceStatus: 'Open', partsMaterialsUsed: 'No parts used', escalation: 'Engineering escalation pending', slaPriority: 'Critical priority', downtime: '6 hours', customerSignOff: '', createdAt: serviceWeek, updatedAt: serviceWeek,
   },
   {
-    id: 'service-2', date: serviceWeek, weekStart: serviceWeek, plannedActivityId: null, account: 'Benazir Org', activityType: 'Repair / Troubleshooting', hcpNames: ['Customer'], outcome: 'Repeat issue captured', intelligence: 'Same equipment fault reported again. Safety concern due to heat build-up. Customer concern on service quality.', nextAction: 'Review parts requirement and service quality review.', structuredOutcomes: [{ id: 'so-3', type: 'Equipment Fault Identified', details: 'Same fault repeated on Generator-T12', product: 'Other' }, { id: 'so-4', type: 'Parts Required', details: 'Fan assembly needed', product: 'Other' }], workOrderJob: 'WO-103', equipmentAsset: 'Generator-T12', issueProblem: 'Generator overheating', resolution: 'Temporary reset performed', serviceStatus: 'Monitoring', partsMaterialsUsed: 'Fan assembly not yet installed', escalation: 'Escalation previously raised', slaPriority: 'Critical priority', downtime: '8 hours', customerSignOff: '', createdAt: serviceWeek, updatedAt: serviceWeek,
+    id: 'service-2', date: serviceWeek, weekStart: serviceWeek, plannedActivityId: null, account: 'Benazir Org', activityType: 'Repair / Troubleshooting', hcpNames: ['Customer'], outcome: 'Repeat issue captured', intelligence: 'Same equipment fault reported again. The customer raised a service quality concern and requested a parts review.', nextAction: 'Review parts requirement and service quality follow-up.', structuredOutcomes: [{ id: 'so-3', type: 'Equipment Fault Identified', details: 'Same fault repeated on Generator-T12', product: 'Other' }, { id: 'so-4', type: 'Parts Required', details: 'Fan assembly needed', product: 'Other' }], workOrderJob: 'WO-103', equipmentAsset: 'Generator-T12', issueProblem: 'Generator overheating', resolution: 'Temporary reset performed', serviceStatus: 'Monitoring', partsMaterialsUsed: 'Fan assembly not yet installed', escalation: 'Escalation previously raised', slaPriority: 'Critical priority', downtime: '8 hours', customerSignOff: '', createdAt: serviceWeek, updatedAt: serviceWeek,
   },
   {
     id: 'service-3', date: serviceWeek, weekStart: serviceWeek, plannedActivityId: null, account: 'Site 24', activityType: 'Preventive Maintenance', hcpNames: ['Operations'], outcome: 'PM completed', intelligence: 'Preventive maintenance performed on compressor set and service quality review logged.', nextAction: 'Schedule next inspection', structuredOutcomes: [{ id: 'so-5', type: 'Preventive Maintenance Completed', details: 'Preventive maintenance completed', product: 'Other' }, { id: 'so-6', type: 'Customer Sign-off Obtained', details: 'Customer sign-off obtained', product: 'Other' }], equipmentAsset: 'Compressor-03', issueProblem: '', resolution: 'Routine maintenance complete', serviceStatus: 'Completed', partsMaterialsUsed: 'Filters replaced', escalation: '', slaPriority: 'Standard', downtime: '1 hour', customerSignOff: 'Signed', createdAt: serviceWeek, updatedAt: serviceWeek,
@@ -171,18 +171,103 @@ const serviceActivities: DailyActivity[] = [
 ]
 const fieldServiceTemplate = getWorkflowTemplateById('field-service')
 const serviceIntelligence = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: createEmptyWeeklyPlan(serviceWeek), activities: serviceActivities, followUps: [], template: fieldServiceTemplate })
-assert(serviceIntelligence.insights.risks.some((signal) => signal.title.includes('Unresolved service issue') || signal.detail.toLowerCase().includes('unresolved')), 'Field Service unresolved issue signal was not detected')
-assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase() === 'recurring equipment problem' || signal.title.toLowerCase().includes('recurring equipment problem')), 'Field Service recurring equipment problem signal was not detected')
-assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('escalation required')), 'Field Service escalation signal was not detected')
-assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('downtime') || signal.reason.toLowerCase().includes('downtime')), 'Field Service downtime signal was not detected')
-assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'Safety concern' && signal.detail.toLowerCase().includes('safety concern')), 'Field Service safety concern signal was not detected')
-assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('repeat fault') || signal.title.toLowerCase().includes('equipment fault')), 'Field Service repeat-fault signal was not detected')
-assert(serviceIntelligence.opportunitySignals.some((signal) => signal.title.toLowerCase().includes('preventive maintenance')), 'Field Service preventive maintenance opportunity was not detected')
-assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'SLA risk' && (signal.detail.toLowerCase().includes('sla') || signal.detail.toLowerCase().includes('critical priority'))), 'Field Service SLA risk signal was not detected')
-assert(serviceIntelligence.insights.deliverables.some((signal) => signal.title.toLowerCase().includes('parts') || signal.detail.toLowerCase().includes('parts')), 'Field Service parts requirement signal was not detected as service context')
-assert(serviceIntelligence.insights.stakeholders.some((signal) => signal.title === 'Customer concern' && signal.detail.toLowerCase().includes('customer concern')), 'Field Service customer concern signal was not detected')
-assert(serviceIntelligence.insights.stakeholders.some((signal) => signal.title === 'Customer concern' && signal.detail.toLowerCase().includes('service quality')), 'Field Service service quality signal was not detected')
-assert(serviceIntelligence.insights.stakeholders.some((signal) => signal.title.toLowerCase().includes('customer sign-off') || signal.detail.toLowerCase().includes('customer')), 'Field Service customer sign-off signal was not detected')
+assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'Unresolved Service Issue' || signal.title.toLowerCase().includes('unresolved service issue')), 'Field Service unresolved service issue signal was not detected')
+assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'Repeat Fault'), 'Field Service repeat-fault signal was not detected')
+assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'Recurring Equipment Problem'), 'Field Service recurring equipment problem signal was not detected')
+assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'Escalation Required'), 'Field Service escalation signal was not detected')
+assert(serviceIntelligence.insights.risks.some((signal) => signal.title === 'Downtime'), 'Field Service downtime signal was not detected')
+assert(serviceIntelligence.insights.progress.some((signal) => signal.title === 'Preventive Maintenance'), 'Field Service preventive maintenance signal was not detected')
+assert(serviceIntelligence.insights.deliverables.some((signal) => signal.title === 'Parts Required'), 'Field Service parts requirement signal was not detected')
+assert(serviceIntelligence.insights.stakeholders.some((signal) => signal.title === 'Customer Concern'), 'Field Service customer concern signal was not detected')
+assert(!serviceIntelligence.insights.risks.some((signal) => signal.title === 'Safety Concern' || signal.title === 'SLA Risk' || signal.detail.toLowerCase().includes('safety concern') || signal.detail.toLowerCase().includes('sla risk')), 'Field Service unsupported Safety Concern or SLA Risk signal was incorrectly emitted')
+
+const genericFieldIssueText = deriveWeeklyIntelligence({
+  selectedWeek: serviceWeek,
+  plan: createEmptyWeeklyPlan(serviceWeek),
+  activities: [{
+    ...activity('service-generic-issue', 'Site 12', 'Routine technician visit completed with a general update.', [], '', serviceWeek),
+    activityType: 'Repair / Troubleshooting',
+    workPerformed: 'Checked equipment and updated the customer.',
+    actualResults: 'Normal operation was confirmed during the visit.',
+    issueProblem: '',
+  }],
+  followUps: [],
+  template: fieldServiceTemplate,
+})
+assert(!genericFieldIssueText.insights.risks.some((signal) => signal.title === 'Unresolved Service Issue'), 'Generic field-service wording created an unsupported unresolved issue signal')
+
+const genericRepairActivity = deriveWeeklyIntelligence({
+  selectedWeek: serviceWeek,
+  plan: createEmptyWeeklyPlan(serviceWeek),
+  activities: [{
+    ...activity('service-generic-repair', 'Site 99', 'Routine service visit completed on the compressor.', [], '', serviceWeek),
+    activityType: 'Repair / Troubleshooting',
+    workPerformed: 'Performed a standard inspection and reset the controller.',
+    actualResults: 'The unit responded normally after the inspection.',
+    issueProblem: 'Routine equipment check',
+    resolution: 'No faults found.',
+    serviceStatus: 'Completed',
+  }],
+  followUps: [],
+  template: fieldServiceTemplate,
+})
+assert(!genericRepairActivity.insights.risks.some((signal) => ['Unresolved Service Issue', 'Escalation Required', 'Downtime', 'Safety Concern', 'SLA Risk'].includes(signal.title) || signal.detail.toLowerCase().includes('safety concern') || signal.detail.toLowerCase().includes('sla risk')), 'Generic repair activity incorrectly created unsupported field-service risk signals')
+
+const priorityOnlyEscalationGuard = deriveWeeklyIntelligence({
+  selectedWeek: serviceWeek,
+  plan: createEmptyWeeklyPlan(serviceWeek),
+  activities: [{
+    ...activity('service-priority-only', 'Site 77', 'Maintenance request received with critical priority.', [], '', serviceWeek),
+    activityType: 'Repair / Troubleshooting',
+    issuePriority: 'Critical priority',
+    slaPriority: 'Critical priority',
+    workPerformed: 'Reviewed the service request.',
+    actualResults: 'The request is logged for routing.',
+  }],
+  followUps: [],
+  template: fieldServiceTemplate,
+})
+assert(!priorityOnlyEscalationGuard.insights.risks.some((signal) => signal.title === 'Escalation Required' || signal.title === 'SLA Risk'), 'Priority-only text did not create unsupported escalation or SLA signals')
+
+const partsUsedAloneGuard = deriveWeeklyIntelligence({
+  selectedWeek: serviceWeek,
+  plan: createEmptyWeeklyPlan(serviceWeek),
+  activities: [{
+    ...activity('service-parts-used-only', 'Site 55', 'Routine service completed.', [], '', serviceWeek),
+    activityType: 'Repair / Troubleshooting',
+    workPerformed: 'Installed a replacement filter.',
+    partsUsed: 'Filter kit',
+    actualResults: 'The system is operating normally after installation.',
+  }],
+  followUps: [],
+  template: fieldServiceTemplate,
+})
+assert(!partsUsedAloneGuard.insights.deliverables.some((signal) => signal.title === 'Parts Required'), 'Parts used alone incorrectly created a parts-required signal')
+
+const singleEquipmentActivityGuard = deriveWeeklyIntelligence({
+  selectedWeek: serviceWeek,
+  plan: createEmptyWeeklyPlan(serviceWeek),
+  activities: [{
+    ...activity('service-single-equipment', 'Site 34', 'Single asset issue logged.', [], '', serviceWeek),
+    activityType: 'Repair / Troubleshooting',
+    equipmentAsset: 'Pump-44',
+    issueProblem: 'Intermittent vibration',
+    resolution: 'Inspection complete.',
+    serviceStatus: 'Completed',
+  }],
+  followUps: [],
+  template: fieldServiceTemplate,
+})
+assert(!singleEquipmentActivityGuard.insights.risks.some((signal) => signal.title === 'Repeat Fault' || signal.title === 'Recurring Equipment Problem'), 'Single equipment activity incorrectly created repeat-fault intelligence')
+
+const plannedOnlyFieldService = deriveWeeklyIntelligence({
+  selectedWeek: serviceWeek,
+  plan: createEmptyWeeklyPlan(serviceWeek),
+  activities: [],
+  followUps: [],
+  template: fieldServiceTemplate,
+})
+assert(plannedOnlyFieldService.insights.risks.length === 0 && plannedOnlyFieldService.insights.progress.length === 0 && plannedOnlyFieldService.insights.deliverables.length === 0 && plannedOnlyFieldService.insights.stakeholders.length === 0, 'Planned-only field service work incorrectly produced operational intelligence')
 
 const fieldSalesTemplate = getWorkflowTemplateById('field-sales')
 const salesFixture: DailyActivity[] = [
@@ -226,7 +311,8 @@ assert(!personalTimeOnly.insights.progress.some((signal) => signal.title === 'Co
 const reverseLeakingTemplate = deriveWeeklyIntelligence({ selectedWeek: personalWeek, plan: createEmptyWeeklyPlan(personalWeek), activities: personalActivities, followUps: personalFollowUps, template: getWorkflowTemplateById('field-sales') })
 assert(reverseLeakingTemplate.insights.progress.length === 0 && reverseLeakingTemplate.insights.risks.length === 0 && reverseLeakingTemplate.insights.stakeholders.length === 0, 'Personal intelligence leaked into another template')
 
-const serviceSignalTitles = ['unresolved service issue', 'repeat fault', 'recurring equipment problem', 'escalation required', 'downtime', 'safety concern', 'preventive maintenance', 'sla risk', 'parts required', 'customer concern', 'service quality']
+const supportedServiceSignalTitles = ['unresolved service issue', 'repeat fault', 'recurring equipment problem', 'escalation required', 'downtime', 'preventive maintenance', 'parts required', 'customer concern']
+const unsupportedServiceSignalTitles = ['safety concern', 'sla risk', 'service quality issue']
 const reverseIsolation = deriveWeeklyIntelligence({
   selectedWeek: serviceWeek,
   plan: createEmptyWeeklyPlan(serviceWeek),
@@ -248,8 +334,8 @@ const reverseIsolation = deriveWeeklyIntelligence({
   followUps: [],
   template: fieldSalesTemplate,
 })
-assert(!reverseIsolation.opportunitySignals.some((signal) => serviceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Field Sales template incorrectly produced Field Service-specific intelligence from service-like text')
-assert(!reverseIsolation.insights.risks.some((signal) => serviceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Field Sales template incorrectly produced Field Service risk intelligence from service-like text')
+assert(!reverseIsolation.opportunitySignals.some((signal) => supportedServiceSignalTitles.some((title) => signal.title.toLowerCase().includes(title)) || unsupportedServiceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Field Sales template incorrectly produced supported or unsupported Field Service intelligence from service-like text')
+assert(!reverseIsolation.insights.risks.some((signal) => supportedServiceSignalTitles.some((title) => signal.title.toLowerCase().includes(title)) || unsupportedServiceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Field Sales template incorrectly produced Field Service risk intelligence from service-like text')
 assert(!reverseIsolation.insights.deliverables.some((signal) => signal.title.toLowerCase().includes('parts')), 'Field Sales template incorrectly produced Field Service parts intelligence')
 assert(!reverseIsolation.insights.stakeholders.some((signal) => signal.title.toLowerCase().includes('customer concern') || signal.detail.toLowerCase().includes('service quality')), 'Field Sales template incorrectly produced Field Service customer service intelligence')
 
@@ -274,8 +360,8 @@ const freeTextLeakage = deriveWeeklyIntelligence({
   followUps: [],
   template: fieldServiceTemplate,
 })
-assert(!freeTextLeakage.opportunitySignals.some((signal) => serviceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Generic free-text leaked into Field Service intelligence')
-assert(!freeTextLeakage.insights.risks.some((signal) => serviceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Generic free-text leaked into Field Service risks')
+assert(!freeTextLeakage.opportunitySignals.some((signal) => supportedServiceSignalTitles.some((title) => signal.title.toLowerCase().includes(title)) || unsupportedServiceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Generic free-text leaked into Field Service intelligence')
+assert(!freeTextLeakage.insights.risks.some((signal) => supportedServiceSignalTitles.some((title) => signal.title.toLowerCase().includes(title)) || unsupportedServiceSignalTitles.some((title) => signal.title.toLowerCase().includes(title))), 'Generic free-text leaked into Field Service risks')
 assert(!freeTextLeakage.insights.deliverables.some((signal) => signal.title.toLowerCase().includes('parts')), 'Generic free-text leaked into Field Service parts intelligence')
 assert(!freeTextLeakage.insights.stakeholders.some((signal) => signal.title.toLowerCase().includes('customer concern') || signal.detail.toLowerCase().includes('service quality')), 'Generic free-text leaked into Field Service customer intelligence')
 
@@ -412,4 +498,4 @@ const ngoFalsePositive = deriveWeeklyIntelligence({ selectedWeek: serviceWeek, p
 assert(!ngoFalsePositive.insights.risks.some((signal) => signal.title === 'Resource / logistics issue' || signal.title === 'Participation below target'), 'NGO generic activity created a false issue or below-target risk')
 assert(deriveWeeklyIntelligence({ selectedWeek: serviceWeek, plan: ngoPlan, activities: [ngoActivity], followUps: [], template: fieldSalesTemplate }).insights.risks.length === 0, 'NGO intelligence leaked into Field Sales')
 
-console.log('Intelligence validation passed: August-pattern, empty-week, week-isolation, Smart Start merge checks, Field Service checks, Small Business outcome/scoring checks, and template isolation checks.')
+console.log('Intelligence validation passed: August-pattern, empty-week, week-isolation, Smart Start merge checks, supported Field Service signal checks, false-positive protections, and template isolation checks.')

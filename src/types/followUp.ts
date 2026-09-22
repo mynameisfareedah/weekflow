@@ -4,6 +4,13 @@ export type FollowUpPriority = (typeof FOLLOW_UP_PRIORITIES)[number]
 export const FOLLOW_UP_STATUSES = ['open', 'completed'] as const
 export type FollowUpStatus = (typeof FOLLOW_UP_STATUSES)[number]
 
+export interface FollowUpSourceContext {
+  workOrderJob?: string
+  customer?: string
+  equipmentAsset?: string
+  issueProblem?: string
+}
+
 export interface FollowUp {
   id: string
   weekKey: string
@@ -15,6 +22,7 @@ export interface FollowUp {
   status: FollowUpStatus
   notes?: string
   sourceActivityId?: string
+  sourceContext?: FollowUpSourceContext
   createdAt: string
   updatedAt: string
 }
@@ -27,4 +35,5 @@ export interface FollowUpDraft {
   priority: FollowUpPriority
   notes: string
   sourceActivityId?: string
+  sourceContext?: FollowUpSourceContext
 }

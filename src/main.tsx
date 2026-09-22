@@ -2,7 +2,11 @@ import { StrictMode, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { applyTheme, getStoredThemePreference } from './theme'
-import { App, LandingApp } from './lazyRoutes'
+import { App } from './lazyRoutes'
+
+if (import.meta.env.DEV) {
+  void import('./test/augustFieldSalesFixture')
+}
 
 applyTheme(getStoredThemePreference())
 
@@ -20,7 +24,7 @@ if ('serviceWorker' in navigator) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Suspense fallback={null}>
-      {window.location.pathname === '/' ? <LandingApp /> : <App />}
+      <App />
     </Suspense>
   </StrictMode>,
 )

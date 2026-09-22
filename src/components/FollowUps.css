@@ -69,6 +69,7 @@
 .follow-up-meta span + span { position: relative; }
 .follow-up-meta span + span::before { color: var(--line-dark); content: '·'; left: -9px; position: absolute; }
 .follow-up-notes { color: var(--ink-soft); font-size: 13px; line-height: 1.45; margin: 10px 0 0; overflow-wrap: anywhere; }
+.follow-up-source-context { color: var(--ink-soft); font-size: 12px; line-height: 1.45; margin: 8px 0 0; overflow-wrap: anywhere; }
 .follow-up-source { display: inline-block; font-size: 10px; margin-top: 9px; text-transform: uppercase; }
 .follow-up-actions { display: flex; flex: 0 0 auto; gap: 11px; }
 .follow-up-actions button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 11px; padding: 3px 0; }

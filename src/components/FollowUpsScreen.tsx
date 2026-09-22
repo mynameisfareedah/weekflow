@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { consumeFollowUpPrefill, loadFollowUps, loadFollowUpsAsync, saveFollowUpsAsync } from '../storage/followUpsStorage'
-import { getSelectedWeekStart, loadWeeklyPlan } from '../storage/weeklyPlanStorage'
+import { getSelectedWeekStart, loadWeeklyPlan, loadWeeklyPlanAsync } from '../storage/weeklyPlanStorage'
 import {
   type FollowUp,
   type FollowUpDraft,
@@ -61,7 +61,7 @@ function FollowUpForm({
   initialFollowUp: FollowUp | null
   prefill: Partial<FollowUp> | null
   plan: WeeklyPlan
-  onSave: (draft: FollowUpDraft, id?: string) => void
+  onSave: (draft: FollowUpDraft, id?: string) => Promise<void>
   onCancel: () => void
   template: WeekFlowTemplate
 }) {
@@ -73,6 +73,7 @@ function FollowUpForm({
     priority: initialFollowUp.priority,
     notes: initialFollowUp.notes ?? '',
     sourceActivityId: initialFollowUp.sourceActivityId,
+    sourceContext: initialFollowUp.sourceContext,
   } : {
     ...EMPTY_DRAFT,
     task: prefill?.task ?? '',
@@ -82,6 +83,7 @@ function FollowUpForm({
     priority: prefill?.priority ?? 'normal',
     notes: prefill?.notes ?? '',
     sourceActivityId: prefill?.sourceActivityId,
+    sourceContext: prefill?.sourceContext,
   }
   const [draft, setDraft] = useState(initialDraft)
   const suggestions = getPlanSuggestions(plan)
@@ -97,10 +99,10 @@ function FollowUpForm({
     setDraft((current) => ({ ...current, [key]: value }))
   }
 
-  function save(event: FormEvent<HTMLFormElement>) {
+  async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!draft.task.trim()) return
-    onSave({ ...draft, task: draft.task.trim(), facility: draft.facility.trim(), hcpName: draft.hcpName.trim(), notes: draft.notes.trim() }, initialFollowUp?.id)
+    await onSave({ ...draft, task: draft.task.trim(), facility: draft.facility.trim(), hcpName: draft.hcpName.trim(), notes: draft.notes.trim() }, initialFollowUp?.id)
   }
 
   return (
@@ -130,6 +132,12 @@ function FollowUpCard({ followUp, onToggleStatus, onEdit, onDelete, className = 
         <div className="follow-up-card-title"><h3>{followUp.task}</h3>{followUp.priority === 'high' && <span className="priority-label">High priority</span>}</div>
         <div className="follow-up-meta">{followUp.facility && <span>{followUp.facility}</span>}{followUp.hcpName && <span>{followUp.hcpName}</span>}{followUp.dueDate && <span>Due {formatDueDate(followUp.dueDate)}</span>}</div>
         {followUp.notes && <p className="follow-up-notes">{followUp.notes}</p>}
+        {followUp.sourceContext && <p className="follow-up-source-context">{[
+          followUp.sourceContext.workOrderJob && `Job ID: ${followUp.sourceContext.workOrderJob}`,
+          followUp.sourceContext.customer && `Customer: ${followUp.sourceContext.customer}`,
+          followUp.sourceContext.equipmentAsset && `Equipment: ${followUp.sourceContext.equipmentAsset}`,
+          followUp.sourceContext.issueProblem && `Issue: ${followUp.sourceContext.issueProblem}`,
+        ].filter(Boolean).join(' · ')}</p>}
         {followUp.sourceActivityId && <span className="follow-up-source">From Daily Activity</span>}
       </div>
       <div className="follow-up-actions"><button type="button" onClick={onToggleStatus}>{followUp.status === 'open' ? 'Complete' : 'Reopen'}</button><button type="button" onClick={onEdit}>Edit</button><button type="button" onClick={onDelete}>Delete</button></div>
@@ -141,8 +149,8 @@ export default function FollowUpsScreen({ template = FIELD_SALES_TEMPLATE }: { t
   const terminology = getTemplateTerminology(template)
   const [weekKey] = useState(getSelectedWeekStart)
   const [followUps, setFollowUps] = useState<FollowUp[]>(() => loadFollowUps(weekKey))
-  const [followUpsHydrated, setFollowUpsHydrated] = useState(false)
-  const [plan] = useState<WeeklyPlan>(() => loadWeeklyPlan(weekKey))
+  const followUpsChangedDuringHydrationRef = useRef(false)
+  const [plan, setPlan] = useState<WeeklyPlan>(() => loadWeeklyPlan(weekKey))
   const [initialFormState] = useState(() => {
     const pendingPrefill = consumeFollowUpPrefill(weekKey)
     return { formOpen: Boolean(pendingPrefill), prefill: pendingPrefill }
@@ -151,24 +159,42 @@ export default function FollowUpsScreen({ template = FIELD_SALES_TEMPLATE }: { t
   const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
   const [prefill, setPrefill] = useState<Partial<FollowUp> | null>(initialFormState.prefill)
   const [newFollowUpId, setNewFollowUpId] = useState<string | null>(null)
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const retrySaveRef = useRef<(() => Promise<void>) | null>(null)
   const openFollowUps = useMemo(() => followUps.filter((followUp) => followUp.status === 'open'), [followUps])
   const completedFollowUps = useMemo(() => followUps.filter((followUp) => followUp.status === 'completed'), [followUps])
 
   useEffect(() => {
+    followUpsChangedDuringHydrationRef.current = false
     let active = true
     loadFollowUpsAsync(weekKey).then((loadedFollowUps) => {
       if (active) {
-        setFollowUps(loadedFollowUps)
-        setFollowUpsHydrated(true)
+        setFollowUps((currentFollowUps) => followUpsChangedDuringHydrationRef.current ? currentFollowUps : loadedFollowUps)
       }
+    }).catch(() => {
     })
     return () => { active = false }
   }, [weekKey])
 
   useEffect(() => {
-    if (!followUpsHydrated) return
-    void saveFollowUpsAsync(weekKey, followUps)
-  }, [followUps, followUpsHydrated, weekKey])
+    let active = true
+    loadWeeklyPlanAsync(weekKey).then((loadedPlan) => { if (active) setPlan(loadedPlan) }).catch(() => undefined)
+    return () => { active = false }
+  }, [weekKey])
+
+  async function persistFollowUps(nextFollowUps: FollowUp[]) {
+    setSaveState('saving')
+    const saved = await saveFollowUpsAsync(weekKey, nextFollowUps)
+    if (!saved) {
+      setSaveState('error')
+      retrySaveRef.current = async () => { await persistFollowUps(nextFollowUps) }
+      return false
+    }
+    retrySaveRef.current = null
+    setFollowUps(nextFollowUps)
+    setSaveState('saved')
+    return true
+  }
 
   useEffect(() => {
     if (!newFollowUpId) return
@@ -181,10 +207,13 @@ export default function FollowUpsScreen({ template = FIELD_SALES_TEMPLATE }: { t
     setFormOpen(true)
   }
 
-  function saveFollowUp(draft: FollowUpDraft, id?: string) {
+  async function saveFollowUp(draft: FollowUpDraft, id?: string) {
+    if (saveState === 'saving') return
     const now = new Date().toISOString()
+    let saved = false
     if (id) {
-      setFollowUps((current) => current.map((followUp) => followUp.id === id ? { ...followUp, ...draft, updatedAt: now } : followUp))
+      const nextFollowUps = followUps.map((followUp) => followUp.id === id ? { ...followUp, ...draft, updatedAt: now } : followUp)
+      saved = await persistFollowUps(nextFollowUps)
     } else {
       const newFollowUp = {
         id: createId(),
@@ -197,19 +226,29 @@ export default function FollowUpsScreen({ template = FIELD_SALES_TEMPLATE }: { t
         status: 'open',
         ...(draft.notes ? { notes: draft.notes } : {}),
         ...(draft.sourceActivityId ? { sourceActivityId: draft.sourceActivityId } : {}),
+        ...(draft.sourceContext && Object.values(draft.sourceContext).some((value) => value?.trim()) ? { sourceContext: draft.sourceContext } : {}),
         createdAt: now,
         updatedAt: now,
       } as FollowUp
-      setFollowUps((current) => [...current, newFollowUp])
-      setNewFollowUpId(newFollowUp.id)
+      saved = await persistFollowUps([...followUps, newFollowUp])
+      if (saved) setNewFollowUpId(newFollowUp.id)
     }
-    setFormOpen(false)
-    setEditingFollowUp(null)
-    setPrefill(null)
+    if (saved) {
+      setFormOpen(false)
+      setEditingFollowUp(null)
+      setPrefill(null)
+    }
   }
 
-  function toggleStatus(followUp: FollowUp) {
-    setFollowUps((current) => current.map((item) => item.id === followUp.id ? { ...item, status: item.status === 'open' ? 'completed' : 'open', updatedAt: new Date().toISOString() } : item))
+  async function toggleStatus(followUp: FollowUp) {
+    if (saveState === 'saving') return
+    const nextFollowUps = followUps.map((item) => item.id === followUp.id ? { ...item, status: (item.status === 'open' ? 'completed' : 'open') as FollowUp['status'], updatedAt: new Date().toISOString() } : item)
+    await persistFollowUps(nextFollowUps)
+  }
+
+  async function deleteFollowUp(followUpId: string) {
+    if (saveState === 'saving') return
+    await persistFollowUps(followUps.filter((item) => item.id !== followUpId))
   }
 
   function editFollowUp(followUp: FollowUp) {
@@ -227,13 +266,14 @@ export default function FollowUpsScreen({ template = FIELD_SALES_TEMPLATE }: { t
   return (
     <main className="follow-ups-screen" id="follow-ups">
       <div className="follow-ups-page-heading"><div><p className="eyebrow">Follow-ups</p><h1>{terminology.followUps}</h1><p className="follow-ups-intro">Track unresolved next actions so nothing important gets forgotten.</p></div><div className="follow-ups-week"><span>Current week</span><strong>{formatWeekRange(weekKey)}</strong></div></div>
+      {(saveState === 'saving' || saveState === 'saved' || saveState === 'error') && <div className={`persistence-status is-${saveState}`} role={saveState === 'error' ? 'alert' : 'status'} aria-live="polite"><span>{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : 'Couldn’t save changes'}</span>{saveState === 'error' && <button type="button" className="text-button" onClick={() => { const retry = retrySaveRef.current; if (retry) void retry() }}>Retry</button>}</div>}
       <div className="follow-ups-content">
         {!formOpen && <div className="follow-ups-toolbar"><p>{openFollowUps.length} open follow-up{openFollowUps.length === 1 ? '' : 's'} this week</p><button className="button button-primary compact-button" type="button" onClick={startAdd}>+ Add Follow-up</button></div>}
         {formOpen && <FollowUpForm initialFollowUp={editingFollowUp} prefill={prefill} plan={plan} onSave={saveFollowUp} onCancel={cancelForm} template={template} />}
         {!formOpen && followUps.length === 0 && <section className="follow-ups-empty"><span className="empty-mark" aria-hidden="true">+</span><h2>No {terminology.followUps.toLowerCase()} yet</h2><p>Capture unresolved next actions from your {terminology.activityPlural.toLowerCase()} here so nothing gets forgotten.</p><button className="button button-secondary" type="button" onClick={startAdd}>+ Add {terminology.followUp}</button></section>}
         {!formOpen && followUps.length > 0 && <>
-          <section className="follow-up-group" aria-labelledby="open-follow-ups-heading"><div className="follow-up-group-heading"><h2 id="open-follow-ups-heading">Open</h2><span>{openFollowUps.length}</span></div>{openFollowUps.length > 0 ? <div className="follow-up-list">{openFollowUps.map((followUp) => <FollowUpCard className={newFollowUpId === followUp.id ? 'is-new' : ''} key={followUp.id} followUp={followUp} onToggleStatus={() => toggleStatus(followUp)} onEdit={() => editFollowUp(followUp)} onDelete={() => setFollowUps((current) => current.filter((item) => item.id !== followUp.id))} />)}</div> : <p className="follow-up-group-empty">All follow-ups are complete.</p>}</section>
-          <section className="follow-up-group completed-group" aria-labelledby="completed-follow-ups-heading"><div className="follow-up-group-heading"><h2 id="completed-follow-ups-heading">Completed</h2><span>{completedFollowUps.length}</span></div>{completedFollowUps.length > 0 ? <div className="follow-up-list">{completedFollowUps.map((followUp) => <FollowUpCard className={newFollowUpId === followUp.id ? 'is-new' : ''} key={followUp.id} followUp={followUp} onToggleStatus={() => toggleStatus(followUp)} onEdit={() => editFollowUp(followUp)} onDelete={() => setFollowUps((current) => current.filter((item) => item.id !== followUp.id))} />)}</div> : <p className="follow-up-group-empty">Completed follow-ups will stay here for reference.</p>}</section>
+          <section className="follow-up-group" aria-labelledby="open-follow-ups-heading"><div className="follow-up-group-heading"><h2 id="open-follow-ups-heading">Open</h2><span>{openFollowUps.length}</span></div>{openFollowUps.length > 0 ? <div className="follow-up-list">{openFollowUps.map((followUp) => <FollowUpCard className={newFollowUpId === followUp.id ? 'is-new' : ''} key={followUp.id} followUp={followUp} onToggleStatus={() => toggleStatus(followUp)} onEdit={() => editFollowUp(followUp)} onDelete={() => deleteFollowUp(followUp.id)} />)}</div> : <p className="follow-up-group-empty">All follow-ups are complete.</p>}</section>
+          <section className="follow-up-group completed-group" aria-labelledby="completed-follow-ups-heading"><div className="follow-up-group-heading"><h2 id="completed-follow-ups-heading">Completed</h2><span>{completedFollowUps.length}</span></div>{completedFollowUps.length > 0 ? <div className="follow-up-list">{completedFollowUps.map((followUp) => <FollowUpCard className={newFollowUpId === followUp.id ? 'is-new' : ''} key={followUp.id} followUp={followUp} onToggleStatus={() => toggleStatus(followUp)} onEdit={() => editFollowUp(followUp)} onDelete={() => deleteFollowUp(followUp.id)} />)}</div> : <p className="follow-up-group-empty">Completed follow-ups will stay here for reference.</p>}</section>
         </>}
       </div>
     </main>

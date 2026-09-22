@@ -47,6 +47,32 @@ export type ActivityFieldKey =
   | 'slaPriority'
   | 'downtime'
   | 'customerSignOff'
+  | 'jobCustomer'
+  | 'jobPriority'
+  | 'assignedTechnician'
+  | 'contactPerson'
+  | 'arrivalTime'
+  | 'departureTime'
+  | 'actionsTaken'
+  | 'partsUsed'
+  | 'findings'
+  | 'condition'
+  | 'servicePerformed'
+  | 'nextServiceDate'
+  | 'followUpRequired'
+  | 'followUpDate'
+  | 'issuePriority'
+  | 'educationCourseProgramme'
+  | 'educationClassGroup'
+  | 'educationTopic'
+  | 'educationInstructor'
+  | 'educationLearningObjectiveId'
+  | 'educationTeachingActivity'
+  | 'educationStudentActivity'
+  | 'educationLearnerCount'
+  | 'educationExpectedOutput'
+  | 'educationLearningResult'
+  | 'educationStatus'
   | 'progressStatus'
   | 'blockerRisk'
   | 'decision'
@@ -234,8 +260,13 @@ export const FIELD_SERVICE_TEMPLATE: WeekFlowTemplate = {
   report: {
     title: "This Week's Service Report",
     sections: [
-      { id: 'weekly-summary', title: 'Service Summary', enabled: true },
-      { id: 'daily-activity-breakdown', title: 'Daily Service Activity', enabled: true },
+      { id: 'weekly-summary', title: 'Weekly Operations Summary', enabled: true },
+      { id: 'daily-activity-breakdown', title: 'Daily Field Activity Breakdown', enabled: true },
+      { id: 'job-assignment-outcomes', title: 'Job / Assignment Outcomes', enabled: true },
+      { id: 'service-resolution-status', title: 'Service & Resolution Status', enabled: true },
+      { id: 'operational-intelligence', title: 'Equipment & Operational Intelligence', enabled: true },
+      { id: 'parts-resources', title: 'Parts & Resource Requirements', enabled: true },
+      { id: 'customer-site-issues', title: 'Customer / Site Issues', enabled: true },
       { id: 'priorities-coming-week', title: 'Priorities for Coming Week', enabled: true },
       { id: 'completed-follow-ups', title: 'Completed Follow-ups', enabled: true },
     ],
@@ -451,12 +482,12 @@ const FOUNDATION_TERMINOLOGY: Record<string, TemplateTerminology> = {
 export const TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
   { id: FIELD_SALES_TEMPLATE.id, name: 'Pharma Field Sales', description: 'Plan, track, and report pharmaceutical field activities, HCP engagements, accounts, opportunities, and follow-ups.', availability: 'available', terminology: FIELD_SALES_TEMPLATE.terminology },
   { id: 'field-service', name: 'Field Operations', description: 'Plan, track, and report field operations, jobs, service issues, equipment, resolutions, and customer follow-ups.', availability: 'available', terminology: FOUNDATION_TERMINOLOGY['field-service'] },
-  { id: PROJECT_MANAGEMENT_TEMPLATE.id, name: 'Project Management', description: 'Plan weekly project work, track deliverables, risks, decisions, stakeholders, and priorities.', availability: 'available', terminology: PROJECT_MANAGEMENT_TEMPLATE.terminology },
+  { id: PROJECT_MANAGEMENT_TEMPLATE.id, name: 'Project Management', description: 'Plan weekly project work, track deliverables, risks, decisions, stakeholders, priorities, and follow-ups.', availability: 'available', terminology: PROJECT_MANAGEMENT_TEMPLATE.terminology },
   { id: 'small-business', name: 'Small Business', description: 'Manage weekly business activities, customers, sales, orders, suppliers, and follow-ups.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY['small-business'] },
   { id: 'ngo-community', name: 'NGO & Community Work', description: 'Plan and report community activities, beneficiaries, outreach, partnerships, and follow-ups.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY['ngo-community'] },
-  { id: 'education', name: 'Education', description: 'Plan teaching, learning, student activities, academic tasks, and follow-ups.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.education },
-  { id: 'personal', name: 'Personal Productivity', description: 'Organize weekly goals, tasks, activities, priorities, and personal follow-ups.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.personal },
-  { id: 'custom', name: 'Custom', description: 'Create a template tailored to your own work or activity.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.custom },
+  { id: 'education', name: 'Education', description: 'Plan teaching, learning, student activities, academic tasks, follow-ups, and reporting.', availability: 'available', terminology: FOUNDATION_TERMINOLOGY.education },
+  { id: 'personal', name: 'Personal Productivity', description: 'Organize weekly goals, tasks, activities, priorities, personal follow-ups, and reporting.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.personal },
+  { id: 'custom', name: 'Custom', description: 'Create a template tailored to your own work or activity, with custom plans, activities, and follow-ups.', availability: 'foundation', terminology: FOUNDATION_TERMINOLOGY.custom },
 ]
 
 export function getAvailableTemplates() {

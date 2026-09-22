@@ -130,9 +130,27 @@ export const supabaseAccountProvider: AccountProvider = {
     return { user: profile, authenticated: Boolean(data.session) }
   },
   onAuthStateChange(listener: AuthStateListener) {
+    let eventVersion = 0
     const { data } = getConfiguredSupabase().auth.onAuthStateChange((_event, session) => {
-      listener(toAccountState(session?.user ?? null))
+      const version = ++eventVersion
+      if (!session?.user) {
+        listener(toAccountState(null))
+        return
+      }
+
+      window.setTimeout(() => {
+        void syncProfile(session.user)
+          .then((profile) => {
+            if (version === eventVersion) listener({ status: 'authenticated', user: profile })
+          })
+          .catch(() => {
+            if (version === eventVersion) listener(toAccountState(session.user))
+          })
+      }, 0)
     })
-    return () => data.subscription.unsubscribe()
+    return () => {
+      eventVersion += 1
+      data.subscription.unsubscribe()
+    }
   },
 }

@@ -23,15 +23,20 @@ import { getReportSectionDescriptors } from '../report/reportTemplateAdapter.ts'
 import { mapReportSections, type MappedReportSection } from '../report/reportDataMapper.ts'
 import { buildNarrativeReport } from '../report/reportNarrative.ts'
 import type { ProjectPerformance } from '../report/projectPerformance.ts'
+import type { CustomTemplateConfig } from '../types/customTemplate.ts'
+import { getReportIdentitySlug, getReportMetadataFields, getReportMetadataLines, type ReportMetadata } from '../report/reportMetadata.ts'
 
 export interface ReportSnapshot {
   weekKey: string
   weekLabel: string
+  workspaceName?: string
   plan: WeeklyPlan
   activities: DailyActivity[]
   followUps: FollowUp[]
   performance?: ProjectPerformance
   template?: WeekFlowTemplate
+  reportMetadata?: ReportMetadata
+  customReportConfig?: Pick<CustomTemplateConfig, 'categories' | 'statuses' | 'targets' | 'reportSections'>
 }
 
 const PAGE_WIDTH_TWIPS = 11906
@@ -393,6 +398,8 @@ function buildFieldSalesDocument(snapshot: ReportSnapshot) {
     children: [new TextRun({ text: `Reporting Week: ${snapshot.weekLabel}`, bold: true, size: 20 })],
     spacing: { after: 200 },
   }))
+  const metadataFields = getReportMetadataFields(snapshot.template?.id ?? FIELD_SALES_TEMPLATE.id)
+  getReportMetadataLines(snapshot.reportMetadata, metadataFields).forEach((line) => documentSections.push(new Paragraph({ children: [new TextRun({ text: line, size: 18 })], spacing: { after: 80 } })))
 
   documentSections.push(buildSectionHeading(`1. ${sectionById(sections, 'activities-summary')?.title ?? 'Activities Summary'}`))
   summaryLines(snapshot, sections).forEach((line) => documentSections.push(buildBulletParagraph(line)))
@@ -479,6 +486,7 @@ function buildSchemaDocument(snapshot: ReportSnapshot) {
     new Paragraph({ children: [new TextRun({ text: snapshot.template?.name.toUpperCase() ?? 'REPORT', bold: true, color: 'A55F39', size: 17 })], spacing: { after: 120 } }),
     new Paragraph({ children: [new TextRun({ text: narrative.title, bold: true, size: 30, color: '2B2D2B' })], spacing: { after: 120 } }),
     new Paragraph({ children: [new TextRun({ text: `Reporting Week: ${narrative.weekLabel}`, bold: true, size: 20 })], spacing: { after: 200 } }),
+    ...(snapshot.workspaceName ? [new Paragraph({ children: [new TextRun({ text: `Workspace: ${snapshot.workspaceName}`, size: 18 })], spacing: { after: 160 } })] : []),
   ]
 
   for (const section of narrative.sections) {
@@ -506,16 +514,48 @@ function buildSchemaDocument(snapshot: ReportSnapshot) {
   })
 }
 
-function buildReportFilename(weekKey: string) {
+function buildCustomDocument(snapshot: ReportSnapshot) {
+  const template = snapshot.template ?? FIELD_SALES_TEMPLATE
+  const sections = mapReportSections(snapshot, getReportSectionDescriptors(template, snapshot.customReportConfig?.reportSections), template)
+  const children: (Paragraph | Table)[] = [
+    new Paragraph({ children: [new TextRun({ text: template.name.toUpperCase(), bold: true, color: 'A55F39', size: 17 })], spacing: { after: 120 } }),
+    new Paragraph({ children: [new TextRun({ text: 'Custom Weekly Report', bold: true, size: 30, color: '2B2D2B' })], spacing: { after: 120 } }),
+    new Paragraph({ children: [new TextRun({ text: `Reporting Week: ${snapshot.weekLabel}`, bold: true, size: 20 })], spacing: { after: 200 } }),
+  ]
+  sections.forEach((section, index) => {
+    children.push(buildSectionHeading(`${index + 1}. ${section.title}`))
+    const activities = Object.values(section.groups).find((value) => Array.isArray(value) && value.length > 0) as unknown[] | undefined
+    if (activities && activities.length > 0) {
+      activities.forEach((value) => {
+        if (typeof value === 'object' && value && 'account' in value) {
+          const activity = value as DailyActivity
+          const category = snapshot.customReportConfig?.categories.find((item) => item.id === activity.customCategoryId)
+          const fields = category?.fields.map((field) => { const fieldValue = activity.customFieldValues?.[field.id]; return fieldValue === undefined || fieldValue === '' ? '' : `${field.name}: ${Array.isArray(fieldValue) ? fieldValue.join(', ') : String(fieldValue)}` }).filter(Boolean) ?? []
+          children.push(buildBulletParagraph([activity.date, activity.account, category?.name, activity.outcome, activity.nextAction, ...fields].filter(Boolean).join(' | ')))
+        } else if (typeof value === 'object' && value && 'task' in value) {
+          const followUp = value as { task: string; status?: string; dueDate?: string }
+          children.push(buildBulletParagraph([followUp.task, followUp.status, followUp.dueDate ? `Due ${followUp.dueDate}` : ''].filter(Boolean).join(' | ')))
+        } else {
+          children.push(buildBulletParagraph(String(value)))
+        }
+      })
+    } else if (section.unsupportedGroups.length > 0 || section.groups) {
+      children.push(buildTextParagraph('No data recorded.'))
+    }
+  })
+  return new Document({ creator: 'WeekFlow', title: 'Custom Weekly Report', description: 'Custom report generated by WeekFlow', sections: [{ properties: { page: { margin: { top: MARGIN_TWIPS, right: MARGIN_TWIPS, bottom: MARGIN_TWIPS, left: MARGIN_TWIPS }, size: { width: PAGE_WIDTH_TWIPS, height: PAGE_HEIGHT_TWIPS } } }, footers: { default: buildReportFooter() }, children }] })
+}
+
+function buildReportFilename(weekKey: string, reportMetadata?: ReportMetadata) {
   const start = new Date(`${weekKey}T12:00:00`)
   const end = new Date(start)
-  end.setDate(start.getDate() + 6)
+  end.setDate(start.getDate() + 4)
   const monthFormatter = new Intl.DateTimeFormat('en-US', { month: 'short' })
   const startMonth = monthFormatter.format(start)
   const startDay = String(start.getDate()).padStart(2, '0')
   const endDay = String(end.getDate()).padStart(2, '0')
   const year = String(start.getFullYear())
-  return `Weekly_Field_Activity_Report_${startMonth}${startDay}-${endDay}-${year}.docx`
+  return `${getReportIdentitySlug(reportMetadata)}_Weekly_Field_Activity_Report_${startMonth}${startDay}-${endDay}-${year}.docx`
 }
 
 function buildProjectManagementReportFilename(weekKey: string) {
@@ -530,13 +570,14 @@ export function buildReportDocument(snapshot: ReportSnapshot) {
   const template = snapshot.template ?? FIELD_SALES_TEMPLATE
   if (template.id === 'project-management') return buildProjectManagementDocument({ ...snapshot, template })
   if (template.id === 'field-sales') return buildFieldSalesDocument(snapshot)
+  if (template.id === 'custom') return buildCustomDocument({ ...snapshot, template })
   return buildSchemaDocument({ ...snapshot, template })
 }
 
 export function getReportDownloadFilename(snapshot: ReportSnapshot) {
   const template = snapshot.template ?? FIELD_SALES_TEMPLATE
   if (template.id === 'project-management') return buildProjectManagementReportFilename(snapshot.weekKey)
-  if (template.id === 'field-sales') return buildReportFilename(snapshot.weekKey)
+  if (template.id === 'field-sales') return buildReportFilename(snapshot.weekKey, snapshot.reportMetadata)
   const start = new Date(`${snapshot.weekKey}T12:00:00`)
   const end = new Date(start)
   end.setDate(start.getDate() + 6)

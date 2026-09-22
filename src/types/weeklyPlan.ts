@@ -17,11 +17,117 @@ export interface PlanItem {
   text: string
 }
 
-export type PriorityLevel = 'low' | 'medium' | 'high'
+export type PriorityLevel = 'low' | 'medium' | 'high' | 'critical'
 
 export interface WeeklyObjective extends PlanItem {
   successMeasure?: string
+  target?: string
   priority?: PriorityLevel
+}
+
+export interface EducationLearningObjective {
+  id: string
+  objective: string
+  successMeasure?: string
+  priority?: PriorityLevel
+}
+
+export interface EducationTeachingPlanItem {
+  id: string
+  day: DayId
+  topic: string
+  teachingActivity?: string
+  learningActivity?: string
+  duration?: string
+}
+
+export interface EducationWeeklyTarget {
+  id: string
+  target: string
+  measure?: string
+  priority?: PriorityLevel
+}
+
+export interface EducationContext {
+  courseProgramme?: string
+  classGroup?: string
+  instructor?: string
+  weeklyTheme?: string
+}
+
+export type FieldJobStatus = 'Scheduled' | 'Assigned' | 'Pending' | 'Dispatched' | 'In Progress' | 'Completed' | 'On Hold'
+export type FieldIssueStatus = 'Reported' | 'Assigned' | 'Investigating' | 'Action Taken' | 'Resolved' | 'Verified' | 'Closed'
+
+export interface FieldJob {
+  id: string
+  jobId: string
+  customer: string
+  location: string
+  contactPerson?: string
+  jobType: string
+  priority?: PriorityLevel
+  assignedTechnician?: string
+  scheduledDate?: string
+  scheduledDay?: string
+  startTime?: string
+  endTime?: string
+  description?: string
+  equipment?: string
+  issue?: string
+  actionsTaken?: string
+  partsUsed?: string
+  findings?: string
+  resolution?: string
+  customerConfirmation?: string
+  photos?: string[]
+  status?: FieldJobStatus
+  followUpDate?: string
+}
+
+export interface FieldServiceIssue {
+  id: string
+  issueId: string
+  customer: string
+  problem: string
+  priority?: PriorityLevel
+  assignedTechnician?: string
+  status?: FieldIssueStatus
+}
+
+export interface FieldEquipment {
+  id: string
+  equipmentId: string
+  customerSite: string
+  condition?: string
+  lastService?: string
+  nextService?: string
+  status?: string
+}
+
+export interface FieldTeamPlan {
+  id: string
+  technician: string
+  jobs?: string
+  locations?: string
+  hoursPlanned?: string
+  status?: string
+}
+
+export interface FieldDailyScheduleItem {
+  id: string
+  day: string
+  time?: string
+  technician?: string
+  customer?: string
+  job?: string
+}
+
+export interface FieldPartResource {
+  id: string
+  job?: string
+  partResource: string
+  quantity?: string
+  status?: string
 }
 
 export interface VirtualEngagementPlanItem {
@@ -181,6 +287,13 @@ export interface DayPlan {
 export interface WeeklyPlan {
   weekStart: string
 
+  /** Optional Education planning context; actual learning evidence belongs in Daily Activity. */
+  educationWeeklyFocus?: string
+  educationLearningObjectives?: EducationLearningObjective[]
+  educationTeachingPlan?: EducationTeachingPlanItem[]
+  educationWeeklyTargets?: EducationWeeklyTarget[]
+  educationContext?: EducationContext
+
   /** Canonical weekly work-plan field; not the same as day categories. */
   weeklyStrategicObjectives: WeeklyObjective[]
 
@@ -224,4 +337,12 @@ export interface WeeklyPlan {
 
   /** Canonical weekly work-plan field; not the same as DayPlan.categories.successMeasures. */
   successMeasures: SuccessMeasure[]
+
+  /** Optional Field Operations planning records; execution fields remain reserved for later phases. */
+  fieldJobs?: FieldJob[]
+  fieldServiceIssues?: FieldServiceIssue[]
+  fieldEquipment?: FieldEquipment[]
+  fieldTeamPlan?: FieldTeamPlan[]
+  fieldDailySchedule?: FieldDailyScheduleItem[]
+  fieldPartsResources?: FieldPartResource[]
 }

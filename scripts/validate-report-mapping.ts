@@ -45,6 +45,11 @@ for (const templateId of templateIds) {
     if (mappings.map((mapping) => mapping.sectionId).join('|') !== expectedIds.join('|')) throw new Error('small-business: canonical section set or order is incorrect')
     if (mappings.some((mapping) => mapping.groups.commercialOutcomes !== undefined || mapping.groups.patientJourney !== undefined || mapping.groups.virtualEngagements !== undefined || mapping.groups.strategicAccounts !== undefined)) throw new Error('small-business: unrelated Field Sales groups leaked into report mapping')
   }
+  if (templateId === 'field-service') {
+    const expectedIds = ['weekly-summary', 'daily-activity-breakdown', 'job-assignment-outcomes', 'service-resolution-status', 'operational-intelligence', 'parts-resources', 'customer-site-issues', 'priorities-coming-week', 'completed-follow-ups']
+    if (mappings.map((mapping) => mapping.sectionId).join('|') !== expectedIds.join('|')) throw new Error('field-service: canonical Phase 5 section set or order is incorrect')
+    if (mappings.some((mapping) => mapping.unsupportedGroups.length > 0)) throw new Error('field-service: report sections contain unsupported data groups')
+  }
 }
 
 console.log('Report mapping validation passed: all registered templates preserve explicit supported and unsupported data groups.')

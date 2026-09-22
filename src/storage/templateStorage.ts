@@ -1,5 +1,6 @@
 import { getTemplateById, getWorkflowTemplateById } from '../config/templates.ts'
-import { getCurrentWorkspaceId, getWorkspaceById } from './workspaceStorage'
+import { getCurrentWorkspaceId, getWorkspaceById, shouldUseLegacyStorageFallback } from './workspaceStorage'
+import { loadCustomTemplateConfig } from './customTemplateStorage'
 
 export const TEMPLATE_STORAGE_KEY = 'weekflow-template'
 export const DEFAULT_TEMPLATE_ID = 'field-sales'
@@ -23,7 +24,7 @@ export function getSelectedTemplateId() {
     return workspaceSpecificValue
   }
 
-  const legacyValue = window.localStorage.getItem(TEMPLATE_STORAGE_KEY)
+  const legacyValue = shouldUseLegacyStorageFallback() ? window.localStorage.getItem(TEMPLATE_STORAGE_KEY) : null
   if (legacyValue && getTemplateById(legacyValue)) {
     return legacyValue
   }
@@ -32,5 +33,9 @@ export function getSelectedTemplateId() {
 }
 
 export function getSelectedTemplate() {
-  return getWorkflowTemplateById(getSelectedTemplateId())
+  const template = getWorkflowTemplateById(getSelectedTemplateId())
+  if (template.id !== 'custom') return template
+  const config = loadCustomTemplateConfig()
+  const workspace = getWorkspaceById(getCurrentWorkspaceId())
+  return { ...template, name: config.name === 'Custom Workspace' && workspace?.name ? workspace.name : config.name }
 }
